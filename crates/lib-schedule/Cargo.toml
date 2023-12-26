@@ -1,0 +1,12 @@
+[package]
+name = "lib-schedule"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+regex ={ version = "*" }
+chrono ={ version = "*"}
+chrono-tz ={ version = "*"}
+lib-utils = {version = "*", path = "../../crates/lib-utils"}

@@ -1,0 +1,10 @@
+[workspace.lints.rust]
+unsafe_code="forbid"
+unused = "allow"
+
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/lib-schedule","crates/lib-utils"
+]

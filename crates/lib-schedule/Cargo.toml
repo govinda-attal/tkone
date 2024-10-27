@@ -10,3 +10,4 @@ regex ={ version = "*" }
 chrono ={ version = "*"}
 chrono-tz ={ version = "*"}
 lib-utils = {version = "*", path = "../../crates/lib-utils"}
+once_cell = { version = "*" }

@@ -1,0 +1,4 @@
+# clippy.toml
+# Example Clippy configuration
+warns = ["clippy::all"]
+forbid = ["clippy::unsafe_code"]

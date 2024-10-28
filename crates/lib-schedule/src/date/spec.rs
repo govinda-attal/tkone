@@ -1,17 +1,21 @@
 use std::{
-    collections::HashSet,
+    default,
     ops::{Add, Sub},
     str::FromStr,
 };
 
 use chrono::{DateTime, Datelike, Days, Months, TimeZone};
+use fallible_iterator::FallibleIterator;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::error::{Error, Result};
+use crate::biz_day::WeekendSkipper;
+use crate::prelude::*;
+use crate::{BizDayProcessor, NextDate};
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum DayCycle {
+    #[default]
     NA,
     On(u8),
     Every(u8),
@@ -19,22 +23,17 @@ pub enum DayCycle {
     LastDay(Option<u8>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub enum BizDayStep {
+    #[default]
     NA,
     Prev(u8),
     Next(u8),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum Unit {
-    Year(Cycle),
-    Month(Cycle),
-    Day(DayCycle),
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
 pub enum Cycle {
+    #[default]
     NA,
     In(u8),
     Every(u8),
@@ -48,7 +47,7 @@ mod tests {
 
     #[test]
     fn test_one() {
-        let spec = DateSpec::from_str("YY:MM:29:P").unwrap();
+        let spec = Spec::from_str("YY:MM:29:P").unwrap();
         dbg!(&spec);
         let now = Local::now().with_timezone(&Sydney);
         println!("{:?}", now);
@@ -63,12 +62,14 @@ pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());
 static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
 
 #[derive(Default, Debug)]
-pub struct DateSpec {
-    pub legs: HashSet<Unit>,
+pub struct Spec {
+    pub years: Cycle,
+    pub months: Cycle,
+    pub days: DayCycle,
     pub biz_day_step: Option<BizDayStep>,
 }
 
-impl FromStr for DateSpec {
+impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
@@ -76,18 +77,18 @@ impl FromStr for DateSpec {
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;
         dbg!(&caps);
-        let year = caps
+        let years = caps
             .get(1)
             .map(|m| Cycle::from_str(m.as_str()))
-            .expect("missing year leg")?;
-        let month = caps
+            .expect("missing year spec")?;
+        let months = caps
             .get(2)
             .map(|m| Cycle::from_str(m.as_str()))
-            .expect("missing month leg")?;
-        let day = caps
+            .expect("missing month spec")?;
+        let days = caps
             .get(3)
             .map(|m| DayCycle::from_str(m.as_str()))
-            .expect("missing day leg")?;
+            .expect("missing day spec")?;
         let biz_day_step = caps.get(4).map(|m| BizDayStep::from_str(m.as_str()));
         let biz_day_step = if let Some(biz_day_step) = biz_day_step {
             biz_day_step.ok()
@@ -95,9 +96,12 @@ impl FromStr for DateSpec {
             None
         };
 
-        let legs = HashSet::from_iter(vec![Unit::Year(year), Unit::Month(month), Unit::Day(day)]);
-
-        Ok(Self { legs, biz_day_step })
+        Ok(Self {
+            years,
+            months,
+            days,
+            biz_day_step,
+        })
     }
 }
 

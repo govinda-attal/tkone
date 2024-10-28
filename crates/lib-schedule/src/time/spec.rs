@@ -89,38 +89,3 @@ mod tests {
         );
     }
 }
-
-// impl NextTime for TimeSpec {
-//     fn next<Tz: TimeZone>(&self, from: &DateTime<Tz>) -> DateTime<Tz> {
-//         let mut next = from.clone();
-//         match &self.hours {
-//             Cycle::At(h) => {
-//                 next = next.with_hour(*h as u32).unwrap();
-//             }
-//             Cycle::Every(h) => {
-//                 next = next + Duration::hours(*h as i64);
-//             }
-//             _ => {}
-//         };
-//         match &self.minutes {
-//             Cycle::At(m) => {
-//                 next = next.with_minute(*m as u32).unwrap();
-//             }
-//             Cycle::Every(m) => {
-//                 next = next + Duration::minutes(*m as i64);
-//             }
-//             _ => {}
-//         };
-
-//         match &self.seconds {
-//             Cycle::At(s) => {
-//                 next = next.with_second(*s as u32).unwrap();
-//             }
-//             Cycle::Every(s) => {
-//                 next = next + Duration::seconds(*s as i64);
-//             }
-//             _ => {}
-//         };
-//         next
-//     }
-// }

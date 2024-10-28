@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
-struct Calculator {
+pub struct SpecIterator {
     start: DateTime<Tz>,
     end: Option<DateTime<Tz>>,
     remaining: Option<u32>,
@@ -14,7 +14,7 @@ struct Calculator {
     bd_processor: WeekendSkipper, // Using the example BizDateProcessor
 }
 
-impl Calculator {
+impl SpecIterator {
     fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
@@ -52,17 +52,19 @@ impl Calculator {
     }
 }
 
-impl FallibleIterator for Calculator {
+impl FallibleIterator for SpecIterator {
     type Item = DateTime<Tz>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        if let Some(remaining) = self.remaining {
+        let remaining = if let Some(remaining) = self.remaining {
             if remaining == 0 {
                 return Ok(None);
             }
-            self.remaining = Some(remaining - 1);
-        }
+            Some(remaining - 1)
+        } else {
+            None
+        };
 
         if let Some(end) = &self.end {
             if &self.dtm >= end {
@@ -97,6 +99,7 @@ impl FallibleIterator for Calculator {
         }
 
         self.dtm = next;
+        self.remaining = remaining;
         Ok(Some(self.dtm.clone()))
     }
 }

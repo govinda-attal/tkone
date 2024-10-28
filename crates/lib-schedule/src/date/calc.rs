@@ -1,21 +1,52 @@
 use super::spec::{Cycle, DayCycle, Spec};
 use crate::biz_day::WeekendSkipper;
 use crate::{biz_day::BizDayProcessor, prelude::*};
-use chrono::{DateTime, Datelike, Duration, TimeZone};
+use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
+use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
 struct Calculator<Tz: TimeZone> {
+    start: DateTime<Tz>,
+    end: Option<DateTime<Tz>>,
+    remaining: Option<u32>,
     spec: Spec,
     dtm: DateTime<Tz>,
     bd_processor: WeekendSkipper, // Using the example BizDateProcessor
 }
 
 impl<Tz: TimeZone> Calculator<Tz> {
-    fn new(dtm: DateTime<Tz>, spec: &str) -> Result<Self> {
+    fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
+            start: start.clone(),
+            dtm: start,
+            end: None,
+            remaining: None,
             spec,
-            dtm,
+            bd_processor: WeekendSkipper {},
+        })
+    }
+
+    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
+        let spec = spec.parse()?;
+        Ok(Self {
+            start: start.clone(),
+            dtm: start,
+            end: Some(end),
+            remaining: None,
+            spec,
+            bd_processor: WeekendSkipper {},
+        })
+    }
+
+    fn new_with_max(spec: &str, start: DateTime<Tz>, max: u32) -> Result<Self> {
+        let spec = spec.parse()?;
+        Ok(Self {
+            start: start.clone(),
+            dtm: start,
+            end: None,
+            remaining: Some(max),
+            spec,
             bd_processor: WeekendSkipper {},
         })
     }
@@ -26,6 +57,19 @@ impl<Tz: TimeZone> FallibleIterator for Calculator<Tz> {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
+        if let Some(remaining) = self.remaining {
+            if remaining == 0 {
+                return Ok(None);
+            }
+            self.remaining = Some(remaining - 1);
+        }
+
+        if let Some(end) = &self.end {
+            if &self.dtm >= end {
+                return Ok(None);
+            }
+        }
+
         let next = self.dtm.clone();
         let next = match &self.spec.days {
             DayCycle::NA => next,
@@ -49,7 +93,7 @@ impl<Tz: TimeZone> FallibleIterator for Calculator<Tz> {
         };
 
         if next <= self.dtm {
-            return Err(Error::NextDateCalcError);
+            return Ok(None);
         }
 
         self.dtm = next;
@@ -90,4 +134,77 @@ fn ffwd_months<Tz: TimeZone>(dtm: DateTime<Tz>, num: u8) -> DateTime<Tz> {
         .unwrap()
         .with_month(new_month as u32)
         .unwrap()
+}
+
+fn add_days_in_timezone(dtm: &DateTime<Tz>, num: i64) -> DateTime<Tz> {
+    // Extract the time portion from the given DateTime
+    let time = dtm.time();
+    // Convert from the given timezone to UTC
+    let utc_dt = dtm.with_timezone(&Utc);
+
+    // Add the duration in UTC
+    let adjusted_dtm = utc_dt + Duration::days(num);
+
+    // Convert back to the given timezone
+    let adjusted_dtm = adjusted_dtm.with_timezone(&dtm.timezone());
+
+    // Adjust the time to keep it constant
+    adjusted_dtm.date().and_time(time).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::FixedOffset;
+    use chrono::NaiveTime;
+    use chrono_tz::America::New_York;
+
+    #[test]
+    fn test_add_days_in_timezone_standard_to_dst() {
+        // US Eastern Time (EST/EDT)
+        let est = New_York;
+        // Before DST starts (Standard Time)
+        let dtm = est.ymd(2023, 3, 11).and_hms(12, 0, 0);
+        let result = add_days_in_timezone(&dtm, 1);
+        dbg!(&dtm, &result);
+        let expected = est.ymd(2023, 3, 12).and_hms(12, 0, 0); // DST starts on March 12, 2023
+        assert_eq!(result, expected);
+    }
+
+    // #[test]
+    // fn test_add_days_in_timezone_dst_to_standard() {
+    //     // US Eastern Time (EST/EDT)
+    //     let edt = FixedOffset::west(4 * 3600); // UTC-4
+    //     let est = FixedOffset::west(5 * 3600); // UTC-5
+
+    //     // Before DST ends (Daylight Saving Time)
+    //     let dtm = edt.ymd(2023, 11, 4).and_hms(12, 0, 0);
+    //     let result = add_days_in_timezone(&dtm, 1);
+    //     let expected = est.ymd(2023, 11, 5).and_hms(12, 0, 0); // DST ends on November 5, 2023
+    //     assert_eq!(result, expected);
+    // }
+
+    // #[test]
+    // fn test_add_days_in_timezone_standard_time() {
+    //     // US Eastern Time (EST)
+    //     let est = FixedOffset::west(5 * 3600); // UTC-5
+
+    //     // Standard Time
+    //     let dtm = est.ymd(2023, 1, 1).and_hms(12, 0, 0);
+    //     let result = add_days_in_timezone(&dtm, 1);
+    //     let expected = est.ymd(2023, 1, 2).and_hms(12, 0, 0);
+    //     assert_eq!(result, expected);
+    // }
+
+    // #[test]
+    // fn test_add_days_in_timezone_daylight_saving_time() {
+    //     // US Eastern Time (EDT)
+    //     let edt = FixedOffset::west(4 * 3600); // UTC-4
+
+    //     // Daylight Saving Time
+    //     let dtm = edt.ymd(2023, 6, 1).and_hms(12, 0, 0);
+    //     let result = add_days_in_timezone(&dtm, 1);
+    //     let expected = edt.ymd(2023, 6, 2).and_hms(12, 0, 0);
+    //     assert_eq!(result, expected);
+    // }
 }

@@ -11,3 +11,5 @@ chrono ={ version = "*"}
 chrono-tz ={ version = "*"}
 lib-utils = {version = "*", path = "../../crates/lib-utils"}
 once_cell = { version = "*" }
+fallible-iterator = "0.3.0"
+thiserror = "1.0.65"

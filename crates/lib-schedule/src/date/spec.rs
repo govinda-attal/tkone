@@ -49,9 +49,6 @@ mod tests {
     fn test_one() {
         let spec = Spec::from_str("YY:MM:29:P").unwrap();
         dbg!(&spec);
-        let now = Local::now().with_timezone(&Sydney);
-        println!("{:?}", now);
-        // println!("{:?}", spec.next_dtm(now).unwrap());
     }
 }
 
@@ -186,92 +183,3 @@ impl FromStr for DayCycle {
         Ok(cycle)
     }
 }
-
-// impl DateSpec {
-//     pub fn next_dtm<Tz: TimeZone>(&self, dtm: DateTime<Tz>) -> Result<DateTime<Tz>> {
-//         let mut next_dtm =
-//             self.intervals
-//                 .iter()
-//                 .fold(dtm, |next_dtm: DateTime<Tz>, c| -> DateTime<Tz> {
-//                     match c {
-//                         Cycle::Year(y) => next_dtm.add(Months::new(*y as u32 * 12)),
-//                         Cycle::Month(m) => next_dtm.add(Months::new(*m as u32)),
-//                         Cycle::Day(d) => next_dtm.add(Days::new(*d as u64)),
-//                         Cycle::BusinessDay(bd) => add_business_days(*bd, next_dtm),
-//                     }
-//                 });
-
-//         if let Some(kind) = &self.day_kind {
-//             next_dtm = match kind {
-//                 DayKind::Num(d) => next_dtm.with_day(*d as u32).unwrap(),
-//                 DayKind::LastDay(d) => {
-//                     if d.is_none() {
-//                         adjust_month_last_day(next_dtm)
-//                     } else {
-//                         let d = d.unwrap() as u32;
-//                         let adjusted_dtm = adjust_month_last_day(next_dtm);
-//                         if adjusted_dtm.day().ge(&d) {
-//                             adjusted_dtm.with_day(d).unwrap()
-//                         } else {
-//                             adjusted_dtm
-//                         }
-//                     }
-//                 }
-//             };
-//         };
-
-//         if let Some(step) = &self.business_day_step {
-//             next_dtm = match step {
-//                 BusinessDayStep::Prev => {
-//                     let bck = match next_dtm.weekday() {
-//                         chrono::Weekday::Sat => 1,
-//                         chrono::Weekday::Sun => 2,
-//                         _ => 0,
-//                     };
-//                     next_dtm.sub(Days::new(bck))
-//                 }
-//                 BusinessDayStep::Next => {
-//                     let fwd_days = match next_dtm.weekday() {
-//                         chrono::Weekday::Sat => 2,
-//                         chrono::Weekday::Sun => 1,
-//                         _ => 0,
-//                     };
-//                     next_dtm.add(Days::new(fwd_days))
-//                 }
-//             }
-//         }
-//         Ok(next_dtm)
-//     }
-// }
-
-// fn add_business_days<Tz: TimeZone>(bd: u8, dtm: DateTime<Tz>) -> DateTime<Tz> {
-//     let times = bd / 5;
-//     let bal = bd % 5;
-
-//     let next_dtm = (0..times)
-//         .into_iter()
-//         .into_iter()
-//         .fold(dtm, |next_dtm: DateTime<Tz>, _| -> DateTime<Tz> {
-//             next_dtm.add(Days::new(7))
-//         });
-
-//     next_dtm.add(Days::new(bal as u64))
-// }
-
-// fn adjust_month_last_day<Tz: TimeZone>(dtm: DateTime<Tz>) -> DateTime<Tz> {
-//     if dtm.month() < 12 {
-//         dtm.with_month(dtm.month())
-//             .unwrap()
-//             .with_day(1)
-//             .unwrap()
-//             .sub(Days::new(1))
-//     } else {
-//         dtm.with_year(dtm.year() + 1)
-//             .unwrap()
-//             .with_month(1)
-//             .unwrap()
-//             .with_day(1)
-//             .unwrap()
-//             .sub(Days::new(1))
-//     }
-// }

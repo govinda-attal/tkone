@@ -1,22 +1,23 @@
 use chrono::{DateTime, Duration, TimeZone, Timelike};
+use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};
 use crate::prelude::*;
 
-struct Calculator<Tz: TimeZone> {
+struct Calculator {
     spec: Spec,
     dtm: DateTime<Tz>,
 }
 
-impl<Tz: TimeZone> Calculator<Tz> {
+impl Calculator {
     fn new(dtm: DateTime<Tz>, spec: &str) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self { spec, dtm })
     }
 }
 
-impl<Tz: TimeZone> FallibleIterator for Calculator<Tz> {
+impl FallibleIterator for Calculator {
     type Item = DateTime<Tz>;
     type Error = Error;
 
@@ -61,7 +62,10 @@ mod tests {
 
     #[test]
     fn test_time_spec_from_str() {
-        let dtm = DateTime::parse_from_rfc3339("2021-01-01T12:20:05Z").unwrap();
+        let dtm = DateTime::parse_from_rfc3339("2021-01-01T12:20:05-05:00")
+            .unwrap()
+            .with_timezone(&Tz::US__Eastern);
+        dbg!(&dtm);
         let mut calc = Calculator::new(dtm, "12H:30M:5S").unwrap();
 
         dbg!(calc.next());

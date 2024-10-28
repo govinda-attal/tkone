@@ -4,6 +4,9 @@ pub enum Error {
     Custom(&'static str),
     #[error("parse error {0}")]
     ParseError(&'static str),
+
+    #[error("next date calculation error")]
+    NextDateCalcError,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

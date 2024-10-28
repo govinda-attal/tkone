@@ -1,24 +1,45 @@
 use crate::prelude::*;
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, Datelike, Duration, TimeZone};
 
 pub trait BizDayProcessor {
     fn is_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>) -> Result<bool>;
-    fn next_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, count: u8) -> Result<DateTime<Tz>>;
-    fn prev_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, count: u8) -> Result<DateTime<Tz>>;
+    fn add<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>>;
+    fn sub<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>>;
 }
 
 pub struct WeekendSkipper {}
 
 impl BizDayProcessor for WeekendSkipper {
     fn is_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>) -> Result<bool> {
-        Ok(true)
+        let weekday = dtm.weekday();
+        Ok(weekday != chrono::Weekday::Sat && weekday != chrono::Weekday::Sun)
     }
 
-    fn next_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, count: u8) -> Result<DateTime<Tz>> {
-        Ok(dtm.clone())
+    fn add<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>> {
+        let mut days_added = 0;
+        let mut current_date = dtm.clone();
+
+        while days_added < num {
+            current_date = current_date + Duration::days(1);
+            if self.is_biz_day(&current_date)? {
+                days_added += 1;
+            }
+        }
+
+        Ok(current_date)
     }
 
-    fn prev_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, count: u8) -> Result<DateTime<Tz>> {
-        Ok(dtm.clone())
+    fn sub<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>> {
+        let mut days_subtracted = 0;
+        let mut current_date = dtm.clone();
+
+        while days_subtracted < num {
+            current_date = current_date - Duration::days(1);
+            if self.is_biz_day(&current_date)? {
+                days_subtracted += 1;
+            }
+        }
+
+        Ok(current_date)
     }
 }

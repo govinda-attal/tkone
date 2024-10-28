@@ -12,10 +12,7 @@ struct Calculator<Tz: TimeZone> {
 impl<Tz: TimeZone> Calculator<Tz> {
     fn new(dtm: DateTime<Tz>, spec: &str) -> Result<Self> {
         let spec = spec.parse()?;
-        Ok(Self {
-            spec,
-            dtm,
-        })
+        Ok(Self { spec, dtm })
     }
 }
 
@@ -24,7 +21,6 @@ impl<Tz: TimeZone> FallibleIterator for Calculator<Tz> {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-
         let mut next = self.dtm.clone();
         match &self.spec.hours {
             Cycle::At(h) => {
@@ -59,8 +55,6 @@ impl<Tz: TimeZone> FallibleIterator for Calculator<Tz> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,7 +63,6 @@ mod tests {
     fn test_time_spec_from_str() {
         let dtm = DateTime::parse_from_rfc3339("2021-01-01T12:20:05Z").unwrap();
         let mut calc = Calculator::new(dtm, "12H:30M:5S").unwrap();
-        
 
         dbg!(calc.next());
     }

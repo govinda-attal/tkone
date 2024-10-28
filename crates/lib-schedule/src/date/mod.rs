@@ -1,2 +1,2 @@
-mod spec; 
 mod calc;
+mod spec;

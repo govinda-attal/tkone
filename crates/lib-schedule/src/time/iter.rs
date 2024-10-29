@@ -131,6 +131,7 @@ impl FallibleIterator for SpecIterator {
 
 #[cfg(test)]
 mod tests {
+
     use chrono_tz::America::New_York;
 
     use super::*;
@@ -161,11 +162,14 @@ mod tests {
 
     #[test]
     fn test_time_spec_with_end_spec() {
+
+
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
         dbg!(&dtm);
+
         let spec_iter = SpecIterator::new_with_end_spec("3H:00:00", dtm, "15H:00:00").unwrap();
 
         let tmp = spec_iter.collect::<Vec<DateTime<Tz>>>().unwrap();

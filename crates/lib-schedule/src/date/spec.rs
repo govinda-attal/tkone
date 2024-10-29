@@ -5,7 +5,6 @@ use std::{
 };
 
 use chrono::{DateTime, Datelike, Days, Months, TimeZone};
-use fallible_iterator::FallibleIterator;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -23,7 +22,7 @@ pub enum DayCycle {
     LastDay(Option<u8>),
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum BizDayStep {
     #[default]
     NA,
@@ -58,7 +57,7 @@ const CYCLE_EXPR: &str = r"(?:YY|MM|DD|BB)|(?:(?<num>\d+)?(?<type>[YMBDPNL])?)";
 pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());
 static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Spec {
     pub years: Cycle,
     pub months: Cycle,

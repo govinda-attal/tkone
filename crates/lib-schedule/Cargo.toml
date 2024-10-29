@@ -13,3 +13,5 @@ lib-utils = {version = "*", path = "../../crates/lib-utils"}
 once_cell = { version = "*" }
 fallible-iterator = "0.3.0"
 thiserror = "1.0.65"
+datetime-default = "1.1.1"
+derivative = "2.2.0"

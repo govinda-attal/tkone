@@ -7,6 +7,7 @@ pub trait BizDayProcessor {
     fn sub<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>>;
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct WeekendSkipper {}
 
 impl BizDayProcessor for WeekendSkipper {

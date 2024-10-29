@@ -1,15 +1,21 @@
+use std::default;
+
 use super::spec::{Cycle, DayCycle, Spec};
 use crate::biz_day::WeekendSkipper;
 use crate::{biz_day::BizDayProcessor, prelude::*};
-use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
 use chrono_tz::Tz;
+use datetime_default::DateTimeDefaultNow;
+use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
+#[derive(Debug, Clone)]
 pub struct SpecIterator {
+    spec: Spec,
     start: DateTime<Tz>,
+    end_spec: Option<String>,
     end: Option<DateTime<Tz>>,
     remaining: Option<u32>,
-    spec: Spec,
     dtm: DateTime<Tz>,
     bd_processor: WeekendSkipper, // Using the example BizDateProcessor
 }
@@ -20,10 +26,11 @@ impl SpecIterator {
         Ok(Self {
             start: start.clone(),
             dtm: start,
-            end: None,
-            remaining: None,
             spec,
             bd_processor: WeekendSkipper {},
+            end: None,
+            end_spec: None,
+            remaining: None,
         })
     }
 
@@ -33,9 +40,24 @@ impl SpecIterator {
             start: start.clone(),
             dtm: start,
             end: Some(end),
-            remaining: None,
             spec,
             bd_processor: WeekendSkipper {},
+            end_spec: None,
+            remaining: None,
+        })
+    }
+
+    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
+        let spec = spec.parse()?;
+        let end = Self::new(end_spec, start.clone())?.next()?.ok_or(Error::Custom("invalid end spec"))?;
+        Ok(Self {
+            start: start.clone(),
+            end: Some(end),
+            spec,
+            end_spec: Some(end_spec.into()),
+            dtm: start,
+            bd_processor: WeekendSkipper {},
+            remaining: None,
         })
     }
 
@@ -44,10 +66,11 @@ impl SpecIterator {
         Ok(Self {
             start: start.clone(),
             dtm: start,
-            end: None,
             remaining: Some(max),
             spec,
             bd_processor: WeekendSkipper {},
+            end: None,
+            end_spec: None,
         })
     }
 }
@@ -159,6 +182,17 @@ fn add_days_in_timezone(dtm: &DateTime<Tz>, num: i64) -> DateTime<Tz> {
 mod tests {
     use super::*;
     use chrono_tz::America::New_York;
+
+    #[test]
+    fn test_time_spec() {
+        // US Eastern Time (EST/EDT)
+        let est = New_York;
+        // Before DST starts (Standard Time)
+        let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
+        dbg!(&dtm);
+        let spec_iter = SpecIterator::new("YY:1M:DD", dtm).unwrap();
+        dbg!(spec_iter.take(14).collect::<Vec<DateTime<Tz>>>().unwrap());
+    }
 
     #[test]
     fn test_add_days_in_timezone_standard_to_dst() {

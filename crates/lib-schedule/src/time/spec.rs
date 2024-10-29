@@ -14,7 +14,7 @@ pub enum Cycle {
     Every(u8),
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct Spec {
     pub hours: Cycle,
     pub minutes: Cycle,

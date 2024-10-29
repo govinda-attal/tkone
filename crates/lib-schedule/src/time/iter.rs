@@ -166,7 +166,7 @@ mod tests {
         // Before DST starts (Standard Time)
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
         dbg!(&dtm);
-        let spec_iter = SpecIterator::new_with_end_spec("3H:00:00", dtm, "21H:00:00").unwrap();
+        let spec_iter = SpecIterator::new_with_end_spec("3H:00:00", dtm, "15H:00:00").unwrap();
 
         let tmp = spec_iter.collect::<Vec<DateTime<Tz>>>().unwrap();
         dbg!(tmp);

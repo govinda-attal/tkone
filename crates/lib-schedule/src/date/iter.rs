@@ -2,15 +2,15 @@ use std::default;
 
 use super::spec::{Cycle, DayCycle, Spec};
 use crate::biz_day::WeekendSkipper;
+use crate::NextDate;
 use crate::{biz_day::BizDayProcessor, prelude::*};
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
-use chrono_tz::Tz;
 use datetime_default::DateTimeDefaultNow;
 use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
 #[derive(Debug, Clone)]
-pub struct SpecIterator {
+pub struct SpecIterator<Tz: TimeZone> {
     spec: Spec,
     start: DateTime<Tz>,
     end_spec: Option<String>,
@@ -20,7 +20,7 @@ pub struct SpecIterator {
     bd_processor: WeekendSkipper, // Using the example BizDateProcessor
 }
 
-impl SpecIterator {
+impl <Tz: TimeZone>SpecIterator<Tz> {
     fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
@@ -75,7 +75,11 @@ impl SpecIterator {
     }
 }
 
-impl FallibleIterator for SpecIterator {
+impl <Tz: TimeZone, BDP: BizDayProcessor>NextDate<BDP, Tz> for SpecIterator<Tz> {
+    type BDP = WeekendSkipper;
+}
+
+impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
     type Item = DateTime<Tz>;
     type Error = Error;
 
@@ -99,7 +103,8 @@ impl FallibleIterator for SpecIterator {
         let next = match &self.spec.days {
             DayCycle::NA => next,
             DayCycle::On(day) => next.with_day(*day as u32).unwrap(),
-            DayCycle::Every(num) => next + Duration::days(*num as i64),
+            // DayCycle::Every(num) => next + Duration::days(*num as i64),
+            DayCycle::Every(num) => add_days_in_timezone(&next, *num as i64),
             DayCycle::EveryBizDay(num) => self.bd_processor.add(&next, *num)?,
             DayCycle::LastDay(Some(num)) => day_or_month_end(&next, *num),
             DayCycle::LastDay(None) => month_end(&next),
@@ -127,7 +132,7 @@ impl FallibleIterator for SpecIterator {
     }
 }
 
-fn month_end(dtm: &DateTime<Tz>) -> DateTime<Tz> {
+fn month_end<Tz: TimeZone>(dtm: &DateTime<Tz>) -> DateTime<Tz> {
     let next_month = if dtm.month() == 12 {
         dtm.with_year(dtm.year() + 1)
             .unwrap()
@@ -139,7 +144,7 @@ fn month_end(dtm: &DateTime<Tz>) -> DateTime<Tz> {
     next_month.with_day(1).unwrap() - Duration::days(1)
 }
 
-fn day_or_month_end(dtm: &DateTime<Tz>, num: u8) -> DateTime<Tz> {
+fn day_or_month_end<Tz: TimeZone>(dtm: &DateTime<Tz>, num: u8) -> DateTime<Tz> {
     let last_day_of_month = month_end(dtm).day();
     let target_day = if num as u32 > last_day_of_month {
         last_day_of_month
@@ -149,7 +154,7 @@ fn day_or_month_end(dtm: &DateTime<Tz>, num: u8) -> DateTime<Tz> {
     dtm.with_day(target_day as u32).unwrap()
 }
 
-fn ffwd_months(dtm: DateTime<Tz>, num: u8) -> DateTime<Tz> {
+fn ffwd_months<Tz: TimeZone>(dtm: DateTime<Tz>, num: u8) -> DateTime<Tz> {
     let mut new_month = dtm.month() as i64 + num as i64;
     let mut new_year = dtm.year();
     while new_month > 12 {
@@ -162,7 +167,7 @@ fn ffwd_months(dtm: DateTime<Tz>, num: u8) -> DateTime<Tz> {
         .unwrap()
 }
 
-fn add_days_in_timezone(dtm: &DateTime<Tz>, num: i64) -> DateTime<Tz> {
+fn add_days_in_timezone<Tz: TimeZone>(dtm: &DateTime<Tz>, num: i64) -> DateTime<Tz> {
     // Extract the time portion from the given DateTime
     let time = dtm.time();
     // Convert from the given timezone to UTC
@@ -191,7 +196,7 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
         dbg!(&dtm);
         let spec_iter = SpecIterator::new("YY:1M:DD", dtm).unwrap();
-        dbg!(spec_iter.take(14).collect::<Vec<DateTime<Tz>>>().unwrap());
+        dbg!(spec_iter.take(14).collect::<Vec<DateTime<_>>>().unwrap());
     }
 
     #[test]

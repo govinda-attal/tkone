@@ -1,13 +1,13 @@
-use chrono::{DateTime, Duration, TimeZone, Timelike};
-use chrono_tz::Tz;
+use chrono::{DateTime, Duration, TimeZone, Timelike, Utc};
+
 use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};
-use crate::prelude::*;
+use crate::{prelude::*, NextTime};
 
 #[derive(Debug, Clone)]
-pub struct SpecIterator {
+pub struct SpecIterator<Tz: TimeZone> {
     spec: Spec,
     start: DateTime<Tz>,
     end: Option<DateTime<Tz>>,
@@ -16,7 +16,7 @@ pub struct SpecIterator {
     dtm: DateTime<Tz>,
 }
 
-impl SpecIterator {
+impl <Tz: TimeZone>SpecIterator<Tz> {
     fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
@@ -69,7 +69,9 @@ impl SpecIterator {
     }
 }
 
-impl FallibleIterator for SpecIterator {
+impl <Tz: TimeZone>NextTime<Tz> for SpecIterator<Tz> {}
+
+impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
     type Item = DateTime<Tz>;
     type Error = Error;
 
@@ -88,8 +90,8 @@ impl FallibleIterator for SpecIterator {
                 return Ok(None);
             }
         }
-
         let mut next = self.dtm.clone();
+        
         match &self.spec.hours {
             Cycle::At(h) => {
                 next = next.with_hour(*h as u32).unwrap();
@@ -122,17 +124,16 @@ impl FallibleIterator for SpecIterator {
         if next <= self.dtm {
             return Ok(None);
         }
-
         self.dtm = next;
         self.remaining = remaining;
-        Ok(Some(next))
+        Ok(Some(self.dtm.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use chrono_tz::America::New_York;
+    use chrono_tz::{America::New_York, Europe::London};
 
     use super::*;
 
@@ -142,9 +143,22 @@ mod tests {
         let est = New_York;
         // Before DST starts (Standard Time)
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
+        dbg!(&dtm.to_rfc3339());
+        let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
+        let spec_ter = SpecIterator::new("HH:30M:00", dt.with_timezone(&New_York)).unwrap();
+        dbg!(spec_ter.take(6).collect::<Vec<DateTime<_>>>().unwrap());
+    }
+
+    #[test]
+    fn test_time_spec_month_end() {
+        // US Eastern Time (EST/EDT)
+        let london = London;
+        // Before DST starts (Standard Time)
+        let dtm = london.with_ymd_and_hms(2021, 10, 31, 00, 30, 0).unwrap();
         dbg!(&dtm);
-        let spec_ter = SpecIterator::new("3H:00:00", dtm).unwrap();
-        dbg!(spec_ter.take(3).collect::<Vec<DateTime<Tz>>>().unwrap());
+        // let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
+        let spec_ter = SpecIterator::new("3H:MM:00", dtm).unwrap();
+        dbg!(spec_ter.take(5).collect::<Vec<DateTime<_>>>().unwrap());
     }
 
     #[test]
@@ -152,11 +166,11 @@ mod tests {
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
+        let dtm = est.with_ymd_and_hms(2024, 11, 3, 0, 30, 0).unwrap();
         dbg!(&dtm);
-        let spec_iter = SpecIterator::new_with_max("3H:00:00", dtm, 2).unwrap();
+        let spec_iter = SpecIterator::new_with_max("2H:00:00", dtm, 5).unwrap();
 
-        let tmp = spec_iter.collect::<Vec<DateTime<Tz>>>().unwrap();
+        let tmp = spec_iter.collect::<Vec<DateTime<_>>>().unwrap();
         dbg!(tmp);
     }
 
@@ -172,7 +186,7 @@ mod tests {
 
         let spec_iter = SpecIterator::new_with_end_spec("3H:00:00", dtm, "15H:00:00").unwrap();
 
-        let tmp = spec_iter.collect::<Vec<DateTime<Tz>>>().unwrap();
+        let tmp = spec_iter.collect::<Vec<DateTime<_>>>().unwrap();
         dbg!(tmp);
     }
 }

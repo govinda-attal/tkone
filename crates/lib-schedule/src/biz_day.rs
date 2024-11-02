@@ -1,22 +1,22 @@
 use crate::prelude::*;
-use chrono::{DateTime, Datelike, Duration, TimeZone};
+use chrono::{Datelike, Duration, NaiveDateTime, TimeZone};
 
 pub trait BizDayProcessor {
-    fn is_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>) -> Result<bool>;
-    fn add<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>>;
-    fn sub<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>>;
+    fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool>;
+    fn add(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime>;
+    fn sub(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime>;
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct WeekendSkipper {}
 
 impl BizDayProcessor for WeekendSkipper {
-    fn is_biz_day<Tz: TimeZone>(&self, dtm: &DateTime<Tz>) -> Result<bool> {
+    fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool> {
         let weekday = dtm.weekday();
         Ok(weekday != chrono::Weekday::Sat && weekday != chrono::Weekday::Sun)
     }
 
-    fn add<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>> {
+    fn add(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime> {
         let mut days_added = 0;
         let mut current_date = dtm.clone();
 
@@ -30,7 +30,7 @@ impl BizDayProcessor for WeekendSkipper {
         Ok(current_date)
     }
 
-    fn sub<Tz: TimeZone>(&self, dtm: &DateTime<Tz>, num: u8) -> Result<DateTime<Tz>> {
+    fn sub(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime> {
         let mut days_subtracted = 0;
         let mut current_date = dtm.clone();
 

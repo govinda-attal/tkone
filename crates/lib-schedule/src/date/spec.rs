@@ -10,7 +10,7 @@ use regex::Regex;
 
 use crate::biz_day::WeekendSkipper;
 use crate::prelude::*;
-use crate::{BizDayProcessor, NextDate};
+use crate::BizDayProcessor;
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum DayCycle {

@@ -1,78 +1,93 @@
-use chrono::{DateTime, Duration, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
 
 use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};
-use crate::{prelude::*, NextTime};
+use crate::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct SpecIterator<Tz: TimeZone> {
-    spec: Spec,
-    start: DateTime<Tz>,
-    end: Option<DateTime<Tz>>,
-    end_spec: Option<String>,
-    remaining: Option<u32>,
-    dtm: DateTime<Tz>,
+    tz: Tz,
+    naive_spec_iter: NaiveSpecIterator,
 }
 
-impl <Tz: TimeZone>SpecIterator<Tz> {
-    fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
+impl<Tz: TimeZone> SpecIterator<Tz> {
+    pub fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
+        Ok(Self {
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new(spec, start.naive_local())?,
+        })
+    }
+
+    pub fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
+        Ok(Self {
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_end(
+                spec,
+                start.naive_local(),
+                end.naive_local(),
+            )?,
+        })
+    }
+
+    pub fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
+        Ok(Self {
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
+                spec,
+                start.naive_local(),
+                end_spec,
+            )?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NaiveSpecIterator {
+    spec: Spec,
+    end: Option<NaiveDateTime>,
+    remaining: Option<u32>,
+    dtm: NaiveDateTime,
+}
+
+impl NaiveSpecIterator {
+    pub fn new(spec: &str, start: NaiveDateTime) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
-            spec,
-            start: start.clone(),
             dtm: start,
+            spec,
             end: None,
-            end_spec: None,
             remaining: None,
         })
     }
 
-    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
+    pub fn new_with_end(spec: &str, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
-            spec,
-            start: start.clone(),
-            end: Some(end),
             dtm: start,
-            end_spec: None,
+            end: Some(end),
+            spec,
             remaining: None,
         })
     }
 
-    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
+    pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
         let spec = spec.parse()?;
         let end = Self::new(end_spec, start.clone())?
             .next()?
             .ok_or(Error::Custom("invalid end spec"))?;
         Ok(Self {
-            spec,
-            start: start.clone(),
             end: Some(end),
-            dtm: start,
-            end_spec: Some(end_spec.into()),
-            remaining: None,
-        })
-    }
-
-    fn new_with_max(spec: &str, start: DateTime<Tz>, max: u32) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            start: start.clone(),
-            remaining: Some(max),
             spec,
             dtm: start,
-            end: None,
-            end_spec: None,
+            remaining: None,
         })
     }
 }
 
-impl <Tz: TimeZone>NextTime<Tz> for SpecIterator<Tz> {}
-
-impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
-    type Item = DateTime<Tz>;
+impl FallibleIterator for NaiveSpecIterator {
+    type Item = NaiveDateTime;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -90,26 +105,8 @@ impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
                 return Ok(None);
             }
         }
+
         let mut next = self.dtm.clone();
-        
-        match &self.spec.hours {
-            Cycle::At(h) => {
-                next = next.with_hour(*h as u32).unwrap();
-            }
-            Cycle::Every(h) => {
-                next = next + Duration::hours(*h as i64);
-            }
-            _ => {}
-        };
-        match &self.spec.minutes {
-            Cycle::At(m) => {
-                next = next.with_minute(*m as u32).unwrap();
-            }
-            Cycle::Every(m) => {
-                next = next + Duration::minutes(*m as i64);
-            }
-            _ => {}
-        };
 
         match &self.spec.seconds {
             Cycle::At(s) => {
@@ -121,12 +118,49 @@ impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
             _ => {}
         };
 
+        match &self.spec.minutes {
+            Cycle::At(m) => {
+                next = next.with_minute(*m as u32).unwrap();
+            }
+            Cycle::Every(m) => {
+                next = next + Duration::minutes(*m as i64);
+            }
+            _ => {}
+        };
+
+        match &self.spec.hours {
+            Cycle::At(h) => {
+                next = next.with_hour(*h as u32).unwrap();
+            }
+            Cycle::Every(h) => {
+                next = next + Duration::hours(*h as i64);
+            }
+            _ => {}
+        };
+
         if next <= self.dtm {
             return Ok(None);
         }
+
         self.dtm = next;
         self.remaining = remaining;
+
         Ok(Some(self.dtm.clone()))
+    }
+}
+
+// impl <Tz: TimeZone>NextTime<Tz> for SpecIterator<Tz> {}
+
+impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
+    type Item = DateTime<Tz>;
+    type Error = Error;
+
+    fn next(&mut self) -> Result<Option<Self::Item>> {
+        let item = self.naive_spec_iter.next()?;
+        let Some(next) = item else {
+            return Ok(None);
+        };
+        Ok(Some(Self::Item::from(W((self.tz.clone(), next.clone())))))
     }
 }
 
@@ -157,27 +191,12 @@ mod tests {
         let dtm = london.with_ymd_and_hms(2021, 10, 31, 00, 30, 0).unwrap();
         dbg!(&dtm);
         // let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
-        let spec_ter = SpecIterator::new("3H:MM:00", dtm).unwrap();
+        let spec_ter = SpecIterator::new("1H:MM:00", dtm).unwrap();
         dbg!(spec_ter.take(5).collect::<Vec<DateTime<_>>>().unwrap());
     }
 
     #[test]
-    fn test_time_spec_with_max() {
-        // US Eastern Time (EST/EDT)
-        let est = New_York;
-        // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2024, 11, 3, 0, 30, 0).unwrap();
-        dbg!(&dtm);
-        let spec_iter = SpecIterator::new_with_max("2H:00:00", dtm, 5).unwrap();
-
-        let tmp = spec_iter.collect::<Vec<DateTime<_>>>().unwrap();
-        dbg!(tmp);
-    }
-
-    #[test]
     fn test_time_spec_with_end_spec() {
-
-
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)

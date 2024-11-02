@@ -64,7 +64,7 @@ impl TryFrom<&str> for Cycle {
     }
 }
 
-pub const SPEC_EXPR: &str = r"^([01][0-9]|2[0-3]|[0-9]H|1[0-9]H|2[0-3]H|HH):([0-5][0-9]|[0-5]?[0-9]M|MM):([0-5][0-9]|[0-5]?[0-9]S|SS)$";
+pub const SPEC_EXPR: &str = r"([01][0-9]|2[0-3]|[0-9]H|1[0-9]H|2[0-3]H|HH):([0-5][0-9]|[0-5]?[0-9]M|MM):([0-5][0-9]|[0-5]?[0-9]S|SS)";
 const CYCLE_EXPR: &str = r"(?:HH|MM|SS)|(?:(?<num>\d+)(?<type>[HMS])?)";
 
 pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());

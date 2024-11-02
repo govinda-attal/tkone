@@ -1,5 +1,6 @@
 mod biz_day;
 mod date;
+mod datetime;
 mod error;
 mod prelude;
 mod time;
@@ -10,9 +11,3 @@ use chrono::{DateTime, TimeZone};
 
 use fallible_iterator::FallibleIterator;
 use prelude::*;
-
-pub trait NextTime<Tz: TimeZone>: FallibleIterator<Item = DateTime<Tz>, Error = Error> {}
-
-pub trait NextDate<BDP, Tz: TimeZone>: FallibleIterator<Item = DateTime<Tz>, Error = Error> {
-    type BDP: BizDayProcessor;
-}

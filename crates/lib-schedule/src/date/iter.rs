@@ -1,86 +1,116 @@
 use std::default;
 
-use super::spec::{Cycle, DayCycle, Spec};
+use super::spec::{BizDayStep, Cycle, DayCycle, Spec};
 use crate::biz_day::WeekendSkipper;
-use crate::NextDate;
 use crate::{biz_day::BizDayProcessor, prelude::*};
-use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use datetime_default::DateTimeDefaultNow;
 use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
 #[derive(Debug, Clone)]
 pub struct SpecIterator<Tz: TimeZone> {
-    spec: Spec,
-    start: DateTime<Tz>,
-    end_spec: Option<String>,
-    end: Option<DateTime<Tz>>,
-    remaining: Option<u32>,
-    dtm: DateTime<Tz>,
+    tz: Tz,
+    naive_spec_iter: NaiveSpecIterator,
     bd_processor: WeekendSkipper, // Using the example BizDateProcessor
 }
 
-impl <Tz: TimeZone>SpecIterator<Tz> {
-    fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
-        let spec = spec.parse()?;
+impl<Tz: TimeZone> SpecIterator<Tz> {
+    pub fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
         Ok(Self {
-            start: start.clone(),
-            dtm: start,
-            spec,
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new(spec, start.naive_local())?,
             bd_processor: WeekendSkipper {},
-            end: None,
-            end_spec: None,
-            remaining: None,
         })
     }
 
-    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
-        let spec = spec.parse()?;
+    pub fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
         Ok(Self {
-            start: start.clone(),
-            dtm: start,
-            end: Some(end),
-            spec,
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_end(
+                spec,
+                start.naive_local(),
+                end.naive_local(),
+            )?,
             bd_processor: WeekendSkipper {},
-            end_spec: None,
-            remaining: None,
         })
     }
 
-    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
-        let spec = spec.parse()?;
-        let end = Self::new(end_spec, start.clone())?.next()?.ok_or(Error::Custom("invalid end spec"))?;
+    pub fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
         Ok(Self {
-            start: start.clone(),
-            end: Some(end),
-            spec,
-            end_spec: Some(end_spec.into()),
-            dtm: start,
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
+                spec,
+                start.naive_local(),
+                end_spec,
+            )?,
             bd_processor: WeekendSkipper {},
-            remaining: None,
-        })
-    }
-
-    fn new_with_max(spec: &str, start: DateTime<Tz>, max: u32) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            start: start.clone(),
-            dtm: start,
-            remaining: Some(max),
-            spec,
-            bd_processor: WeekendSkipper {},
-            end: None,
-            end_spec: None,
         })
     }
 }
 
-impl <Tz: TimeZone, BDP: BizDayProcessor>NextDate<BDP, Tz> for SpecIterator<Tz> {
-    type BDP = WeekendSkipper;
-}
-
-impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
+impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
     type Item = DateTime<Tz>;
+    type Error = Error;
+
+    fn next(&mut self) -> Result<Option<Self::Item>> {
+        let next = self.naive_spec_iter.next()?;
+        let Some(next) = next else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self::Item::from(W((self.tz.clone(), next.clone())))))
+    }
+}
+#[derive(Debug, Clone)]
+pub struct NaiveSpecIterator {
+    spec: Spec,
+    end: Option<NaiveDateTime>,
+    remaining: Option<u32>,
+    dtm: NaiveDateTime,
+    bd_processor: WeekendSkipper, // Using the example BizDateProcessor
+}
+
+impl NaiveSpecIterator {
+    pub fn new(spec: &str, start: NaiveDateTime) -> Result<Self> {
+        let spec = spec.parse()?;
+        Ok(Self {
+            dtm: start,
+            spec,
+            bd_processor: WeekendSkipper {},
+            end: None,
+            remaining: None,
+        })
+    }
+
+    pub fn new_with_end(spec: &str, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
+        let spec = spec.parse()?;
+        Ok(Self {
+            dtm: start,
+            end: Some(end),
+            spec,
+            bd_processor: WeekendSkipper {},
+            remaining: None,
+        })
+    }
+
+    pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
+        let spec = spec.parse()?;
+        let end = Self::new(end_spec, start.clone())?
+            .next()?
+            .ok_or(Error::Custom("invalid end spec"))?;
+        Ok(Self {
+            end: Some(end),
+            spec,
+            dtm: start,
+            bd_processor: WeekendSkipper {},
+            remaining: None,
+        })
+    }
+}
+
+impl FallibleIterator for NaiveSpecIterator {
+    type Item = NaiveDateTime;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -103,8 +133,8 @@ impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
         let next = match &self.spec.days {
             DayCycle::NA => next,
             DayCycle::On(day) => next.with_day(*day as u32).unwrap(),
-            // DayCycle::Every(num) => next + Duration::days(*num as i64),
-            DayCycle::Every(num) => add_days_in_timezone(&next, *num as i64),
+            DayCycle::Every(num) => next + Duration::days(*num as i64),
+            // DayCycle::Every(num) => add_days_in_timezone(&next, *num as i64),
             DayCycle::EveryBizDay(num) => self.bd_processor.add(&next, *num)?,
             DayCycle::LastDay(Some(num)) => day_or_month_end(&next, *num),
             DayCycle::LastDay(None) => month_end(&next),
@@ -122,6 +152,20 @@ impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
             Cycle::Every(num) => next.with_year(next.year() + *num as i32).unwrap(),
         };
 
+        let next = if let Some(biz_day_step) = &self.spec.biz_day_step {
+            if self.bd_processor.is_biz_day(&next)? {
+                next
+            } else {
+                match biz_day_step {
+                    BizDayStep::Prev(num) => self.bd_processor.sub(&next, *num)?,
+                    BizDayStep::Next(num) => self.bd_processor.add(&next, *num)?,
+                    BizDayStep::NA => next,
+                }
+            }
+        } else {
+            next
+        };
+
         if next <= self.dtm {
             return Ok(None);
         }
@@ -132,7 +176,7 @@ impl <Tz: TimeZone>FallibleIterator for SpecIterator<Tz> {
     }
 }
 
-fn month_end<Tz: TimeZone>(dtm: &DateTime<Tz>) -> DateTime<Tz> {
+fn month_end(dtm: &NaiveDateTime) -> NaiveDateTime {
     let next_month = if dtm.month() == 12 {
         dtm.with_year(dtm.year() + 1)
             .unwrap()
@@ -144,7 +188,7 @@ fn month_end<Tz: TimeZone>(dtm: &DateTime<Tz>) -> DateTime<Tz> {
     next_month.with_day(1).unwrap() - Duration::days(1)
 }
 
-fn day_or_month_end<Tz: TimeZone>(dtm: &DateTime<Tz>, num: u8) -> DateTime<Tz> {
+fn day_or_month_end(dtm: &NaiveDateTime, num: u8) -> NaiveDateTime {
     let last_day_of_month = month_end(dtm).day();
     let target_day = if num as u32 > last_day_of_month {
         last_day_of_month
@@ -154,13 +198,16 @@ fn day_or_month_end<Tz: TimeZone>(dtm: &DateTime<Tz>, num: u8) -> DateTime<Tz> {
     dtm.with_day(target_day as u32).unwrap()
 }
 
-fn ffwd_months<Tz: TimeZone>(dtm: DateTime<Tz>, num: u8) -> DateTime<Tz> {
+fn ffwd_months(dtm: NaiveDateTime, num: u8) -> NaiveDateTime {
     let mut new_month = dtm.month() as i64 + num as i64;
     let mut new_year = dtm.year();
     while new_month > 12 {
         new_month -= 12;
         new_year += 1;
     }
+
+    dbg!(&new_year, &new_month, &dtm);
+
     dtm.with_year(new_year)
         .unwrap()
         .with_month(new_month as u32)

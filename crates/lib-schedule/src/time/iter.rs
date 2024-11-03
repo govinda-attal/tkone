@@ -1,6 +1,5 @@
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
 
-use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};

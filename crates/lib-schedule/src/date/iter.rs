@@ -1,9 +1,12 @@
 use std::default;
 
-use super::spec::{BizDayStep, Cycle, DayCycle, Spec};
+use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOverflow, Spec};
+use super::HandleOverflow;
 use crate::biz_day::WeekendSkipper;
 use crate::{biz_day::BizDayProcessor, prelude::*};
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use datetime_default::DateTimeDefaultNow;
 use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
@@ -130,26 +133,323 @@ impl FallibleIterator for NaiveSpecIterator {
         }
 
         let next = self.dtm.clone();
-        let next = match &self.spec.days {
-            DayCycle::NA => next,
-            DayCycle::On(day) => next.with_day(*day as u32).unwrap(),
-            DayCycle::Every(num) => next + Duration::days(*num as i64),
-            // DayCycle::Every(num) => add_days_in_timezone(&next, *num as i64),
-            DayCycle::EveryBizDay(num) => self.bd_processor.add(&next, *num)?,
-            DayCycle::LastDay(Some(num)) => day_or_month_end(&next, *num),
-            DayCycle::LastDay(None) => month_end(&next),
-        };
+        dbg!(&next, "<><><><><>");
 
-        let next = match &self.spec.months {
-            Cycle::NA => next,
-            Cycle::In(num) => next.with_month(*num as u32).unwrap(),
-            Cycle::Every(num) => ffwd_months(next, *num as u8),
-        };
+        let spec = (&self.spec.years, &self.spec.months, &self.spec.days);
 
-        let next = match &self.spec.years {
-            Cycle::NA => next,
-            Cycle::In(num) => next.with_year(*num as i32).unwrap(),
-            Cycle::Every(num) => next.with_year(next.year() + *num as i32).unwrap(),
+        let next = match spec {
+            (Cycle::NA, Cycle::NA, DayCycle::NA) => next,
+            (Cycle::NA, Cycle::NA, DayCycle::On(day, overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .build()
+            }
+            (Cycle::NA, Cycle::NA, DayCycle::Every(num)) => next + Duration::days(*num as i64),
+            (Cycle::NA, Cycle::NA, DayCycle::EveryBizDay(num)) => {
+                self.bd_processor.add(&next, *num)?
+            }
+            (Cycle::NA, Cycle::NA, DayCycle::Overflow(overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, overflow).build()
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::NA) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .build()
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::On(day, overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .month(*month)
+                .build()
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::Every(num)) => {
+                let next = next + Duration::days(*num as i64);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .build()
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::EveryBizDay(num)) => {
+                let next = self.bd_processor.add(&next, *num)?;
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .build()
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::Overflow(overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, overflow)
+                    .month(*month)
+                    .build()
+            }
+            (Cycle::NA, Cycle::Every(num), DayCycle::NA) => {
+                let (year, month) = ffwd_months(&next, *num);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(year)
+                    .build()
+            }
+            (Cycle::NA, Cycle::Every(num), DayCycle::On(day, day_overflow)) => {
+                let (year, month) = ffwd_months(&next, *num);
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .month(month)
+                .year(year)
+                .build()
+            }
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                let (year, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(year)
+                    .build()
+            }
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::EveryBizDay(num_days)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                let (year, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(year)
+                    .build()
+            }
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::Overflow(day_overflow)) => {
+                let (year, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, day_overflow)
+                    .month(month)
+                    .year(year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::NA) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::On(day, day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .year(*year)
+                .build()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::EveryBizDay(num_days)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::Overflow(day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, day_overflow)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::NA) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::On(day, day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .month(*month)
+                .year(*year)
+                .build()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::EveryBizDay(num_days)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::Overflow(day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, day_overflow)
+                    .month(*month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::NA) => {
+                let (_, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::On(day, day_overflow)) => {
+                let (_, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .month(month)
+                .year(*year)
+                .build()
+            }
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                let (_, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::EveryBizDay(num_days)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                let (_, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Overflow(day_overflow)) => {
+                let (_, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, day_overflow)
+                    .month(month)
+                    .year(*year)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::NA) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::On(day, day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .year(next.year() as u32 + *num_years)
+                .build()
+            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::EveryBizDay(num_days)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::Overflow(day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, day_overflow)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::NA) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::On(day, day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .month(*month)
+                .year(next.year() as u32 + *num_years)
+                .build()
+            }
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::EveryBizDay(num_days)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(*month)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Overflow(day_overflow)) => {
+                NaiveDateTimeWithOverflowBuilder::new(&next, day_overflow)
+                    .month(*month)
+                    .year(next.year() as u32 + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::NA) => {
+                let (year, month) = ffwd_months(&next, *num_months as u32);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(year + *num_years)
+                    .build()
+            }
+            (
+                Cycle::Every(num_years),
+                Cycle::Every(num_months),
+                DayCycle::On(day, day_overflow),
+            ) => {
+                let (year, month) = ffwd_months(&next, *num_months as u32);
+                NaiveDateTimeWithOverflowBuilder::new(
+                    &next,
+                    day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
+                )
+                .day(*day)
+                .month(month)
+                .year(year + *num_years)
+                .build()
+            }
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Every(num_days)) => {
+                let next = next + Duration::days(*num_days as i64);
+                let (year, month) = ffwd_months(&next, *num_months);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(year + *num_years)
+                    .build()
+            }
+            (
+                Cycle::Every(num_years),
+                Cycle::Every(num_months),
+                DayCycle::EveryBizDay(num_days),
+            ) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
+                let (year, month) = ffwd_months(&next, *num_months as u32);
+                NaiveDateTimeWithOverflowBuilder::new(&next, &DayOverflow::MonthLastDay)
+                    .month(month)
+                    .year(year + *num_years)
+                    .build()
+            }
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Overflow(overflow)) => {
+                let (year, month) = ffwd_months(&next, *num_months as u32);
+                NaiveDateTimeWithOverflowBuilder::new(&next, overflow)
+                    .month(month)
+                    .year(year + *num_years)
+                    .build()
+            }
         };
 
         let next = if let Some(biz_day_step) = &self.spec.biz_day_step {
@@ -176,20 +476,26 @@ impl FallibleIterator for NaiveSpecIterator {
     }
 }
 
-fn month_end(dtm: &NaiveDateTime) -> NaiveDateTime {
-    let next_month = if dtm.month() == 12 {
-        dtm.with_year(dtm.year() + 1)
-            .unwrap()
-            .with_month(1)
-            .unwrap()
-    } else {
-        dtm.with_month(dtm.month() + 1).unwrap()
-    };
-    next_month.with_day(1).unwrap() - Duration::days(1)
+fn month_end_date(dtm: &NaiveDateTime) -> NaiveDateTime {
+    // Calculate the year and month from the input datetime
+    let year = dtm.year();
+    let month = dtm.month();
+
+    // Create a NaiveDate for the first day of the next month.
+    let next_month = if month == 12 { 1 } else { month + 1 };
+    let next_month_date = NaiveDate::from_ymd_opt(year, next_month, 1)
+        .unwrap_or_else(|| NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap());
+
+    // Subtract one day to get the last day of the current month.
+    let last_day_of_month = next_month_date.pred_opt().unwrap();
+
+    // Construct the NaiveDateTime for the last day of the month
+    // with the same time as the input datetime.
+    NaiveDateTime::new(last_day_of_month, dtm.time())
 }
 
 fn day_or_month_end(dtm: &NaiveDateTime, num: u8) -> NaiveDateTime {
-    let last_day_of_month = month_end(dtm).day();
+    let last_day_of_month = month_end_date(dtm).day();
     let target_day = if num as u32 > last_day_of_month {
         last_day_of_month
     } else {
@@ -198,21 +504,25 @@ fn day_or_month_end(dtm: &NaiveDateTime, num: u8) -> NaiveDateTime {
     dtm.with_day(target_day as u32).unwrap()
 }
 
-fn ffwd_months(dtm: NaiveDateTime, num: u8) -> NaiveDateTime {
-    let mut new_month = dtm.month() as i64 + num as i64;
-    let mut new_year = dtm.year();
-    while new_month > 12 {
-        new_month -= 12;
-        new_year += 1;
-    }
-
-    dbg!(&new_year, &new_month, &dtm);
-
-    dtm.with_year(new_year)
-        .unwrap()
-        .with_month(new_month as u32)
-        .unwrap()
+fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
+    let mut new_month = dtm.month() + num;
+    let mut new_year = dtm.year() as u32;
+    new_year += (new_month - 1) / 12;
+    new_month = (new_month - 1) % 12 + 1;
+    (new_year, new_month)
 }
+
+// fn ffwd_months(dtm: NaiveDateTime, num: u8, day_cycle: &DayCycle) -> NaiveDateTime {
+//     let mut new_month = dtm.month() + num as u32;
+//     let mut new_year = dtm.year() as u32;
+//     new_year += (new_month - 1) / 12;
+//     new_month = (new_month - 1) % 12 + 1;
+
+//     dbg!(&new_year, &new_month, &dtm);
+//     let dtm = adjust_to_last_day(&dtm, dtm.with_year(new_year as i32), day_cycle);
+//     dbg!(&new_year, &new_month, &dtm);
+//     adjust_to_last_day(&dtm, dtm.with_month(new_month as u32), day_cycle)
+// }
 
 fn add_days_in_timezone<Tz: TimeZone>(dtm: &DateTime<Tz>, num: i64) -> DateTime<Tz> {
     // Extract the time portion from the given DateTime
@@ -228,6 +538,43 @@ fn add_days_in_timezone<Tz: TimeZone>(dtm: &DateTime<Tz>, num: i64) -> DateTime<
 
     // Adjust the time to keep it constant
     adjusted_dtm.date().and_time(time).unwrap()
+}
+
+// fn update_day_or_overflow(dtm: &NaiveDateTime, day: u8, overflow: Option<&spec::DayOverflow>) -> NaiveDateTime {
+//     if let Some(dtm) = dtm.with_day(day) {
+//         return dtm;
+//     }
+//     let dtm_overflows
+//     let overflow = overflow.unwrap_or_default();
+//     dtm.day_overflows(overflow)
+// }
+
+fn adjust_to_last_day(
+    orig: &NaiveDateTime,
+    updated: Option<NaiveDateTime>,
+    day_cycle: &DayCycle,
+) -> NaiveDateTime {
+    updated.unwrap()
+    // if updated.is_some() {
+    //     dbg!(&orig, &updated);
+    //     return updated.unwrap();
+    // }
+
+    // let next_month_end_date = month_end_date(&(month_end_date(orig) + Duration::days(1)));
+    // let target_day = match day_cycle {
+    //     DayCycle::LastDay(None) => next_month_end_date.day(),
+    //     DayCycle::LastDay(Some(day)) => {
+    //         if *day as u32 > next_month_end_date.day() {
+    //             next_month_end_date.day()
+    //         } else {
+    //             *day as u32
+    //         }
+    //     }
+    //     _ => next_month_end_date.day(),
+    // };
+    // let updated = next_month_end_date.with_day(target_day).unwrap();
+    // dbg!(&updated);
+    // updated
 }
 
 #[cfg(test)]
@@ -295,5 +642,71 @@ mod tests {
         let expected = us_east.with_ymd_and_hms(2023, 6, 2, 12, 0, 0).unwrap();
         dbg!(&dtm, &result.fixed_offset(), &expected.fixed_offset());
         assert_eq!(result, expected);
+    }
+}
+
+struct NaiveDateTimeWithOverflowBuilder<'a> {
+    dtm: &'a NaiveDateTime,
+    overflow: &'a DayOverflow,
+    day: Option<u32>,
+    month: Option<u32>,
+    year: Option<u32>,
+}
+
+impl<'a> NaiveDateTimeWithOverflowBuilder<'a> {
+    pub fn new(dtm: &'a NaiveDateTime, overflow: &'a DayOverflow) -> Self {
+        Self {
+            dtm,
+            overflow,
+            day: None,
+            month: None,
+            year: None,
+        }
+    }
+
+    pub fn day(&mut self, day: u32) -> &mut Self {
+        self.day = Some(day);
+        self
+    }
+
+    pub fn month(&mut self, month: u32) -> &mut Self {
+        self.month = Some(month);
+        self
+    }
+
+    pub fn year(&mut self, year: u32) -> &mut Self {
+        self.year = Some(year);
+        self
+    }
+
+    pub fn build(&self) -> NaiveDateTime {
+        let dtm = self.dtm.clone();
+        let day = self.day.unwrap_or(dtm.day());
+        let month = self.month.unwrap_or(dtm.month());
+        let year = self
+            .year
+            .map(|year| year as i32)
+            .unwrap_or(dtm.year() as i32);
+        if let Some(updated) = NaiveDate::from_ymd_opt(year, month, day) {
+            return NaiveDateTime::new(updated, dtm.time());
+        }
+
+        let overflow = self.overflow;
+        match overflow {
+            spec::DayOverflow::MonthLastDay => {
+                let next_month_first_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day_of_month = next_month_first_day.pred_opt().unwrap();
+                NaiveDateTime::new(last_day_of_month, dtm.time())
+            }
+            spec::DayOverflow::NextMonthFirstDay => {
+                let next_month_first_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                NaiveDateTime::new(next_month_first_day, dtm.time())
+            }
+            spec::DayOverflow::NextMonthOverflow => {
+                let next_month_first_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let dtm_last_day = next_month_first_day.pred_opt().unwrap().day();
+                dtm + Duration::days(day as i64 - dtm_last_day as i64)
+            }
+        }
     }
 }

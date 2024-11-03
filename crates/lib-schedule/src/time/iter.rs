@@ -99,48 +99,30 @@ impl FallibleIterator for NaiveSpecIterator {
         } else {
             None
         };
-
         if let Some(end) = &self.end {
             if &self.dtm >= end {
                 return Ok(None);
             }
         }
+        let next = self.dtm.clone();
 
-        let mut next = self.dtm.clone();
-
-        match &self.spec.seconds {
-            Cycle::At(s) => {
-                next = next.with_second(*s as u32).unwrap();
-            }
-            Cycle::Every(s) => {
-                next = next + Duration::seconds(*s as i64);
-            }
-            _ => {}
+        let next = match &self.spec.seconds {
+            Cycle::At(s) => next.with_second(*s as u32).unwrap(),
+            Cycle::Every(s) => next + Duration::seconds(*s as i64),
+            _ => next,
         };
 
-        match &self.spec.minutes {
-            Cycle::At(m) => {
-                next = next.with_minute(*m as u32).unwrap();
-            }
-            Cycle::Every(m) => {
-                next = next + Duration::minutes(*m as i64);
-            }
-            _ => {}
+        let next = match &self.spec.minutes {
+            Cycle::At(m) => next.with_minute(*m as u32).unwrap(),
+            Cycle::Every(m) => next + Duration::minutes(*m as i64),
+            _ => next,
         };
 
-        match &self.spec.hours {
-            Cycle::At(h) => {
-                next = next.with_hour(*h as u32).unwrap();
-            }
-            Cycle::Every(h) => {
-                next = next + Duration::hours(*h as i64);
-            }
-            _ => {}
+        let next = match &self.spec.hours {
+            Cycle::At(h) => next.with_hour(*h as u32).unwrap(),
+            Cycle::Every(h) => next + Duration::hours(*h as i64),
+            _ => next,
         };
-
-        if next <= self.dtm {
-            return Ok(None);
-        }
 
         self.dtm = next;
         self.remaining = remaining;
@@ -148,8 +130,6 @@ impl FallibleIterator for NaiveSpecIterator {
         Ok(Some(self.dtm.clone()))
     }
 }
-
-// impl <Tz: TimeZone>NextTime<Tz> for SpecIterator<Tz> {}
 
 impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
     type Item = DateTime<Tz>;

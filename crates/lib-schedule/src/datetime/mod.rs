@@ -1,27 +1,25 @@
-use core::time;
 use core::marker::PhantomData;
 use std::str::FromStr;
 
+use crate::biz_day::{BizDayProcessor, WeekendSkipper};
+use crate::prelude::*;
 use chrono::{DateTime, TimeZone};
 use fallible_iterator::FallibleIterator;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use crate::biz_day::{BizDayProcessor, WeekendSkipper};
-use crate::{date, prelude::*};
 
 use crate::date::Spec as DateSpec;
-use crate::time::Spec as TimeSpec;
 use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
-use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 use crate::date::{NaiveSpecIterator as DateNaiveSpecIterator, SpecIterator as DateSpecIterator};
+use crate::time::Spec as TimeSpec;
+use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 use crate::time::{NaiveSpecIterator as TimeNaiveSpecIterator, SpecIterator as TimeSpecIterator};
 
 #[derive(Debug, Clone)]
-struct Spec  {
+struct Spec {
     date_spec: String,
     time_spec: String,
 }
-
 
 #[derive(Debug)]
 pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
@@ -49,16 +47,18 @@ pub struct NotSealed;
 
 #[derive(Clone)]
 pub struct SpecIteratorBuilder<Tz: TimeZone, E, BDP: BizDayProcessor, S> {
-    start: DateTime<Tz>, 
+    start: DateTime<Tz>,
     spec: String,
     bd_processor: BDP,
     end: E,
     marker_sealed: PhantomData<S>,
 }
 
-
-impl <Tz: TimeZone, E, BDP: BizDayProcessor>SpecIteratorBuilder<Tz, E, BDP, NotSealed> {
-    pub fn with_end_spec(self, end_spec: impl Into<String>) -> SpecIteratorBuilder<Tz, EndSpec, BDP, Sealed> {
+impl<Tz: TimeZone, E, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, E, BDP, NotSealed> {
+    pub fn with_end_spec(
+        self,
+        end_spec: impl Into<String>,
+    ) -> SpecIteratorBuilder<Tz, EndSpec, BDP, Sealed> {
         SpecIteratorBuilder {
             start: self.start,
             spec: self.spec,
@@ -68,7 +68,10 @@ impl <Tz: TimeZone, E, BDP: BizDayProcessor>SpecIteratorBuilder<Tz, E, BDP, NotS
         }
     }
 
-    pub fn with_end(self, end: DateTime<Tz>) -> SpecIteratorBuilder<Tz, EndDateTime<Tz>, BDP, Sealed> {
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, EndDateTime<Tz>, BDP, Sealed> {
         SpecIteratorBuilder::<Tz, EndDateTime<Tz>, BDP, Sealed> {
             start: self.start,
             spec: self.spec,
@@ -79,23 +82,34 @@ impl <Tz: TimeZone, E, BDP: BizDayProcessor>SpecIteratorBuilder<Tz, E, BDP, NotS
     }
 }
 
-
-impl <Tz: TimeZone, BDP: BizDayProcessor>SpecIteratorBuilder<Tz, EndDateTime<Tz>, BDP, Sealed> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, EndDateTime<Tz>, BDP, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator::new_with_end(&self.spec, self.start, self.bd_processor, self.end.0)?)
+        Ok(SpecIterator::new_with_end(
+            &self.spec,
+            self.start,
+            self.bd_processor,
+            self.end.0,
+        )?)
     }
 }
 
-impl <Tz: TimeZone, BDP: BizDayProcessor>SpecIteratorBuilder<Tz, EndSpec, BDP, Sealed> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, EndSpec, BDP, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator::new_with_end_spec(&self.spec, self.start, self.bd_processor, &self.end.0)?)
+        Ok(SpecIterator::new_with_end_spec(
+            &self.spec,
+            self.start,
+            self.bd_processor,
+            &self.end.0,
+        )?)
     }
 }
 
-
-
-impl <Tz: TimeZone, BDP: BizDayProcessor, S>SpecIteratorBuilder<Tz, NoEnd, BDP, S> {
-    pub fn new(spec: &str, start: DateTime<Tz>, bdp: BDP) -> SpecIteratorBuilder<Tz, NoEnd, BDP, NotSealed> {
+impl<Tz: TimeZone, BDP: BizDayProcessor, S> SpecIteratorBuilder<Tz, NoEnd, BDP, S> {
+    pub fn new(
+        spec: &str,
+        start: DateTime<Tz>,
+        bdp: BDP,
+    ) -> SpecIteratorBuilder<Tz, NoEnd, BDP, NotSealed> {
         SpecIteratorBuilder {
             start: start,
             spec: spec.to_string(),
@@ -106,7 +120,11 @@ impl <Tz: TimeZone, BDP: BizDayProcessor, S>SpecIteratorBuilder<Tz, NoEnd, BDP, 
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator::new(&self.spec, self.start, self.bd_processor)?)
+        Ok(SpecIterator::new(
+            &self.spec,
+            self.start,
+            self.bd_processor,
+        )?)
     }
 }
 
@@ -123,9 +141,16 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
         })
     }
 
-    fn new_with_end(spec: &str, start: DateTime<Tz>, bd_processor: BDP, end: DateTime<Tz>) -> Result<Self> {
+    fn new_with_end(
+        spec: &str,
+        start: DateTime<Tz>,
+        bd_processor: BDP,
+        end: DateTime<Tz>,
+    ) -> Result<Self> {
         if end <= start {
-            return Err(Error::Custom("end date-time must be after the start date-time"));
+            return Err(Error::Custom(
+                "end date-time must be after the start date-time",
+            ));
         }
         let spec = Spec::from_str(spec)?;
         Ok(Self {
@@ -138,7 +163,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
         })
     }
 
-    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, bd_processor: BDP, end_spec: &str) -> Result<Self> {
+    fn new_with_end_spec(
+        spec: &str,
+        start: DateTime<Tz>,
+        bd_processor: BDP,
+        end_spec: &str,
+    ) -> Result<Self> {
         let spec = Spec::from_str(spec)?;
         let end_spec = Spec::from_str(end_spec)?;
         let mut time_spec_iter = TimeSpecIterator::new(&end_spec.time_spec, start.clone())?;
@@ -146,14 +176,18 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
             Some(dtm) => {
                 let mut date_spec_iter = DateSpecIterator::new(&end_spec.date_spec, dtm)?;
                 date_spec_iter.next()?
-            },
+            }
             None => None,
         };
-        let Some(end) = end else{
-            return Err(Error::Custom("End spec must result in a date-time after the start date-time"));
+        let Some(end) = end else {
+            return Err(Error::Custom(
+                "End spec must result in a date-time after the start date-time",
+            ));
         };
         if end <= start {
-            return Err(Error::Custom("End spec must result in a date-time after the start date-time"));
+            return Err(Error::Custom(
+                "End spec must result in a date-time after the start date-time",
+            ));
         }
         Ok(Self {
             spec,
@@ -166,8 +200,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
     }
 }
 
-
-impl <Tz: TimeZone, BDP: BizDayProcessor>FallibleIterator for SpecIterator<Tz, BDP> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDP> {
     type Item = DateTime<Tz>;
     type Error = Error;
 
@@ -190,14 +223,14 @@ impl <Tz: TimeZone, BDP: BizDayProcessor>FallibleIterator for SpecIterator<Tz, B
         let mut time_spec_iter = TimeSpecIterator::new(&self.spec.time_spec, self.dtm.clone())?;
         let next = match time_spec_iter.next()? {
             None => self.dtm.clone(),
-            Some(next) => {
-                next
-            },
+            Some(next) => next,
         };
+
+        dbg!(&next, "time ??????");
 
         let next = DateSpecIterator::new(&self.spec.date_spec, next)?.next()?;
 
-        let Some(next) = next else{
+        let Some(next) = next else {
             return Ok(None);
         };
 
@@ -225,7 +258,7 @@ impl FromStr for Spec {
         let Some(time_spec) = caps.name("time") else {
             return Err(Error::ParseError("missing time spec"));
         };
-        
+
         Ok(Self {
             date_spec: date_spec.as_str().to_string(),
             time_spec: time_spec.as_str().to_string(),
@@ -233,19 +266,26 @@ impl FromStr for Spec {
     }
 }
 
-pub static SPEC_EXPR: Lazy<String> = Lazy::new(||format!("(?:(?<date>{DATE_SPEC_EXPR})?T(?<time>{TIME_SPEC_EXPR}))").to_string());
+pub static SPEC_EXPR: Lazy<String> =
+    Lazy::new(|| format!("(?:(?<date>{DATE_SPEC_EXPR})?T(?<time>{TIME_SPEC_EXPR}))").to_string());
 
 pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(&SPEC_EXPR).unwrap());
 
-#[cfg(test)] 
-mod tests{
+#[cfg(test)]
+mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::biz_day::WeekendSkipper;
+    use chrono::Utc;
     #[test]
     fn test_spec_iter() {
-        let tmp = SpecIteratorBuilder::<Utc, NoEnd, WeekendSkipper, NotSealed>::new("YY:1M:28:PT12:00:00", Utc::now(), WeekendSkipper{}).build().unwrap();
-        let tmp= tmp.take(5).collect::<Vec<DateTime<_>>>().unwrap();
+        let tmp = SpecIteratorBuilder::<Utc, NoEnd, WeekendSkipper, NotSealed>::new(
+            "YY:1M:31L:PT11:00:00",
+            Utc::now(),
+            WeekendSkipper {},
+        )
+        .build()
+        .unwrap();
+        let tmp = tmp.take(5).collect::<Vec<DateTime<_>>>().unwrap();
         dbg!(&tmp);
     }
 
@@ -254,5 +294,4 @@ mod tests{
         let spec = SPEC_RE.captures("YY:1M:DD:PT12:00:00").unwrap();
         dbg!(&spec);
     }
-
 }

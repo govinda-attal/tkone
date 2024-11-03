@@ -3,8 +3,8 @@ use chrono::{Datelike, Duration, NaiveDateTime, TimeZone};
 
 pub trait BizDayProcessor {
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool>;
-    fn add(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime>;
-    fn sub(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime>;
+    fn add(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime>;
+    fn sub(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -16,7 +16,7 @@ impl BizDayProcessor for WeekendSkipper {
         Ok(weekday != chrono::Weekday::Sat && weekday != chrono::Weekday::Sun)
     }
 
-    fn add(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime> {
+    fn add(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime> {
         let mut days_added = 0;
         let mut current_date = dtm.clone();
 
@@ -30,7 +30,7 @@ impl BizDayProcessor for WeekendSkipper {
         Ok(current_date)
     }
 
-    fn sub(&self, dtm: &NaiveDateTime, num: u8) -> Result<NaiveDateTime> {
+    fn sub(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime> {
         let mut days_subtracted = 0;
         let mut current_date = dtm.clone();
 

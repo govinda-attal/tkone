@@ -16,26 +16,34 @@ use crate::BizDayProcessor;
 pub enum DayCycle {
     #[default]
     NA,
-    On(u8),
-    Every(u8),
-    EveryBizDay(u8),
-    LastDay(Option<u8>),
+    On(u32, Option<DayOverflow>),
+    Every(u32),
+    EveryBizDay(u32),
+    Overflow(DayOverflow),
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
+pub enum DayOverflow {
+    #[default]
+    MonthLastDay,
+    NextMonthFirstDay,
+    NextMonthOverflow,
 }
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum BizDayStep {
     #[default]
     NA,
-    Prev(u8),
-    Next(u8),
+    Prev(u32),
+    Next(u32),
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
 pub enum Cycle {
     #[default]
     NA,
-    In(u8),
-    Every(u8),
+    In(u32),
+    Every(u32),
 }
 
 #[cfg(test)]
@@ -46,13 +54,13 @@ mod tests {
 
     #[test]
     fn test_one() {
-        let spec = Spec::from_str("YY:MM:29:P").unwrap();
+        let spec = Spec::from_str("YY:MM:29O:P").unwrap();
         dbg!(&spec);
     }
 }
 
-pub const SPEC_EXPR: &str = r"(YY|19|20\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29[BDL]?|3[01][BDL]?|L)(?::([1-9]{0,1}[PN]))?";
-const CYCLE_EXPR: &str = r"(?:YY|MM|DD|BB)|(?:(?<num>\d+)?(?<type>[YMBDPNL])?)";
+pub const SPEC_EXPR: &str = r"(YY|19|20\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29[BDLFO]?|3[01][BDLFO]?|[LFO])(?::([1-9]{0,1}[PN]))?";
+const CYCLE_EXPR: &str = r"(?:YY|MM|DD|BB)|(?:(?<num>\d+)?(?<type>[YMBDBDLFOPN])?)";
 
 pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());
 static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
@@ -72,7 +80,6 @@ impl FromStr for Spec {
         let caps = SPEC_RE
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;
-        dbg!(&caps);
         let years = caps
             .get(1)
             .map(|m| Cycle::from_str(m.as_str()))
@@ -112,7 +119,7 @@ impl FromStr for Cycle {
         let Some(num) = cycle.name("num") else {
             return Ok(Cycle::NA);
         };
-        let num = num.as_str().parse::<u8>().unwrap();
+        let num = num.as_str().parse::<u32>().unwrap();
         let cycle = if cycle.name("type").is_some() {
             Cycle::Every(num)
         } else {
@@ -131,7 +138,7 @@ impl FromStr for BizDayStep {
             .ok_or(Error::ParseError("Invalid biz day step spec"))?;
 
         let num = if let Some(num) = step.name("num") {
-            num.as_str().parse::<u8>().unwrap()
+            num.as_str().parse::<u32>().unwrap()
         } else {
             1
         };
@@ -161,21 +168,24 @@ impl FromStr for DayCycle {
             let Some(ty) = cycle.name("type") else {
                 return Ok(DayCycle::NA);
             };
-            if ty.as_str() == "L" {
-                return Ok(DayCycle::LastDay(None));
+            match ty.as_str() {
+                "F" => return Ok(DayCycle::Overflow(DayOverflow::NextMonthFirstDay)),
+                "O" => return Ok(DayCycle::Overflow(DayOverflow::NextMonthOverflow)),
+                _ => return Ok(DayCycle::Overflow(DayOverflow::MonthLastDay)),
             };
-            return Ok(DayCycle::NA);
         };
 
-        let num = num.as_str().parse::<u8>().unwrap();
+        let num = num.as_str().parse::<u32>().unwrap();
         let Some(ty) = cycle.name("type") else {
-            return Ok(DayCycle::On(num));
+            return Ok(DayCycle::On(num, None));
         };
 
         let cycle = match ty.as_str() {
             "D" => DayCycle::Every(num),
             "B" => DayCycle::EveryBizDay(num),
-            "L" => DayCycle::LastDay(Some(num)),
+            "L" => DayCycle::On(num, Some(DayOverflow::MonthLastDay)),
+            "F" => DayCycle::On(num, Some(DayOverflow::NextMonthFirstDay)),
+            "O" => DayCycle::On(num, Some(DayOverflow::NextMonthOverflow)),
             _ => Err(Error::ParseError("Invalid time spec"))?,
         };
 

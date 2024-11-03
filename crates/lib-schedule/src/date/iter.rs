@@ -1,14 +1,9 @@
-use std::default;
-
 use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOverflow, Spec};
-use super::HandleOverflow;
 use crate::biz_day::WeekendSkipper;
 use crate::{biz_day::BizDayProcessor, prelude::*};
 use chrono::{
-    DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
 };
-use datetime_default::DateTimeDefaultNow;
-use derivative::Derivative;
 use fallible_iterator::FallibleIterator;
 
 #[derive(Debug, Clone)]
@@ -133,8 +128,7 @@ impl FallibleIterator for NaiveSpecIterator {
         }
 
         let next = self.dtm.clone();
-        dbg!(&next, "<><><><><>");
-
+        
         let spec = (&self.spec.years, &self.spec.months, &self.spec.days);
 
         let next = match spec {
@@ -476,105 +470,12 @@ impl FallibleIterator for NaiveSpecIterator {
     }
 }
 
-fn month_end_date(dtm: &NaiveDateTime) -> NaiveDateTime {
-    // Calculate the year and month from the input datetime
-    let year = dtm.year();
-    let month = dtm.month();
-
-    // Create a NaiveDate for the first day of the next month.
-    let next_month = if month == 12 { 1 } else { month + 1 };
-    let next_month_date = NaiveDate::from_ymd_opt(year, next_month, 1)
-        .unwrap_or_else(|| NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap());
-
-    // Subtract one day to get the last day of the current month.
-    let last_day_of_month = next_month_date.pred_opt().unwrap();
-
-    // Construct the NaiveDateTime for the last day of the month
-    // with the same time as the input datetime.
-    NaiveDateTime::new(last_day_of_month, dtm.time())
-}
-
-fn day_or_month_end(dtm: &NaiveDateTime, num: u8) -> NaiveDateTime {
-    let last_day_of_month = month_end_date(dtm).day();
-    let target_day = if num as u32 > last_day_of_month {
-        last_day_of_month
-    } else {
-        num as u32
-    };
-    dtm.with_day(target_day as u32).unwrap()
-}
-
 fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
     let mut new_month = dtm.month() + num;
     let mut new_year = dtm.year() as u32;
     new_year += (new_month - 1) / 12;
     new_month = (new_month - 1) % 12 + 1;
     (new_year, new_month)
-}
-
-// fn ffwd_months(dtm: NaiveDateTime, num: u8, day_cycle: &DayCycle) -> NaiveDateTime {
-//     let mut new_month = dtm.month() + num as u32;
-//     let mut new_year = dtm.year() as u32;
-//     new_year += (new_month - 1) / 12;
-//     new_month = (new_month - 1) % 12 + 1;
-
-//     dbg!(&new_year, &new_month, &dtm);
-//     let dtm = adjust_to_last_day(&dtm, dtm.with_year(new_year as i32), day_cycle);
-//     dbg!(&new_year, &new_month, &dtm);
-//     adjust_to_last_day(&dtm, dtm.with_month(new_month as u32), day_cycle)
-// }
-
-fn add_days_in_timezone<Tz: TimeZone>(dtm: &DateTime<Tz>, num: i64) -> DateTime<Tz> {
-    // Extract the time portion from the given DateTime
-    let time = dtm.time();
-    // Convert from the given timezone to UTC
-    let utc_dt = dtm.with_timezone(&Utc);
-
-    // Add the duration in UTC
-    let adjusted_dtm = utc_dt + Duration::days(num);
-
-    // Convert back to the given timezone
-    let adjusted_dtm = adjusted_dtm.with_timezone(&dtm.timezone());
-
-    // Adjust the time to keep it constant
-    adjusted_dtm.date().and_time(time).unwrap()
-}
-
-// fn update_day_or_overflow(dtm: &NaiveDateTime, day: u8, overflow: Option<&spec::DayOverflow>) -> NaiveDateTime {
-//     if let Some(dtm) = dtm.with_day(day) {
-//         return dtm;
-//     }
-//     let dtm_overflows
-//     let overflow = overflow.unwrap_or_default();
-//     dtm.day_overflows(overflow)
-// }
-
-fn adjust_to_last_day(
-    orig: &NaiveDateTime,
-    updated: Option<NaiveDateTime>,
-    day_cycle: &DayCycle,
-) -> NaiveDateTime {
-    updated.unwrap()
-    // if updated.is_some() {
-    //     dbg!(&orig, &updated);
-    //     return updated.unwrap();
-    // }
-
-    // let next_month_end_date = month_end_date(&(month_end_date(orig) + Duration::days(1)));
-    // let target_day = match day_cycle {
-    //     DayCycle::LastDay(None) => next_month_end_date.day(),
-    //     DayCycle::LastDay(Some(day)) => {
-    //         if *day as u32 > next_month_end_date.day() {
-    //             next_month_end_date.day()
-    //         } else {
-    //             *day as u32
-    //         }
-    //     }
-    //     _ => next_month_end_date.day(),
-    // };
-    // let updated = next_month_end_date.with_day(target_day).unwrap();
-    // dbg!(&updated);
-    // updated
 }
 
 #[cfg(test)]
@@ -591,57 +492,6 @@ mod tests {
         dbg!(&dtm);
         let spec_iter = SpecIterator::new("YY:1M:DD", dtm).unwrap();
         dbg!(spec_iter.take(14).collect::<Vec<DateTime<_>>>().unwrap());
-    }
-
-    #[test]
-    fn test_add_days_in_timezone_standard_to_dst() {
-        // US Eastern Time (EST/EDT)
-        let est = New_York;
-        // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2023, 3, 11, 12, 0, 0).unwrap();
-        let result = add_days_in_timezone(&dtm, 1);
-        dbg!(&dtm, &result);
-        let expected = est.with_ymd_and_hms(2023, 3, 12, 12, 0, 0).unwrap(); // DST starts on March 12, 2023
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_add_days_in_timezone_dst_to_standard() {
-        // US Eastern Time (EST/EDT)
-        let us_east = New_York;
-
-        // Before DST ends (Daylight Saving Time)
-        let dtm = us_east.with_ymd_and_hms(2023, 11, 4, 12, 0, 0).unwrap();
-        let result = add_days_in_timezone(&dtm, 1);
-        let expected = us_east.with_ymd_and_hms(2023, 11, 5, 12, 0, 0).unwrap(); // DST ends on November 5, 2023
-        dbg!(&dtm, &result, &expected);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_add_days_in_timezone_standard_time() {
-        // US Eastern Time (EST/EDT)
-        let us_east = New_York;
-
-        // Standard Time
-        let dtm = us_east.with_ymd_and_hms(2023, 1, 1, 12, 0, 0).unwrap();
-        let result = add_days_in_timezone(&dtm, 1);
-        let expected = us_east.with_ymd_and_hms(2023, 1, 2, 12, 0, 0).unwrap();
-        dbg!(&dtm, &result, &expected);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_add_days_in_timezone_daylight_saving_time() {
-        // US Eastern Time (EST/EDT)
-        let us_east = New_York;
-
-        // Daylight Saving Time
-        let dtm = us_east.with_ymd_and_hms(2023, 6, 1, 12, 0, 0).unwrap();
-        let result = add_days_in_timezone(&dtm, 1);
-        let expected = us_east.with_ymd_and_hms(2023, 6, 2, 12, 0, 0).unwrap();
-        dbg!(&dtm, &result.fixed_offset(), &expected.fixed_offset());
-        assert_eq!(result, expected);
     }
 }
 

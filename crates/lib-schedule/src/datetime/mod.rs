@@ -226,8 +226,6 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
             Some(next) => next,
         };
 
-        dbg!(&next, "time ??????");
-
         let next = DateSpecIterator::new(&self.spec.date_spec, next)?.next()?;
 
         let Some(next) = next else {

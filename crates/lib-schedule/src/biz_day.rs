@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use chrono::{Datelike, Duration, NaiveDateTime, TimeZone};
+use chrono::{Datelike, Duration, NaiveDateTime};
 
 pub trait BizDayProcessor {
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool>;

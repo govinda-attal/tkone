@@ -2,7 +2,7 @@ use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOverflow, Spec};
 use crate::biz_day::WeekendSkipper;
 use crate::{biz_day::BizDayProcessor, prelude::*};
 use chrono::{
-    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone,
 };
 use fallible_iterator::FallibleIterator;
 

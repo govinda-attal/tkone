@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike};
 
 use fallible_iterator::FallibleIterator;
 

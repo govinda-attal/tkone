@@ -1,7 +1,9 @@
+use std::fmt::Debug;
+
 use crate::prelude::*;
 use chrono::{Datelike, Duration, NaiveDateTime};
 
-pub trait BizDayProcessor {
+pub trait BizDayProcessor: Debug + Clone + Send + Sync + 'static {
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool>;
     fn add(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime>;
     fn sub(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime>;
@@ -9,6 +11,8 @@ pub trait BizDayProcessor {
 
 #[derive(Debug, Clone, Default)]
 pub struct WeekendSkipper {}
+unsafe impl Send for WeekendSkipper {}
+unsafe impl Sync for WeekendSkipper {}
 
 impl BizDayProcessor for WeekendSkipper {
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool> {

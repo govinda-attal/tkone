@@ -1,6 +1,6 @@
-use std::str::FromStr;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::str::FromStr;
 
 use crate::biz_day::WeekendSkipper;
 use crate::prelude::*;

@@ -1,53 +1,191 @@
+use std::marker::PhantomData;
+use std::sync::Arc;
+
 use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOverflow, Spec};
 use crate::biz_day::WeekendSkipper;
 use crate::{biz_day::BizDayProcessor, prelude::*};
 use chrono::{
-    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone,
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
 };
 use fallible_iterator::FallibleIterator;
 
-#[derive(Debug, Clone)]
-pub struct SpecIterator<Tz: TimeZone> {
-    tz: Tz,
-    naive_spec_iter: NaiveSpecIterator,
-    bd_processor: WeekendSkipper, // Using the example BizDateProcessor
+struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
+struct NoStart;
+struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
+struct EndSpec(String);
+struct NoEnd;
+struct Sealed;
+struct NotSealed;
+
+
+pub struct SpecIteratorBuilder<Tz: TimeZone, BDP, START, END, S> {
+    start: START,
+    spec: String,
+    bd_processor: BDP,
+    end: END,
+    timezone: Tz,
+    marker_sealed: PhantomData<S>,
 }
 
-impl<Tz: TimeZone> SpecIterator<Tz> {
-    pub fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
-        Ok(Self {
-            tz: start.timezone(),
-            naive_spec_iter: NaiveSpecIterator::new(spec, start.naive_local())?,
-            bd_processor: WeekendSkipper {},
-        })
+
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    pub fn new(
+        spec: &str,
+        bdp: BDP,
+        tz: &Tz,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Utc>, NoEnd, NotSealed> {
+        let now = Utc::now();
+        let now = now.timezone().with_ymd_and_hms(now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second()).unwrap();
+        SpecIteratorBuilder {
+            start: StartDateTime(now),
+            spec: spec.to_string(),
+            bd_processor: bdp,
+            end: NoEnd,
+            marker_sealed: PhantomData,
+            timezone: tz.clone(),
+        }
     }
 
-    pub fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
-        Ok(Self {
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let start = self.timezone.from_utc_datetime(&Utc::now().naive_utc()).with_timezone(&self.timezone);
+        Ok(SpecIterator{
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new(&self.spec, start.naive_local(), self.bd_processor)?,
+        })
+    }
+}
+
+
+
+impl<Tz: TimeZone, BDP: BizDayProcessor, END> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, END, NotSealed> {
+    pub fn with_end_spec(
+        self,
+        end_spec: impl Into<String>,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed> {
+        SpecIteratorBuilder {
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end: EndSpec(end_spec.into()),
+            marker_sealed: PhantomData,
+            timezone: self.timezone,
+        }
+    }
+
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+        SpecIteratorBuilder{
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end: EndDateTime(end),
+            marker_sealed: PhantomData,
+            timezone: self.timezone,
+        }
+    }
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let start = self.start.0;
+        let start = start.timezone().with_ymd_and_hms(start.year(), start.month(), start.day(), start.hour(), start.minute(), start.second()).unwrap();
+        Ok(SpecIterator{
             tz: start.timezone(),
             naive_spec_iter: NaiveSpecIterator::new_with_end(
-                spec,
+                &self.spec,
                 start.naive_local(),
-                end.naive_local(),
+                self.bd_processor,
+                self.end.0.naive_local(),
             )?,
-            bd_processor: WeekendSkipper {},
-        })
-    }
-
-    pub fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
-        Ok(Self {
-            tz: start.timezone(),
-            naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
-                spec,
-                start.naive_local(),
-                end_spec,
-            )?,
-            bd_processor: WeekendSkipper {},
         })
     }
 }
 
-impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed> {
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let start = self.start.0;
+        let start = start.timezone().with_ymd_and_hms(start.year(), start.month(), start.day(), start.hour(), start.minute(), start.second()).unwrap();
+        Ok(SpecIterator{
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
+                &self.spec,
+                start.naive_local(),
+                self.bd_processor,
+                &self.end.0,
+            )?,
+        })
+    }
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor, START, S> SpecIteratorBuilder<Tz, BDP, START, NoEnd, S> {
+    pub fn new_with_start(
+        spec: &str,
+        start: DateTime<Tz>,
+        bdp: BDP,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
+        SpecIteratorBuilder {
+            timezone: start.timezone(),
+            start: StartDateTime(start),
+            spec: spec.to_string(),
+            bd_processor: bdp,
+            end: NoEnd,
+            marker_sealed: PhantomData,
+        }
+    }
+
+}
+impl<Tz: TimeZone, BDP: BizDayProcessor, S> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, S> {
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        Ok(SpecIterator{
+            tz: self.start.0.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new(&self.spec, self.start.0.naive_local(), self.bd_processor)?,
+        })
+    }
+}
+
+
+#[derive(Debug)]
+pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
+    tz: Tz,
+    naive_spec_iter: NaiveSpecIterator<BDP>,
+}
+
+// impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM>{
+//     // fn new(spec: &str, start: DateTime<Tz>, bd_processor: BDM) -> Result<Self> {
+//     //     Ok(Self {
+//     //         tz: start.timezone(),
+//     //         naive_spec_iter: NaiveSpecIterator::new(spec, start.naive_local(), bd_processor)?,
+//     //     })
+//     // }
+
+//     // pub fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>, bd_processor: BDM) -> Result<Self> {
+//     //     Ok(Self {
+//     //         tz: start.timezone(),
+//     //         naive_spec_iter: NaiveSpecIterator::new_with_end(
+//     //             spec,
+//     //             start.naive_local(),
+//     //             bd_processor,
+//     //             end.naive_local(),
+//     //         )?,
+//     //     })
+//     // }
+
+//     // pub fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str, bd_processor: BDM) -> Result<Self> {
+//     //     // Ok(Self {
+//     //     //     tz: start.timezone(),
+//     //     //     naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
+//     //     //         spec,
+//     //     //         start.naive_local(),
+//     //     //         bd_processor,
+//     //     //         end_spec,
+//     //     //     )?,
+//     //     // })
+//     // }
+// }
+
+impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDM> {
     type Item = DateTime<Tz>;
     type Error = Error;
 
@@ -60,54 +198,59 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
         Ok(Some(Self::Item::from(W((self.tz.clone(), next.clone())))))
     }
 }
+
+
+
+
+
 #[derive(Debug, Clone)]
-pub struct NaiveSpecIterator {
+pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     spec: Spec,
     end: Option<NaiveDateTime>,
     remaining: Option<u32>,
     dtm: NaiveDateTime,
-    bd_processor: WeekendSkipper, // Using the example BizDateProcessor
+    bd_processor: BDP,
 }
 
-impl NaiveSpecIterator {
-    pub fn new(spec: &str, start: NaiveDateTime) -> Result<Self> {
+impl <BDP: BizDayProcessor>NaiveSpecIterator<BDP> {
+    pub fn new(spec: &str, start: NaiveDateTime, bdp: BDP) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
             dtm: start,
             spec,
-            bd_processor: WeekendSkipper {},
+            bd_processor: bdp,
             end: None,
             remaining: None,
         })
     }
 
-    pub fn new_with_end(spec: &str, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
+    pub fn new_with_end(spec: &str, start: NaiveDateTime,bdp: BDP, end: NaiveDateTime) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
             dtm: start,
             end: Some(end),
             spec,
-            bd_processor: WeekendSkipper {},
+            bd_processor: bdp,
             remaining: None,
         })
     }
 
-    pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
+    pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, bdp: BDP, end_spec: &str) -> Result<Self> {
         let spec = spec.parse()?;
-        let end = Self::new(end_spec, start.clone())?
+        let end = Self::new(end_spec, start.clone(), bdp.clone())?
             .next()?
             .ok_or(Error::Custom("invalid end spec"))?;
         Ok(Self {
             end: Some(end),
             spec,
             dtm: start,
-            bd_processor: WeekendSkipper {},
+            bd_processor: bdp,
             remaining: None,
         })
     }
 }
 
-impl FallibleIterator for NaiveSpecIterator {
+impl <BDP: BizDayProcessor>FallibleIterator for NaiveSpecIterator<BDP> {
     type Item = NaiveDateTime;
     type Error = Error;
 
@@ -480,6 +623,8 @@ fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    use crate::biz_day;
+
     use super::*;
     use chrono_tz::America::New_York;
 
@@ -489,8 +634,9 @@ mod tests {
         let est = New_York;
         // Before DST starts (Standard Time)
         let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
+
         dbg!(&dtm);
-        let spec_iter = SpecIterator::new("YY:1M:DD", dtm).unwrap();
+        let spec_iter = SpecIteratorBuilder::<chrono_tz::Tz, WeekendSkipper, StartDateTime<chrono_tz::Tz>, NoEnd, NotSealed>::new_with_start("YY:1M:DD", dtm, WeekendSkipper{}).build().unwrap();
         dbg!(spec_iter.take(14).collect::<Vec<DateTime<_>>>().unwrap());
     }
 }

@@ -14,7 +14,14 @@ pub struct WeekendSkipper {}
 unsafe impl Send for WeekendSkipper {}
 unsafe impl Sync for WeekendSkipper {}
 
+impl WeekendSkipper {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
 impl BizDayProcessor for WeekendSkipper {
+    
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool> {
         let weekday = dtm.weekday();
         Ok(weekday != chrono::Weekday::Sat && weekday != chrono::Weekday::Sun)

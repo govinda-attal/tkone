@@ -9,16 +9,16 @@ use chrono::{
 };
 use fallible_iterator::FallibleIterator;
 
-struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
-struct NoStart;
-struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
-struct EndSpec(String);
-struct NoEnd;
-struct Sealed;
-struct NotSealed;
+pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
+pub struct NoStart;
+pub struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
+pub struct EndSpec(String);
+pub struct NoEnd;
+pub struct Sealed;
+pub struct NotSealed;
 
 
-pub struct SpecIteratorBuilder<Tz: TimeZone, BDP, START, END, S> {
+pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> {
     start: START,
     spec: String,
     bd_processor: BDP,
@@ -57,7 +57,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
 
 
 
-impl<Tz: TimeZone, BDP: BizDayProcessor, END> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, END, NotSealed> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
     pub fn with_end_spec(
         self,
         end_spec: impl Into<String>,
@@ -71,7 +71,8 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, END> SpecIteratorBuilder<Tz, BDP, Start
             timezone: self.timezone,
         }
     }
-
+}
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
     pub fn with_end(
         self,
         end: DateTime<Tz>,
@@ -119,7 +120,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateT
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor, START, S> SpecIteratorBuilder<Tz, BDP, START, NoEnd, S> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
     pub fn new_with_start(
         spec: &str,
         start: DateTime<Tz>,
@@ -136,9 +137,9 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, S> SpecIteratorBuilder<Tz, BDP, 
     }
 
 }
-impl<Tz: TimeZone, BDP: BizDayProcessor, S> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, S> {
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator{
+        Ok(SpecIterator::<Tz, BDP>{
             tz: self.start.0.timezone(),
             naive_spec_iter: NaiveSpecIterator::new(&self.spec, self.start.0.naive_local(), self.bd_processor)?,
         })
@@ -329,8 +330,9 @@ impl <BDP: BizDayProcessor>FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num), DayCycle::On(day, day_overflow)) => {
-                let (year, month) = ffwd_months(&next, *num);
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::On(day, day_overflow)) => {
+                let (year, month) = ffwd_months(&next, *num_months);
+                
                 NaiveDateTimeWithOverflowBuilder::new(
                     &next,
                     day_overflow.as_ref().unwrap_or(&DayOverflow::MonthLastDay),
@@ -602,6 +604,7 @@ impl <BDP: BizDayProcessor>FallibleIterator for NaiveSpecIterator<BDP> {
         } else {
             next
         };
+        
 
         if next <= self.dtm {
             return Ok(None);
@@ -636,11 +639,12 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
 
         dbg!(&dtm);
-        let spec_iter = SpecIteratorBuilder::<chrono_tz::Tz, WeekendSkipper, StartDateTime<chrono_tz::Tz>, NoEnd, NotSealed>::new_with_start("YY:1M:DD", dtm, WeekendSkipper{}).build().unwrap();
+        let spec_iter = SpecIteratorBuilder::new_with_start("YY:1M:DD", dtm, WeekendSkipper{}).build().unwrap();
         dbg!(spec_iter.take(14).collect::<Vec<DateTime<_>>>().unwrap());
     }
 }
 
+#[derive(Debug)]
 struct NaiveDateTimeWithOverflowBuilder<'a> {
     dtm: &'a NaiveDateTime,
     overflow: &'a DayOverflow,
@@ -676,6 +680,7 @@ impl<'a> NaiveDateTimeWithOverflowBuilder<'a> {
     }
 
     pub fn build(&self) -> NaiveDateTime {
+       
         let dtm = self.dtm.clone();
         let day = self.day.unwrap_or(dtm.day());
         let month = self.month.unwrap_or(dtm.month());

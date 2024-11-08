@@ -1,10 +1,10 @@
 use std::str::FromStr;
 
+use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
+use crate::prelude::*;
+use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
-use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
-use crate::prelude::*;
 
 pub static SPEC_EXPR: Lazy<String> =
     Lazy::new(|| format!("(?:(?<date>{DATE_SPEC_EXPR})?T(?<time>{TIME_SPEC_EXPR}))").to_string());
@@ -15,7 +15,6 @@ pub struct Spec {
     pub date_spec: String,
     pub time_spec: String,
 }
-
 
 impl FromStr for Spec {
     type Err = Error;
@@ -37,7 +36,6 @@ impl FromStr for Spec {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,13 +1,10 @@
-mod biz_day;
+pub mod biz_day;
 pub mod date;
 pub mod datetime;
 mod error;
 mod prelude;
 pub mod time;
 mod utils;
-
-use biz_day::BizDayProcessor;
-
 
 #[cfg(test)]
 mod tests {
@@ -18,10 +15,10 @@ mod tests {
     use super::*;
     #[test]
     fn test_works() {
-        let tmp = datetime::SpecIteratorBuilder::new(
+        let tmp = datetime::SpecIteratorBuilder::new_with_start(
             "YY:1M:31LT11:00:00",
-            &Utc,
             WeekendSkipper::new(),
+            Utc.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
         )
         .with_end(Utc::with_ymd_and_hms(&Utc, 2025, 07, 31, 11, 00, 0).unwrap())
         .build()

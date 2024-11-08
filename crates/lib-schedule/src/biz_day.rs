@@ -21,7 +21,6 @@ impl WeekendSkipper {
 }
 
 impl BizDayProcessor for WeekendSkipper {
-    
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool> {
         let weekday = dtm.weekday();
         Ok(weekday != chrono::Weekday::Sat && weekday != chrono::Weekday::Sun)

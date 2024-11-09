@@ -1,8 +1,10 @@
 use std::marker::PhantomData;
 
 use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOverflow, Spec};
-use crate::{biz_day::BizDayProcessor, prelude::*};
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
+use crate::{biz_day::BizDayProcessor, prelude::*, NextResult};
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
+};
 use fallible_iterator::FallibleIterator;
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
@@ -212,41 +214,8 @@ pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     naive_spec_iter: NaiveSpecIterator<BDP>,
 }
 
-// impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM>{
-//     // fn new(spec: &str, start: DateTime<Tz>, bd_processor: BDM) -> Result<Self> {
-//     //     Ok(Self {
-//     //         tz: start.timezone(),
-//     //         naive_spec_iter: NaiveSpecIterator::new(spec, start.naive_local(), bd_processor)?,
-//     //     })
-//     // }
-
-//     // pub fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>, bd_processor: BDM) -> Result<Self> {
-//     //     Ok(Self {
-//     //         tz: start.timezone(),
-//     //         naive_spec_iter: NaiveSpecIterator::new_with_end(
-//     //             spec,
-//     //             start.naive_local(),
-//     //             bd_processor,
-//     //             end.naive_local(),
-//     //         )?,
-//     //     })
-//     // }
-
-//     // pub fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str, bd_processor: BDM) -> Result<Self> {
-//     //     // Ok(Self {
-//     //     //     tz: start.timezone(),
-//     //     //     naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
-//     //     //         spec,
-//     //     //         start.naive_local(),
-//     //     //         bd_processor,
-//     //     //         end_spec,
-//     //     //     )?,
-//     //     // })
-//     // }
-// }
-
 impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDM> {
-    type Item = DateTime<Tz>;
+    type Item = NextResult<DateTime<Tz>>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -254,8 +223,13 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
         let Some(next) = next else {
             return Ok(None);
         };
+        // Ok(Some(match next {
+        //     NextResult::Single(dtm) => NextResult::Single(self.tz.from_local_datetime(&dtm).single()?.unwrap()),
+        //     NextResult::AdjustedEarlier(actual, adjusted) => NextResult::AdjustedEarlier(self.tz.from_local_datetime(&actual).single()?.unwrap(), self.tz.from_local_datetime(&adjusted).single()?.unwrap()),
+        //     NextResult::AdjustedLater(actual, adjusted) => Ok(Some(NextResult::AdjustedLater(self.tz.from_local_datetime(&actual).single()?.unwrap(), self.tz.from_local_datetime(&adjusted).single()?.unwrap())),
+        // }))
 
-        Ok(Some(Self::Item::from(W((self.tz.clone(), next.clone())))))
+        Ok(Some(Self::Item::from(W((self.tz.clone(), next)))))
     }
 }
 
@@ -331,14 +305,14 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             bd_processor: bdp,
             index: 0,
             start: Some(start),
-            end: Some(end),
+            end: Some(end.observed().clone()),
             remaining: None,
         })
     }
 }
 
 impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
-    type Item = NaiveDateTime;
+    type Item = NextResult<NaiveDateTime>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -363,7 +337,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     self.dtm = start.clone();
                     self.remaining = remaining;
                     self.index += 1;
-                    return Ok(Some(start.clone()));
+                    return Ok(Some(NextResult::Single(start.clone())));
                 }
             }
         }
@@ -373,7 +347,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
         let spec = (&self.spec.years, &self.spec.months, &self.spec.days);
 
         let next = match spec {
-            (Cycle::NA, Cycle::NA, DayCycle::NA) => next,
+            (Cycle::NA, Cycle::NA, DayCycle::NA) => NextResult::Single(next),
             (Cycle::NA, Cycle::NA, DayCycle::On(day, overflow)) => {
                 NaiveDateTimeWithOverflowBuilder::new(
                     &next,
@@ -382,9 +356,9 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 .day(*day)
                 .build()
             }
-            (Cycle::NA, Cycle::NA, DayCycle::Every(num)) => next + Duration::days(*num as i64),
+            (Cycle::NA, Cycle::NA, DayCycle::Every(num)) => NextResult::Single(next + Duration::days(*num as i64)),
             (Cycle::NA, Cycle::NA, DayCycle::EveryBizDay(num)) => {
-                self.bd_processor.add(&next, *num)?
+                NextResult::Single(self.bd_processor.add(&next, *num)?)
             }
             (Cycle::NA, Cycle::NA, DayCycle::Overflow(overflow)) => {
                 NaiveDateTimeWithOverflowBuilder::new(&next, overflow).build()
@@ -689,12 +663,17 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
         };
 
         let next = if let Some(biz_day_step) = &self.spec.biz_day_step {
-            if self.bd_processor.is_biz_day(&next)? {
+            let (actual, observed) = (&next).as_tuple();
+            if self.bd_processor.is_biz_day(&observed)? {
                 next
             } else {
                 match biz_day_step {
-                    BizDayStep::Prev(num) => self.bd_processor.sub(&next, *num)?,
-                    BizDayStep::Next(num) => self.bd_processor.add(&next, *num)?,
+                    BizDayStep::Prev(num) => {
+                        NextResult::AdjustedEarlier(actual.clone(), self.bd_processor.sub(observed, *num)?)
+                    }
+                    BizDayStep::Next(num) => {
+                        NextResult::AdjustedLater(actual.clone(), self.bd_processor.add(observed, *num)?)
+                    },
                     BizDayStep::NA => next,
                 }
             }
@@ -702,14 +681,14 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             next
         };
 
-        if next <= self.dtm {
+        if next.actual() <= &self.dtm {
             return Ok(None);
         }
 
         self.index += 1;
-        self.dtm = next;
+        self.dtm = next.actual().clone();
         self.remaining = remaining;
-        Ok(Some(self.dtm.clone()))
+        Ok(Some(next))
     }
 }
 
@@ -739,7 +718,7 @@ mod tests {
         let spec_iter = SpecIteratorBuilder::new_with_start("YY:1M:DD", WeekendSkipper::new(), dtm)
             .build()
             .unwrap();
-        dbg!(spec_iter.take(15).collect::<Vec<DateTime<_>>>().unwrap());
+        dbg!(spec_iter.take(15).collect::<Vec<NextResult<DateTime<_>>>>().unwrap());
     }
 
     #[test]
@@ -747,13 +726,13 @@ mod tests {
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
+        let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
 
         dbg!(&dtm);
-        let spec_iter = SpecIteratorBuilder::new_with_start("YY:1M:DD", WeekendSkipper::new(), dtm)
+        let spec_iter = SpecIteratorBuilder::new_with_start("YY:1M:31F", WeekendSkipper::new(), dtm)
             .build()
             .unwrap();
-        dbg!(spec_iter.take(15).collect::<Vec<DateTime<_>>>().unwrap());
+        dbg!(spec_iter.take(15).collect::<Vec<NextResult<DateTime<_>>>>().unwrap());
     }
 }
 
@@ -792,7 +771,8 @@ impl<'a> NaiveDateTimeWithOverflowBuilder<'a> {
         self
     }
 
-    pub fn build(&self) -> NaiveDateTime {
+    pub fn build(&self) -> NextResult<NaiveDateTime> {
+        use spec::DayOverflow::*;
         let dtm = self.dtm.clone();
         let day = self.day.unwrap_or(dtm.day());
         let month = self.month.unwrap_or(dtm.month());
@@ -802,24 +782,26 @@ impl<'a> NaiveDateTimeWithOverflowBuilder<'a> {
             .unwrap_or(dtm.year() as i32);
 
         if let Some(updated) = NaiveDate::from_ymd_opt(year, month, day) {
-            return NaiveDateTime::new(updated, dtm.time());
+            return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
         }
 
         let overflow = self.overflow;
         match overflow {
-            spec::DayOverflow::MonthLastDay => {
-                let next_month_first_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day_of_month = next_month_first_day.pred_opt().unwrap();
-                NaiveDateTime::new(last_day_of_month, dtm.time())
+            MonthLastDay => {
+                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_day.pred_opt().unwrap();
+                NextResult::Single(NaiveDateTime::new(last_day, dtm.time()))
             }
-            spec::DayOverflow::NextMonthFirstDay => {
-                let next_month_first_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                NaiveDateTime::new(next_month_first_day, dtm.time())
+            NextMonthFirstDay => {
+                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_day.pred_opt().unwrap();
+                NextResult::AdjustedLater(NaiveDateTime::new(last_day, dtm.time()), NaiveDateTime::new(next_day, dtm.time())) 
             }
-            spec::DayOverflow::NextMonthOverflow => {
-                let next_month_first_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let dtm_last_day = next_month_first_day.pred_opt().unwrap().day();
-                dtm + Duration::days(day as i64 - dtm_last_day as i64)
+            NextMonthOverflow => {
+                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_day.pred_opt().unwrap();
+                let last_day_num = last_day.day();
+                NextResult::AdjustedLater(NaiveDateTime::new(last_day, dtm.time()), dtm + Duration::days(day as i64 - last_day_num as i64))        
             }
         }
     }

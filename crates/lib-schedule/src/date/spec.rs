@@ -11,14 +11,26 @@ pub enum DayCycle {
     Every(u32),
     EveryBizDay(u32),
     Overflow(DayOverflow),
+    // WeekDay(u32, WeekdayOption),
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
+pub enum WeekdayOption {
+    #[default]
+    NA,
+    // Last(Option<u32>),
+    // Every(u32),
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum DayOverflow {
     #[default]
-    MonthLastDay,
+    LastDay,
     NextMonthFirstDay,
     NextMonthOverflow,
+    Weekday,
+    LastWeekday,
+    NextMonthFirstWeekday,
 }
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
@@ -45,15 +57,26 @@ mod tests {
 
     #[test]
     fn test_one() {
-        let spec = Spec::from_str("YY:MM:29O:P").unwrap();
+        let spec = Spec::from_str("YY:MM:29L:P").unwrap();
         dbg!(&spec);
     }
 }
 
-pub const SPEC_EXPR: &str = r"(YY|19|20\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29[BDLFO]?|3[01][BDLFO]?|[LFO])(?::([1-9]{0,1}[PN]))?";
-const CYCLE_EXPR: &str = r"(?:YY|MM|DD|BB)|(?:(?<num>\d+)?(?<type>[YMBDBDLFOPN])?)";
+const MONTH_EXPR: &str = r"(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM)";
+const YEAR_EXPR: &str = r"(YY|19|20\d{2}|1Y)";
+const DAY_EXPR: &str = r"(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29[BDLFO]?|3[01][BDLFO]?|[LFO])";
+const BDAY_ADJ_EXPR: &str = r"(?::([1-9]{0,1}[PN]))?";
+const WEEKDAY_EXPR: &str =
+    r"(?:[MTWRFSU](?:[2]?L|[1-3]|#[1-3]))|(?:(?:[1-9]|1[0-9]|2[0-3])W)|(?:[1-5]?[MTWRFSU])";
+const WEEKDAY_EXTRACTOR_EXPR: &str = "(?:(?<wd>[MTWRFSU])(?:(?<last>[2]?L)|(?<start>[1-3])|#(?<every>[1-3]))|(?:(?<wd_num>:[1-9]|1[0-9]|2[0-3])W))";
 
-pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());
+pub static SPEC_EXPR: Lazy<String> =
+    Lazy::new(|| format!("{YEAR_EXPR}:{MONTH_EXPR}:{DAY_EXPR}{BDAY_ADJ_EXPR}").to_string());
+
+// pub const SPEC_EXPR: &str = r"(YY|19|20\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29[BDLFO]?|3[01][BDLFO]?|[LFO])|(?:[MTWRFSU](?:[2]?L|[1-3]|#[1-3]))|(?:(?:[1-9]|1[0-9]|2[0-3])W)(?::([1-9]{0,1}[PN]))?";
+const CYCLE_EXPR: &str = r"(?:YY|MM|DD|BB)|(?:(?<num>\d+)?(?<type>[YMBDBDLFOPN]|LW|FW|OW)?)";
+
+pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR.as_str()).unwrap());
 static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
 
 #[derive(Default, Debug, Clone)]
@@ -160,9 +183,7 @@ impl FromStr for DayCycle {
                 return Ok(DayCycle::NA);
             };
             match ty.as_str() {
-                "F" => return Ok(DayCycle::Overflow(DayOverflow::NextMonthFirstDay)),
-                "O" => return Ok(DayCycle::Overflow(DayOverflow::NextMonthOverflow)),
-                _ => return Ok(DayCycle::Overflow(DayOverflow::MonthLastDay)),
+                _ => return Ok(DayCycle::Overflow(DayOverflow::LastDay)),
             };
         };
 
@@ -174,9 +195,12 @@ impl FromStr for DayCycle {
         let cycle = match ty.as_str() {
             "D" => DayCycle::Every(num),
             "B" => DayCycle::EveryBizDay(num),
-            "L" => DayCycle::On(num, Some(DayOverflow::MonthLastDay)),
+            "L" => DayCycle::On(num, Some(DayOverflow::LastDay)),
             "F" => DayCycle::On(num, Some(DayOverflow::NextMonthFirstDay)),
             "O" => DayCycle::On(num, Some(DayOverflow::NextMonthOverflow)),
+            "W" => DayCycle::On(num, Some(DayOverflow::Weekday)),
+            "LW" => DayCycle::On(num, Some(DayOverflow::LastWeekday)),
+            "FW" => DayCycle::On(num, Some(DayOverflow::NextMonthFirstWeekday)),
             _ => Err(Error::ParseError("Invalid time spec"))?,
         };
 

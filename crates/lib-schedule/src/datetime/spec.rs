@@ -6,8 +6,14 @@ use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-pub static SPEC_EXPR: Lazy<String> =
-    Lazy::new(|| format!("(?:(?<date>{DATE_SPEC_EXPR})?T(?<time>{TIME_SPEC_EXPR}))").to_string());
+pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
+    format!(
+        "(?:(?<date>{})?T(?<time>{}))",
+        DATE_SPEC_EXPR.as_str(),
+        TIME_SPEC_EXPR
+    )
+    .to_string()
+});
 pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(&SPEC_EXPR).unwrap());
 
 #[derive(Debug, Clone)]

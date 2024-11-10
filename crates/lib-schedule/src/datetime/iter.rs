@@ -1,6 +1,6 @@
 use super::spec::Spec;
 use crate::biz_day::BizDayProcessor;
-use crate::prelude::*;
+use crate::{prelude::*, NextResult};
 use core::marker::PhantomData;
 use std::str::FromStr;
 
@@ -263,7 +263,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
                 "End spec must result in a date-time after the start date-time",
             ));
         };
-        if end <= start {
+        if end.actual() <= &start {
             return Err(Error::Custom(
                 "End spec must result in a date-time after the start date-time",
             ));
@@ -273,7 +273,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
             bd_processor,
             dtm: start.clone(),
             start: Some(start),
-            end: Some(end),
+            end: Some(end.actual().clone()),
             remaining: None,
             index: 0,
         })
@@ -281,7 +281,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDP> {
-    type Item = DateTime<Tz>;
+    type Item = NextResult<DateTime<Tz>>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -306,7 +306,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
                     self.dtm = start.clone();
                     self.remaining = remaining;
                     self.index += 1;
-                    return Ok(Some(start.clone()));
+                    return Ok(Some(NextResult::Single(start.clone())));
                 }
             }
         }
@@ -331,15 +331,15 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
             return Ok(None);
         };
 
-        if next < self.dtm {
+        if next.actual() < &self.dtm {
             return Ok(None);
         }
 
         self.index += 1;
-        self.dtm = next;
+        self.dtm = next.actual().clone();
         self.remaining = remaining;
 
-        Ok(Some(self.dtm.clone()))
+        Ok(Some(next))
     }
 }
 
@@ -354,7 +354,10 @@ mod tests {
             // .with_end(Utc::with_ymd_and_hms(&Utc, 2025, 07, 31, 11, 00, 0).unwrap())
             .build()
             .unwrap();
-        let tmp = tmp.take(6).collect::<Vec<DateTime<_>>>().unwrap();
+        let tmp = tmp
+            .take(6)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap();
         dbg!(&tmp);
     }
 }

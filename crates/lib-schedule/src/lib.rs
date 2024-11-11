@@ -1,3 +1,5 @@
+#![feature(let_chains)]
+
 pub mod biz_day;
 pub mod date;
 pub mod datetime;

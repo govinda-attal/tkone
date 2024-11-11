@@ -6,7 +6,7 @@ edition = "2021"
 [lib]
 
 [dependencies]
-regex ={ version = "*" }
+regex ={ version = "1.10" }
 chrono ={ version = "*"}
 chrono-tz ={ version = "*"}
 # lib-utils = {version = "*", path = "../../crates/lib-utils"}

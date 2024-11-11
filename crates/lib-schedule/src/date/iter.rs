@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOverflow, Spec};
+use super::spec::{self, BizDayStep, Cycle, DayCycle, DayOption, LastDayOption, Spec};
 use crate::{biz_day::BizDayProcessor, prelude::*, NextResult};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
 use fallible_iterator::FallibleIterator;
@@ -340,11 +340,11 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
 
         let next = match spec {
             (Cycle::NA, Cycle::NA, DayCycle::NA) => NextResult::Single(next),
-            (Cycle::NA, Cycle::NA, DayCycle::On(day, overflow)) => {
+            (Cycle::NA, Cycle::NA, DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(
                     &next,
-                    overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .build()
             }
@@ -354,60 +354,61 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::NA, Cycle::NA, DayCycle::EveryBizDay(num)) => {
                 NextResult::Single(self.bd_processor.add(&next, *num)?)
             }
-            // (Cycle::NA, Cycle::NA, DayCycle::WeekDay(num, wd_opt)) => {
-            //     
-            // }
-            (Cycle::NA, Cycle::NA, DayCycle::Overflow(overflow)) => {
-                NextResulterByDay::new(&next, overflow).build()
+            (Cycle::NA, Cycle::NA, DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::NA, Cycle::NA, DayCycle::Last(opt)) => {
+                NextResulterByDay::new(&next).last_day_option(opt).build()
             }
             (Cycle::NA, Cycle::In(month), DayCycle::NA) => {
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .build()
             }
-            (Cycle::NA, Cycle::In(month), DayCycle::On(day, overflow)) => {
+            (Cycle::NA, Cycle::In(month), DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(
                     &next,
-                    overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .month(*month)
                 .build()
             }
             (Cycle::NA, Cycle::In(month), DayCycle::Every(num)) => {
                 let next = next + Duration::days(*num as i64);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .build()
             }
             (Cycle::NA, Cycle::In(month), DayCycle::EveryBizDay(num)) => {
                 let next = self.bd_processor.add(&next, *num)?;
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .build()
             }
-            // (Cycle::NA, Cycle::In(month), DayCycle::WeekDay(num, wd_opt)) => {
-
-            // }
-            (Cycle::NA, Cycle::In(month), DayCycle::Overflow(overflow)) => {
-                NextResulterByDay::new(&next, overflow)
+            (Cycle::NA, Cycle::In(month), DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::Last(opt)) => {
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .month(*month)
                     .build()
             }
             (Cycle::NA, Cycle::Every(num), DayCycle::NA) => {
                 let (year, month) = ffwd_months(&next, *num);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(year)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::On(day, day_overflow)) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::On(day, opt)) => {
                 let (year, month) = ffwd_months(&next, *num_months);
 
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .month(month)
                 .year(year)
@@ -416,7 +417,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::NA, Cycle::Every(num_months), DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
                 let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(year)
                     .build()
@@ -424,66 +425,69 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::NA, Cycle::Every(num_months), DayCycle::EveryBizDay(num_days)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(year)
                     .build()
             }
-            // (Cycle::NA, Cycle::Every(num_months), DayCycle::WeekDay(num, wd_opt)) => {
-
-            // }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::Overflow(day_overflow)) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::Last(opt)) => {
                 let (year, month) = ffwd_months(&next, *num_months);
                 dbg!(year, month);
-                NextResulterByDay::new(&next, day_overflow)
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .month(month)
                     .year(year)
                     .build()
             }
             (Cycle::In(year), Cycle::NA, DayCycle::NA) => {
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::NA, DayCycle::On(day, day_overflow)) => {
+            (Cycle::In(year), Cycle::NA, DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .year(*year)
                 .build()
             }
             (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .year(*year)
                     .build()
             }
             (Cycle::In(year), Cycle::NA, DayCycle::EveryBizDay(num_days)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .year(*year)
                     .build()
             }
-            // (Cycle::In(year), Cycle::NA, DayCycle::WeekDay(num, wd_opt)) => {
-            // }
-            (Cycle::In(year), Cycle::NA, DayCycle::Overflow(day_overflow)) => {
-                NextResulterByDay::new(&next, day_overflow)
+            (Cycle::In(year), Cycle::NA, DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::Last(opt)) => {
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .year(*year)
                     .build()
             }
             (Cycle::In(year), Cycle::In(month), DayCycle::NA) => {
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::In(month), DayCycle::On(day, day_overflow)) => {
+            (Cycle::In(year), Cycle::In(month), DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
-                )
+                    )
+                    .day_option(opt)
                 .day(*day)
                 .month(*month)
                 .year(*year)
@@ -491,39 +495,41 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             }
             (Cycle::In(year), Cycle::In(month), DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .year(*year)
                     .build()
             }
             (Cycle::In(year), Cycle::In(month), DayCycle::EveryBizDay(num_days)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .year(*year)
                     .build()
             }
-            // (Cycle::In(year), Cycle::In(month), DayCycle::WeekDay(num, wd_opt)) => {
-            // }
-            (Cycle::In(year), Cycle::In(month), DayCycle::Overflow(day_overflow)) => {
-                NextResulterByDay::new(&next, day_overflow)
+            (Cycle::In(year), Cycle::In(month), DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::Last(opt)) => {
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .month(*month)
                     .year(*year)
                     .build()
             }
             (Cycle::In(year), Cycle::Every(num_months), DayCycle::NA) => {
                 let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::On(day, day_overflow)) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .month(month)
                 .year(*year)
@@ -532,7 +538,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::In(year), Cycle::Every(num_months), DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
                 let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(*year)
                     .build()
@@ -540,64 +546,68 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::In(year), Cycle::Every(num_months), DayCycle::EveryBizDay(num_days)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(*year)
                     .build()
             }
-            // (Cycle::In(year), Cycle::Every(num_months), DayCycle::WeekDay(num, wd_opt)) => {
-            // }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Overflow(day_overflow)) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Last(opt)) => {
                 let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, day_overflow)
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .month(month)
                     .year(*year)
                     .build()
             }
             (Cycle::Every(num_years), Cycle::NA, DayCycle::NA) => {
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::On(day, day_overflow)) => {
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .year(next.year() as u32 + *num_years)
                 .build()
             }
             (Cycle::Every(num_years), Cycle::NA, DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
             (Cycle::Every(num_years), Cycle::NA, DayCycle::EveryBizDay(num_days)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            // (Cycle::Every(num_years), Cycle::NA, DayCycle::WeekDay(num, wd_opt)) => {
-            // }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::Overflow(day_overflow)) => {
-                NextResulterByDay::new(&next, day_overflow)
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::Last(opt)) => {
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
             (Cycle::Every(num_years), Cycle::In(month), DayCycle::NA) => {
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::On(day, day_overflow)) => {
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .month(*month)
                 .year(next.year() as u32 + *num_years)
@@ -605,29 +615,31 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             }
             (Cycle::Every(num_years), Cycle::In(month), DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
             (Cycle::Every(num_years), Cycle::In(month), DayCycle::EveryBizDay(num_days)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            // (Cycle::Every(num_years), Cycle::In(month), DayCycle::WeekDay(num, wd_opt)) => {
-            // }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Overflow(day_overflow)) => {
-                NextResulterByDay::new(&next, day_overflow)
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::WeekDay(num, wd_opt)) => {
+                todo!()
+            }
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Last(opt)) => {
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
             (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::NA) => {
                 let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(year + *num_years)
                     .build()
@@ -635,13 +647,13 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (
                 Cycle::Every(num_years),
                 Cycle::Every(num_months),
-                DayCycle::On(day, day_overflow),
+                DayCycle::On(day, opt),
             ) => {
                 let (year, month) = ffwd_months(&next, *num_months as u32);
                 NextResulterByDay::new(
                     &next,
-                    day_overflow.as_ref().unwrap_or(&DayOverflow::LastDay),
                 )
+                .day_option(opt)
                 .day(*day)
                 .month(month)
                 .year(year + *num_years)
@@ -650,7 +662,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Every(num_days)) => {
                 let next = next + Duration::days(*num_days as i64);
                 let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(year + *num_years)
                     .build()
@@ -662,21 +674,22 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             ) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next, &DayOverflow::LastDay)
+                NextResulterByDay::new(&next)
                     .month(month)
                     .year(year + *num_years)
                     .build()
             }
-            // (
-            //     Cycle::Every(num_years),
-            //     Cycle::Every(num_months),
-            //     DayCycle::WeekDay(num, wd_opt),
-            // ) => {
-
-            // }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Overflow(overflow)) => {
+            (
+                Cycle::Every(num_years),
+                Cycle::Every(num_months),
+                DayCycle::WeekDay(num, wd_opt),
+            ) => {
+                todo!()
+            }
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Last(opt)) => {
                 let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next, overflow)
+                NextResulterByDay::new(&next)
+                    .last_day_option(opt)
                     .month(month)
                     .year(year + *num_years)
                     .build()
@@ -756,7 +769,7 @@ mod tests {
 
         dbg!(&dtm);
         let spec_iter =
-            SpecIteratorBuilder::new_with_start("YY:1M:31F", WeekendSkipper::new(), dtm)
+            SpecIteratorBuilder::new_with_start("YY:1M:31N", WeekendSkipper::new(), dtm)
                 .build()
                 .unwrap();
         dbg!(spec_iter
@@ -769,20 +782,22 @@ mod tests {
 #[derive(Debug)]
 struct NextResulterByDay<'a> {
     dtm: &'a NaiveDateTime,
-    overflow: &'a DayOverflow,
+    day_opt: Option<DayOption>,
     day: Option<u32>,
     month: Option<u32>,
     year: Option<u32>,
+    ld_opt: Option<LastDayOption>,
 }
 
 impl<'a> NextResulterByDay<'a> {
-    pub fn new(dtm: &'a NaiveDateTime, overflow: &'a DayOverflow) -> Self {
+    pub fn new(dtm: &'a NaiveDateTime) -> Self {
         Self {
             dtm,
-            overflow,
             day: None,
             month: None,
             year: None,
+            day_opt: None,
+            ld_opt: None,
         }
     }
 
@@ -801,9 +816,21 @@ impl<'a> NextResulterByDay<'a> {
         self
     }
 
+    pub fn day_option(&mut self, opt: &DayOption) -> &mut Self {
+        self.day_opt = Some(opt.clone());
+        self
+    }
+
+    pub fn last_day_option(&mut self, opt: &LastDayOption) -> &mut Self {
+        self.ld_opt = Some(opt.clone());
+        self
+    }
+
     pub fn build(&self) -> NextResult<NaiveDateTime> {
-        use spec::DayOverflow::*;
+        use spec::DayOption::*;
         let dtm = self.dtm.clone();
+        let day_opt = self.day_opt.as_ref().unwrap_or(&DayOption::NA);
+        let ld_opt = self.ld_opt.as_ref();
 
         let month = self.month.unwrap_or(dtm.month());
         let year = self
@@ -812,7 +839,7 @@ impl<'a> NextResulterByDay<'a> {
             .unwrap_or(dtm.year() as i32);
 
         let day = self.day.unwrap_or_else(|| {
-            if self.overflow == &DayOverflow::LastDay {
+            if day_opt == &DayOption::LastDay || ld_opt.is_some() {
                 if month == 12 {
                     let next_day = NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap();
                     let last_day = next_day.pred_opt().unwrap();
@@ -828,7 +855,11 @@ impl<'a> NextResulterByDay<'a> {
         });
 
         if let Some(updated) = NaiveDate::from_ymd_opt(year, month, day) {
-            if self.overflow != &DayOverflow::Weekday {
+            if ![Weekday, LastWeekday, NextMonthFirstWeekday].contains(day_opt) {
+                return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
+            }
+
+            if let Some(ld_opt) = ld_opt && ld_opt == &LastDayOption::NA {
                 return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
             }
 
@@ -856,9 +887,8 @@ impl<'a> NextResulterByDay<'a> {
             };
         }
 
-        let overflow = self.overflow;
-        match overflow {
-            LastDay => {
+        match *day_opt {
+            NA | LastDay => {
                 let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
                 let last_day = next_day.pred_opt().unwrap();
                 NextResult::Single(NaiveDateTime::new(last_day, dtm.time()))

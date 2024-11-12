@@ -285,6 +285,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
+        dbg!(&self.remaining);
         let remaining = if let Some(remaining) = self.remaining {
             if remaining == 0 {
                 return Ok(None);
@@ -293,7 +294,6 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
         } else {
             None
         };
-
         if let Some(end) = &self.end {
             if &self.dtm >= end {
                 return Ok(None);
@@ -317,7 +317,6 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
             Some(next) => next,
         };
 
-        dbg!(&next, &self.dtm, &self.spec);
         let next = DateSpecIteratorBuilder::new_after(
             &self.spec.date_spec,
             self.bd_processor.clone(),
@@ -326,7 +325,6 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
         .build()?
         .next()?;
 
-        dbg!(&next, &self.dtm);
         let Some(next) = next else {
             return Ok(None);
         };

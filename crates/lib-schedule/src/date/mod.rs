@@ -3,4 +3,4 @@ mod spec;
 
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 
-pub use spec::{Spec, SPEC_EXPR, DayOption};
+pub use spec::{DayOption, Spec, SPEC_EXPR};

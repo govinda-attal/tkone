@@ -88,8 +88,9 @@ const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>[MTWRFSU])(?:(?<last_num>[12])?(?<la
 // pub static SPEC_EXPR: Lazy<String> =
 //     Lazy::new(|| "(YY|19|20\\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(?:(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BDW]?|29[BDWLFO]?|3[01][BDWLFO]?|LW|FW|L)|([MTWRFSU](?:[2]?L|[1-3]|#[1-3])?))(?::([1-9]{0,1}[PN]))?".into());
 
-pub static SPEC_EXPR: Lazy<String> =
-    Lazy::new(|| format!("{YEAR_EXPR}:{MONTH_EXPR}:(?:{WEEKDAY_EXPR}|{DAY_EXPR}){BDAY_ADJ_EXPR}").to_string());
+pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
+    format!("{YEAR_EXPR}:{MONTH_EXPR}:(?:{WEEKDAY_EXPR}|{DAY_EXPR}){BDAY_ADJ_EXPR}").to_string()
+});
 
 // pub const SPEC_EXPR: &str = r"(YY|19|20\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(DD|BB|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29[BDLFO]?|3[01][BDLFO]?|[LFO])|(?:[MTWRFSU](?:[2]?L|[1-3]|#[1-3]))|(?:(?:[1-9]|1[0-9]|2[0-3])W)(?::([1-9]{0,1}[PN]))?";
 const CYCLE_EXPR: &str = r"(?:YY|MM|DD|BB)|(?:(?<num>\d+)?(?<type>[YMBDBDLFOPN]|LW|FW)?)";
@@ -115,13 +116,12 @@ impl FromStr for Spec {
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;
 
-        let caps = caps.iter()
-            .filter_map(|m| m)
-            .collect::<Vec<_>>();
+        let caps = caps.iter().filter_map(|m| m).collect::<Vec<_>>();
 
         let years = caps
             .get(1)
-            .map(|m| Cycle::from_str(m.as_str())).expect("")?;
+            .map(|m| Cycle::from_str(m.as_str()))
+            .expect("")?;
         let months = caps
             .get(2)
             .map(|m| Cycle::from_str(m.as_str()))

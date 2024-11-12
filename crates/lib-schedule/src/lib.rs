@@ -68,21 +68,22 @@ impl<T: Clone> NextResult<T> {
 mod tests {
     use biz_day::WeekendSkipper;
     use chrono::{DateTime, TimeZone, Utc};
+    use chrono_tz::America::New_York;
     use fallible_iterator::FallibleIterator;
 
     use super::*;
     #[test]
     fn test_works() {
         let tmp = datetime::SpecIteratorBuilder::new_with_start(
-            "YY:1M:31LT11:00:00",
+            "YY:1M:F2T11:00:00",
             WeekendSkipper::new(),
-            Utc.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
+            New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
         )
-        .with_end(Utc::with_ymd_and_hms(&Utc, 2025, 07, 31, 11, 00, 0).unwrap())
+        .with_end(New_York.with_ymd_and_hms(2025, 7, 31, 11, 00, 0).unwrap())
         .build()
         .unwrap();
         let tmp = tmp
-            .take(6)
+            .take(10)
             .collect::<Vec<NextResult<DateTime<_>>>>()
             .unwrap();
         dbg!(&tmp);

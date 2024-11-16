@@ -7,7 +7,9 @@ use std::str::FromStr;
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use fallible_iterator::FallibleIterator;
 
-use crate::date::{SpecIteratorBuilder as DateSpecIteratorBuilder, SpecIterator as DateSpecIterator};
+use crate::date::{
+    SpecIterator as DateSpecIterator, SpecIteratorBuilder as DateSpecIteratorBuilder,
+};
 use crate::time::SpecIterator as TimeSpecIterator;
 
 #[derive(Debug)]
@@ -191,7 +193,9 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
     fn new(spec: &str, bd_processor: BDP, dtm: DateTime<Tz>) -> Result<Self> {
         let spec = Spec::from_str(spec)?;
         let time_iter = TimeSpecIterator::new(&spec.time_spec, dtm.clone())?;
-        let date_iter  = DateSpecIteratorBuilder::new(&spec.date_spec, bd_processor.clone(), &dtm.timezone()).build()?;
+        let date_iter =
+            DateSpecIteratorBuilder::new(&spec.date_spec, bd_processor.clone(), &dtm.timezone())
+                .build()?;
 
         Ok(Self {
             time_iter,
@@ -207,7 +211,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
     fn new_with_start(spec: &str, bd_processor: BDP, start: DateTime<Tz>) -> Result<Self> {
         let spec = Spec::from_str(spec)?;
         let time_iter = TimeSpecIterator::new(&spec.time_spec, start.clone())?;
-        let date_iter  = DateSpecIteratorBuilder::new_with_start(&spec.date_spec, bd_processor.clone(), start.clone()).build()?;
+        let date_iter = DateSpecIteratorBuilder::new_with_start(
+            &spec.date_spec,
+            bd_processor.clone(),
+            start.clone(),
+        )
+        .build()?;
 
         Ok(Self {
             time_iter,
@@ -232,8 +241,15 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
             ));
         }
         let spec = Spec::from_str(spec)?;
-        let time_iter = TimeSpecIterator::new_with_end(&spec.time_spec, start.clone(), end.clone())?;
-        let date_iter  = DateSpecIteratorBuilder::new_with_start(&spec.date_spec, bd_processor.clone(), start.clone()).with_end(end.clone()).build()?;
+        let time_iter =
+            TimeSpecIterator::new_with_end(&spec.time_spec, start.clone(), end.clone())?;
+        let date_iter = DateSpecIteratorBuilder::new_with_start(
+            &spec.date_spec,
+            bd_processor.clone(),
+            start.clone(),
+        )
+        .with_end(end.clone())
+        .build()?;
 
         Ok(Self {
             time_iter,
@@ -277,8 +293,15 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
                 "End spec must result in a date-time after the start date-time",
             ));
         }
-        let time_iter = TimeSpecIterator::new_with_end(&spec.time_spec, start.clone(), end.actual().clone())?;
-        let date_iter  = DateSpecIteratorBuilder::new_with_start(&spec.date_spec, bd_processor.clone(), start.clone()).with_end(end.actual().clone()).build()?;
+        let time_iter =
+            TimeSpecIterator::new_with_end(&spec.time_spec, start.clone(), end.actual().clone())?;
+        let date_iter = DateSpecIteratorBuilder::new_with_start(
+            &spec.date_spec,
+            bd_processor.clone(),
+            start.clone(),
+        )
+        .with_end(end.actual().clone())
+        .build()?;
 
         Ok(Self {
             time_iter,
@@ -329,6 +352,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
             Some(next) => next,
         };
 
+        if let Some(end) = &self.end {
+            if &next >= &end {
+                return Ok(None);
+            }
+        };
+
         // let mut time_spec_iter = TimeSpecIterator::new(&self.spec.time_spec, self.dtm.clone())?;
         // let next = match time_spec_iter.next()? {
         //     None => self.dtm.clone(),
@@ -354,6 +383,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
         if next.actual() < &self.dtm {
             return Ok(None);
         }
+
+        if let Some(end) = &self.end {
+            if next.actual() >= &end {
+                return Ok(None);
+            }
+        };
 
         self.index += 1;
         self.dtm = next.actual().clone();

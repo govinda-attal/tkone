@@ -7,7 +7,6 @@ use crate::{biz_day::BizDayProcessor, prelude::*, utils::DateLikeUtils, NextResu
 use chrono::{
     DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc, Weekday,
 };
-use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
@@ -230,8 +229,8 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
     }
 }
 
-impl <Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
-    pub (crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
+impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
+    pub(crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
         self.naive_spec_iter.update_cursor(dtm.naive_local());
     }
 }
@@ -244,7 +243,6 @@ pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     index: usize,
     start: Option<NaiveDateTime>,
     end: Option<NaiveDateTime>,
-    remaining: Option<u32>,
 }
 
 impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
@@ -257,7 +255,6 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             index: 0,
             start: None,
             end: None,
-            remaining: None,
         })
     }
 
@@ -270,7 +267,6 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             index: 0,
             start: Some(start),
             end: None,
-            remaining: None,
         })
     }
 
@@ -288,7 +284,6 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             index: 0,
             start: Some(start),
             end: Some(end),
-            remaining: None,
         })
     }
 
@@ -309,11 +304,10 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             index: 0,
             start: Some(start),
             end: Some(end.observed().clone()),
-            remaining: None,
         })
     }
 
-    pub (crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
+    pub(crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
         self.dtm = dtm;
         self.start = None;
         self.index = 0;
@@ -325,15 +319,6 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        let remaining = if let Some(remaining) = self.remaining {
-            if remaining == 0 {
-                return Ok(None);
-            }
-            Some(remaining - 1)
-        } else {
-            None
-        };
-
         if let Some(end) = &self.end {
             if &self.dtm >= end {
                 return Ok(None);
@@ -344,7 +329,6 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             if let Some(start) = &self.start {
                 if &self.dtm <= start {
                     self.dtm = start.clone();
-                    self.remaining = remaining;
                     self.index += 1;
                     return Ok(Some(NextResult::Single(start.clone())));
                 }
@@ -711,7 +695,6 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
 
         self.index += 1;
         self.dtm = next.actual().clone();
-        self.remaining = remaining;
         Ok(Some(next))
     }
 }

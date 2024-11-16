@@ -7,6 +7,7 @@ use crate::{biz_day::BizDayProcessor, prelude::*, utils::DateLikeUtils, NextResu
 use chrono::{
     DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc, Weekday,
 };
+use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
@@ -229,6 +230,12 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
     }
 }
 
+impl <Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
+    pub (crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
+        self.naive_spec_iter.update_cursor(dtm.naive_local());
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     spec: Spec,
@@ -304,6 +311,12 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             end: Some(end.observed().clone()),
             remaining: None,
         })
+    }
+
+    pub (crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
+        self.dtm = dtm;
+        self.start = None;
+        self.index = 0;
     }
 }
 

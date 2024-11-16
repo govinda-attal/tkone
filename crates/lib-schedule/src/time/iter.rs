@@ -41,7 +41,7 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         })
     }
 
-    pub (crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
+    pub(crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
         self.naive_spec_iter.update_cursor(dtm.naive_local());
     }
 }
@@ -50,7 +50,6 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
 pub struct NaiveSpecIterator {
     spec: Spec,
     end: Option<NaiveDateTime>,
-    remaining: Option<u32>,
     dtm: NaiveDateTime,
 }
 
@@ -61,7 +60,6 @@ impl NaiveSpecIterator {
             dtm: start,
             spec,
             end: None,
-            remaining: None,
         })
     }
 
@@ -71,7 +69,6 @@ impl NaiveSpecIterator {
             dtm: start,
             end: Some(end),
             spec,
-            remaining: None,
         })
     }
 
@@ -84,11 +81,10 @@ impl NaiveSpecIterator {
             end: Some(end),
             spec,
             dtm: start,
-            remaining: None,
         })
     }
 
-    pub (crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
+    pub(crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
         self.dtm = dtm;
     }
 }
@@ -98,14 +94,6 @@ impl FallibleIterator for NaiveSpecIterator {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        let remaining = if let Some(remaining) = self.remaining {
-            if remaining == 0 {
-                return Ok(None);
-            }
-            Some(remaining - 1)
-        } else {
-            None
-        };
         if let Some(end) = &self.end {
             if &self.dtm >= end {
                 return Ok(None);
@@ -132,7 +120,6 @@ impl FallibleIterator for NaiveSpecIterator {
         };
 
         self.dtm = next;
-        self.remaining = remaining;
 
         Ok(Some(self.dtm.clone()))
     }

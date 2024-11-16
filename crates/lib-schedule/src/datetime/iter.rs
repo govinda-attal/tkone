@@ -7,14 +7,14 @@ use std::str::FromStr;
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use fallible_iterator::FallibleIterator;
 
-use crate::date::SpecIteratorBuilder as DateSpecIteratorBuilder;
+use crate::date::{SpecIteratorBuilder as DateSpecIteratorBuilder, SpecIterator as DateSpecIterator};
 use crate::time::SpecIterator as TimeSpecIterator;
 
 #[derive(Debug)]
 pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
-    spec: Spec,
+    date_iter: DateSpecIterator<Tz, BDP>,
+    time_iter: TimeSpecIterator<Tz>,
     dtm: DateTime<Tz>,
-    bd_processor: BDP,
     start: Option<DateTime<Tz>>,
     end: Option<DateTime<Tz>>,
     remaining: Option<u32>,
@@ -190,9 +190,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
     fn new(spec: &str, bd_processor: BDP, dtm: DateTime<Tz>) -> Result<Self> {
         let spec = Spec::from_str(spec)?;
+        let time_iter = TimeSpecIterator::new(&spec.time_spec, dtm.clone())?;
+        let date_iter  = DateSpecIteratorBuilder::new(&spec.date_spec, bd_processor.clone(), &dtm.timezone()).build()?;
+
         Ok(Self {
-            spec,
-            bd_processor,
+            time_iter,
+            date_iter,
             dtm,
             start: None,
             end: None,
@@ -203,9 +206,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
 
     fn new_with_start(spec: &str, bd_processor: BDP, start: DateTime<Tz>) -> Result<Self> {
         let spec = Spec::from_str(spec)?;
+        let time_iter = TimeSpecIterator::new(&spec.time_spec, start.clone())?;
+        let date_iter  = DateSpecIteratorBuilder::new_with_start(&spec.date_spec, bd_processor.clone(), start.clone()).build()?;
+
         Ok(Self {
-            spec,
-            bd_processor,
+            time_iter,
+            date_iter,
             dtm: start.clone(),
             start: Some(start),
             end: None,
@@ -226,9 +232,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
             ));
         }
         let spec = Spec::from_str(spec)?;
+        let time_iter = TimeSpecIterator::new_with_end(&spec.time_spec, start.clone(), end.clone())?;
+        let date_iter  = DateSpecIteratorBuilder::new_with_start(&spec.date_spec, bd_processor.clone(), start.clone()).with_end(end.clone()).build()?;
+
         Ok(Self {
-            spec,
-            bd_processor,
+            time_iter,
+            date_iter,
             dtm: start.clone(),
             start: Some(start),
             end: Some(end),
@@ -268,9 +277,12 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
                 "End spec must result in a date-time after the start date-time",
             ));
         }
+        let time_iter = TimeSpecIterator::new_with_end(&spec.time_spec, start.clone(), end.actual().clone())?;
+        let date_iter  = DateSpecIteratorBuilder::new_with_start(&spec.date_spec, bd_processor.clone(), start.clone()).with_end(end.actual().clone()).build()?;
+
         Ok(Self {
-            spec,
-            bd_processor,
+            time_iter,
+            date_iter,
             dtm: start.clone(),
             start: Some(start),
             end: Some(end.actual().clone()),
@@ -285,7 +297,6 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        dbg!(&self.remaining);
         let remaining = if let Some(remaining) = self.remaining {
             if remaining == 0 {
                 return Ok(None);
@@ -311,19 +322,30 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
             }
         }
 
-        let mut time_spec_iter = TimeSpecIterator::new(&self.spec.time_spec, self.dtm.clone())?;
-        let next = match time_spec_iter.next()? {
+        let time_iter = &mut self.time_iter;
+        time_iter.update_cursor(self.dtm.clone());
+        let next = match time_iter.next()? {
             None => self.dtm.clone(),
             Some(next) => next,
         };
 
-        let next = DateSpecIteratorBuilder::new_after(
-            &self.spec.date_spec,
-            self.bd_processor.clone(),
-            next,
-        )
-        .build()?
-        .next()?;
+        // let mut time_spec_iter = TimeSpecIterator::new(&self.spec.time_spec, self.dtm.clone())?;
+        // let next = match time_spec_iter.next()? {
+        //     None => self.dtm.clone(),
+        //     Some(next) => next,
+        // };
+
+        let date_iter = &mut self.date_iter;
+        date_iter.update_cursor(next.clone());
+        let next = date_iter.next()?;
+
+        // let next = DateSpecIteratorBuilder::new_after(
+        //     &self.spec.date_spec,
+        //     self.bd_processor.clone(),
+        //     next,
+        // )
+        // .build()?
+        // .next()?;
 
         let Some(next) = next else {
             return Ok(None);

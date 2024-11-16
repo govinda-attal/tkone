@@ -1,5 +1,4 @@
-use core::{num, panic};
-use std::{borrow::BorrowMut, marker::PhantomData};
+use std::marker::PhantomData;
 
 use super::spec::{
     self, BizDayStep, Cycle, DayCycle, DayOption, LastDayOption, Spec, WeekdayOption,
@@ -714,7 +713,7 @@ fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use crate::biz_day::{self, WeekendSkipper};
+    use crate::biz_day::WeekendSkipper;
 
     use super::*;
     use chrono_tz::America::New_York;
@@ -977,21 +976,21 @@ impl<'a> NextResulterByDay<'a> {
 
         match *day_opt {
             NA | LastDay => {
-                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_day.pred_opt().unwrap();
+                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_mnth_day.pred_opt().unwrap();
                 NextResult::Single(NaiveDateTime::new(last_day, dtm.time()))
             }
             NextMonthFirstDay => {
-                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_day.pred_opt().unwrap();
+                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_mnth_day.pred_opt().unwrap();
                 NextResult::AdjustedLater(
                     NaiveDateTime::new(last_day, dtm.time()),
-                    NaiveDateTime::new(next_day, dtm.time()),
+                    NaiveDateTime::new(next_mnth_day, dtm.time()),
                 )
             }
             NextMonthOverflow => {
-                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_day.pred_opt().unwrap();
+                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_mnth_day.pred_opt().unwrap();
                 let last_day_num = last_day.day();
                 NextResult::AdjustedLater(
                     NaiveDateTime::new(last_day, dtm.time()),
@@ -999,8 +998,8 @@ impl<'a> NextResulterByDay<'a> {
                 )
             }
             Weekday | LastWeekday => {
-                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_day.pred_opt().unwrap();
+                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_mnth_day.pred_opt().unwrap();
                 if last_day.weekday() == chrono::Weekday::Sat {
                     NextResult::AdjustedEarlier(
                         NaiveDateTime::new(last_day, dtm.time()),
@@ -1016,22 +1015,22 @@ impl<'a> NextResulterByDay<'a> {
                 }
             }
             NextMonthFirstWeekday => {
-                let next_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_day.pred_opt().unwrap();
-                if next_day.weekday() == chrono::Weekday::Sat {
+                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
+                let last_day = next_mnth_day.pred_opt().unwrap();
+                if next_mnth_day.weekday() == chrono::Weekday::Sat {
                     NextResult::AdjustedLater(
                         NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(next_day + Duration::days(2), dtm.time()),
+                        NaiveDateTime::new(next_mnth_day + Duration::days(2), dtm.time()),
                     )
-                } else if next_day.weekday() == chrono::Weekday::Sun {
+                } else if next_mnth_day.weekday() == chrono::Weekday::Sun {
                     NextResult::AdjustedLater(
                         NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(next_day + Duration::days(1), dtm.time()),
+                        NaiveDateTime::new(next_mnth_day + Duration::days(1), dtm.time()),
                     )
                 } else {
                     NextResult::AdjustedLater(
                         NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(next_day, dtm.time()),
+                        NaiveDateTime::new(next_mnth_day, dtm.time()),
                     )
                 }
             }

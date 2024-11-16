@@ -111,7 +111,6 @@ impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        dbg!("s: {}", SPEC_EXPR.as_str());
         let caps = SPEC_RE
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;

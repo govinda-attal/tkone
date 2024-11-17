@@ -1,10 +1,10 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
 use std::str::FromStr;
 
 use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
 use crate::prelude::*;
 use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
-use once_cell::sync::Lazy;
-use regex::Regex;
 
 pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
     format!(

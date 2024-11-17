@@ -1,5 +1,11 @@
-pub mod iter;
-pub mod spec;
+//! # time
+//! Provides an recurrence based iterators for both Naive and timezone-aware datetimes.
+//! These iterators are instantiated with a time based recurrence specification.
 
-pub use iter::{NaiveSpecIterator, SpecIterator};
-pub use spec::{Spec, SPEC_EXPR};
+mod iter;
+mod spec;
+
+
+pub use iter::{NaiveSpecIterator,SpecIterator};
+
+pub use spec::{Spec, Cycle, SPEC_EXPR};

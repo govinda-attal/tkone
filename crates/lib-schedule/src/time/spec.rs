@@ -3,7 +3,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::str::FromStr;
 
-
 /// ## SPEC_EXPR
 /// Regular expression for matching time recurrence specifications.
 /// It matches various combinations of hours, minutes, and seconds.
@@ -21,7 +20,6 @@ pub const SPEC_EXPR: &str = r"([01][0-9]|2[0-3]|[0-9]H|1[0-9]H|2[0-3]H|HH):([0-5
 static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());
 const CYCLE_EXPR: &str = r"(?:HH|MM|SS)|(?:(?<num>\d+)(?<type>[HMS])?)";
 static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
-
 
 /// ## Spec
 /// Represents a time specification.

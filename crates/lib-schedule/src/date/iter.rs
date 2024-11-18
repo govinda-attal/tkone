@@ -1,9 +1,12 @@
 use std::marker::PhantomData;
 
-use super::spec::{
-    self, BizDayStep, Cycle, DayCycle, DayOption, LastDayOption, Spec, WeekdayOption,
+use super::spec::{self, BizDayAdjustment, Cycle, DayCycle, DayOption, Spec, WeekdayOption};
+use crate::{
+    biz_day::{BizDayProcessor, WeekendSkipper},
+    prelude::*,
+    utils::DateLikeUtils,
+    NextResult,
 };
-use crate::{biz_day::BizDayProcessor, prelude::*, utils::DateLikeUtils, NextResult};
 use chrono::{
     DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc, Weekday,
 };
@@ -354,8 +357,8 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::NA, Cycle::NA, DayCycle::WeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt).build()
             }
-            (Cycle::NA, Cycle::NA, DayCycle::Last(opt)) => {
-                NextResulterByDay::new(&next).last_day_option(opt).build()
+            (Cycle::NA, Cycle::NA, DayCycle::Last) => {
+                NextResulterByDay::new(&next).last_day().build()
             }
             (Cycle::NA, Cycle::In(month), DayCycle::NA) => {
                 NextResulterByDay::new(&next).month(*month).build()
@@ -378,8 +381,8 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .month(*month)
                     .build()
             }
-            (Cycle::NA, Cycle::In(month), DayCycle::Last(opt)) => NextResulterByDay::new(&next)
-                .last_day_option(opt)
+            (Cycle::NA, Cycle::In(month), DayCycle::Last) => NextResulterByDay::new(&next)
+                .last_day()
                 .month(*month)
                 .build(),
             (Cycle::NA, Cycle::Every(num), DayCycle::NA) => {
@@ -420,10 +423,10 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .num_months(*num_months)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::Last(opt)) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::Last) => {
                 let (year, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
-                    .last_day_option(opt)
+                    .last_day()
                     .month(month)
                     .year(year)
                     .build()
@@ -449,10 +452,9 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::NA, DayCycle::Last(opt)) => NextResulterByDay::new(&next)
-                .last_day_option(opt)
-                .year(*year)
-                .build(),
+            (Cycle::In(year), Cycle::NA, DayCycle::Last) => {
+                NextResulterByDay::new(&next).last_day().year(*year).build()
+            }
             (Cycle::In(year), Cycle::In(month), DayCycle::NA) => NextResulterByDay::new(&next)
                 .month(*month)
                 .year(*year)
@@ -485,13 +487,11 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::In(month), DayCycle::Last(opt)) => {
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::Last) => NextResulterByDay::new(&next)
+                .last_day()
+                .month(*month)
+                .year(*year)
+                .build(),
             (Cycle::In(year), Cycle::Every(num_months), DayCycle::NA) => {
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -530,10 +530,10 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .num_months(*num_months)
                     .build()
             }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Last(opt)) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Last) => {
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
-                    .last_day_option(opt)
+                    .last_day()
                     .month(month)
                     .year(*year)
                     .build()
@@ -565,12 +565,10 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .num_years(*num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::Last(opt)) => {
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::Last) => NextResulterByDay::new(&next)
+                .last_day()
+                .year(next.year() as u32 + *num_years)
+                .build(),
             (Cycle::Every(num_years), Cycle::In(month), DayCycle::NA) => {
                 NextResulterByDay::new(&next)
                     .month(*month)
@@ -605,9 +603,9 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .month(*month)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Last(opt)) => {
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Last) => {
                 NextResulterByDay::new(&next)
-                    .last_day_option(opt)
+                    .last_day()
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
@@ -654,10 +652,10 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .num_months(*num_months)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Last(opt)) => {
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Last) => {
                 let (year, month) = ffwd_months(&next, *num_months as u32);
                 NextResulterByDay::new(&next)
-                    .last_day_option(opt)
+                    .last_day()
                     .month(month)
                     .year(year + *num_years)
                     .build()
@@ -668,21 +666,29 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             return Ok(None);
         }
 
-        let next = if let Some(biz_day_step) = &self.spec.biz_day_step {
+        let next = if let Some(biz_day_adj) = &self.spec.biz_day_adj {
             let (actual, observed) = (&next).as_tuple();
             if self.bd_processor.is_biz_day(&observed)? {
                 next
             } else {
-                match biz_day_step {
-                    BizDayStep::Prev(num) => NextResult::AdjustedEarlier(
+                match biz_day_adj {
+                    BizDayAdjustment::Weekday(dir) => {
+                        let adjusted = WEEKEND_SKIPPER.find_biz_day(observed, dir.clone())?;
+                        adjusted_to_next_result(*actual, adjusted)
+                    }
+                    BizDayAdjustment::BizDay(dir) => {
+                        let adjusted = self.bd_processor.find_biz_day(observed, dir.clone())?;
+                        adjusted_to_next_result(*actual, adjusted)
+                    }
+                    BizDayAdjustment::Prev(num) => NextResult::AdjustedEarlier(
                         actual.clone(),
                         self.bd_processor.sub(observed, *num)?,
                     ),
-                    BizDayStep::Next(num) => NextResult::AdjustedLater(
+                    BizDayAdjustment::Next(num) => NextResult::AdjustedLater(
                         actual.clone(),
                         self.bd_processor.add(observed, *num)?,
                     ),
-                    BizDayStep::NA => next,
+                    BizDayAdjustment::NA => next,
                 }
             }
         } else {
@@ -705,6 +711,23 @@ fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
     new_year += (new_month - 1) / 12;
     new_month = (new_month - 1) % 12 + 1;
     (new_year, new_month)
+}
+
+use std::sync::LazyLock;
+
+static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipper::new());
+
+fn adjusted_to_next_result(
+    dtm: NaiveDateTime,
+    adjusted: NaiveDateTime,
+) -> NextResult<NaiveDateTime> {
+    if adjusted == dtm {
+        NextResult::Single(adjusted)
+    } else if adjusted > dtm {
+        NextResult::AdjustedLater(dtm, adjusted)
+    } else {
+        NextResult::AdjustedEarlier(dtm, adjusted)
+    }
 }
 
 #[cfg(test)]
@@ -844,7 +867,6 @@ impl<'a> NextResulterByWeekDay<'a> {
                     .unwrap_or(interim)
             }
             WeekdayOption::NA => interim.to_weekday(wd),
-            WeekdayOption::Every(occurrence) => interim.to_weekday_ocurring(wd, *occurrence),
         };
 
         if let Some(year) = self.year {
@@ -869,7 +891,6 @@ struct NextResulterByDay<'a> {
     day: Option<u32>,
     month: Option<u32>,
     year: Option<u32>,
-    ld_opt: Option<LastDayOption>,
 }
 
 impl<'a> NextResulterByDay<'a> {
@@ -880,7 +901,6 @@ impl<'a> NextResulterByDay<'a> {
             month: None,
             year: None,
             day_opt: None,
-            ld_opt: None,
         }
     }
 
@@ -904,8 +924,8 @@ impl<'a> NextResulterByDay<'a> {
         self
     }
 
-    pub fn last_day_option(&mut self, opt: &LastDayOption) -> &mut Self {
-        self.ld_opt = Some(opt.clone());
+    pub fn last_day(&mut self) -> &mut Self {
+        self.day_opt = Some(DayOption::LastDay);
         self
     }
 
@@ -913,7 +933,6 @@ impl<'a> NextResulterByDay<'a> {
         use spec::DayOption::*;
         let dtm = self.dtm.clone();
         let day_opt = self.day_opt.as_ref().unwrap_or(&DayOption::NA);
-        let ld_opt = self.ld_opt.as_ref();
 
         let month = self.month.unwrap_or(dtm.month());
         let year = self
@@ -922,7 +941,7 @@ impl<'a> NextResulterByDay<'a> {
             .unwrap_or(dtm.year() as i32);
 
         let day = self.day.unwrap_or_else(|| {
-            if day_opt == &DayOption::LastDay || ld_opt.is_some() {
+            if day_opt == &DayOption::LastDay {
                 if month == 12 {
                     let next_day = NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap();
                     let last_day = next_day.pred_opt().unwrap();
@@ -938,36 +957,7 @@ impl<'a> NextResulterByDay<'a> {
         });
 
         if let Some(updated) = NaiveDate::from_ymd_opt(year, month, day) {
-            if ![Weekday, LastWeekday, NextMonthFirstWeekday].contains(day_opt) {
-                return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
-            }
-
-            if let Some(ld_opt) = ld_opt
-                && ld_opt == &LastDayOption::NA
-            {
-                return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
-            }
-
-            return match &updated.weekday() {
-                &chrono::Weekday::Sat => {
-                    if updated.day() == 1 {
-                        NextResult::AdjustedLater(
-                            NaiveDateTime::new(updated, dtm.time()),
-                            NaiveDateTime::new(updated + Duration::days(2), dtm.time()),
-                        )
-                    } else {
-                        NextResult::AdjustedEarlier(
-                            NaiveDateTime::new(updated, dtm.time()),
-                            NaiveDateTime::new(updated - Duration::days(1), dtm.time()),
-                        )
-                    }
-                }
-                &chrono::Weekday::Sun => NextResult::AdjustedLater(
-                    NaiveDateTime::new(updated, dtm.time()),
-                    NaiveDateTime::new(updated + Duration::days(1), dtm.time()),
-                ),
-                _ => NextResult::Single(NaiveDateTime::new(updated, dtm.time())),
-            };
+            return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
         }
 
         match *day_opt {
@@ -992,43 +982,6 @@ impl<'a> NextResulterByDay<'a> {
                     NaiveDateTime::new(last_day, dtm.time()),
                     dtm + Duration::days(day as i64 - last_day_num as i64),
                 )
-            }
-            Weekday | LastWeekday => {
-                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_mnth_day.pred_opt().unwrap();
-                if last_day.weekday() == chrono::Weekday::Sat {
-                    NextResult::AdjustedEarlier(
-                        NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(last_day - Duration::days(1), dtm.time()),
-                    )
-                } else if last_day.weekday() == chrono::Weekday::Sun {
-                    NextResult::AdjustedEarlier(
-                        NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(last_day - Duration::days(2), dtm.time()),
-                    )
-                } else {
-                    NextResult::Single(NaiveDateTime::new(last_day, dtm.time()))
-                }
-            }
-            NextMonthFirstWeekday => {
-                let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
-                let last_day = next_mnth_day.pred_opt().unwrap();
-                if next_mnth_day.weekday() == chrono::Weekday::Sat {
-                    NextResult::AdjustedLater(
-                        NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(next_mnth_day + Duration::days(2), dtm.time()),
-                    )
-                } else if next_mnth_day.weekday() == chrono::Weekday::Sun {
-                    NextResult::AdjustedLater(
-                        NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(next_mnth_day + Duration::days(1), dtm.time()),
-                    )
-                } else {
-                    NextResult::AdjustedLater(
-                        NaiveDateTime::new(last_day, dtm.time()),
-                        NaiveDateTime::new(next_mnth_day, dtm.time()),
-                    )
-                }
             }
         }
     }

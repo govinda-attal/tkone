@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn test_works() {
         let tmp = datetime::SpecIteratorBuilder::new_with_start(
-            "YY:1M:8WT11:00:00",
+            "YY:1M:08:WT11:00:00",
             WeekendSkipper::new(),
             New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
         )

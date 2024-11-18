@@ -6,6 +6,13 @@ use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
 use crate::prelude::*;
 use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 
+/// # SPEC_EXPR
+/// This regular expression combines the date and time spec recurrence expressions.
+/// (DATE_SPEC_EXPR)T(TIME_SPEC_EXPR)
+///
+/// ## Examples
+/// - "YY:1M:01:PT12:00:00" Recurrence on the first day of every month at 12:00:00
+/// - "YY:MM:FL:PT12:00:00" Recurrence on the last Friday of every month at 12:00:00
 pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
     format!(
         "(?:(?<date>{})?T(?<time>{}))",

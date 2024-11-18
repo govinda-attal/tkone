@@ -5,7 +5,6 @@
 mod iter;
 mod spec;
 
+pub use iter::{NaiveSpecIterator, SpecIterator};
 
-pub use iter::{NaiveSpecIterator,SpecIterator};
-
-pub use spec::{Spec, Cycle, SPEC_EXPR};
+pub use spec::{Cycle, Spec, SPEC_EXPR};

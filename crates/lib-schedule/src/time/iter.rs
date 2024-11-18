@@ -5,7 +5,6 @@ use fallible_iterator::FallibleIterator;
 use super::spec::{Cycle, Spec};
 use crate::prelude::*;
 
-
 /// ## SpecIterator
 /// An iterator for generating recurring timezone aware datetimes as per time based specifications.
 /// ### Examples

@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
 use crate::prelude::*;
@@ -13,7 +13,7 @@ use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 /// ## Examples
 /// - "YY:1M:01:PT12:00:00" Recurrence on the first day of every month at 12:00:00
 /// - "YY:MM:FL:PT12:00:00" Recurrence on the last Friday of every month at 12:00:00
-pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
+pub static SPEC_EXPR: LazyLock<String> = LazyLock::new(|| {
     format!(
         "(?:(?<date>{})?T(?<time>{}))",
         DATE_SPEC_EXPR.as_str(),
@@ -21,7 +21,7 @@ pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
     )
     .to_string()
 });
-pub static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(&SPEC_EXPR).unwrap());
+pub static SPEC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(&SPEC_EXPR).unwrap());
 
 #[derive(Debug, Clone)]
 pub struct Spec {

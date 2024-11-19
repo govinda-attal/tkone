@@ -42,7 +42,7 @@ mod utils;
 /// - `final_value(&self) -> &T`: Returns the final value of the scheduling operation.
 /// - `actual(&self) -> &T`: Returns the actual value of the scheduling operation.
 /// - `as_tuple(&self) -> (&T, &T)`: Returns the result as a tuple of two values.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NextResult<T: Clone> {
     /// A single result.
     Single(T),
@@ -139,7 +139,7 @@ mod tests {
             WeekendSkipper::new(),
             New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
         )
-        .with_end(New_York.with_ymd_and_hms(2025, 7, 31, 11, 00, 0).unwrap())
+        .with_end(New_York.with_ymd_and_hms(2025, 7, 8, 11, 00, 0).unwrap())
         .build()
         .unwrap();
         let tmp = tmp

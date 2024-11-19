@@ -1,21 +1,127 @@
-use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike};
+use std::marker::PhantomData;
+
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
 
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};
 use crate::prelude::*;
 
+pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
+pub struct NoStart;
+pub struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
+pub struct EndSpec(String);
+pub struct NoEnd;
+pub struct Sealed;
+pub struct NotSealed;
+
+pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
+    timezone: Tz,
+    dtm: DateTime<Tz>,
+    start: START,
+    spec: String,
+    end: END,
+    marker_sealed: PhantomData<S>,
+}
+
+impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+    pub fn new(spec: &str, tz: Tz) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+        SpecIteratorBuilder::new_after(spec, Utc::now().with_timezone(&tz))
+    }
+
+    pub fn new_after(
+        spec: &str,
+        dtm: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+        Self {
+            timezone: dtm.timezone(),
+            dtm,
+            start: NoStart,
+            spec: spec.to_string(),
+            end: NoEnd,
+            marker_sealed: PhantomData,
+        }
+    }
+
+    pub fn build(self) -> Result<SpecIterator<Tz>> {
+        SpecIterator::new_after(&self.spec, self.dtm)
+    }
+}
+
+impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
+    pub fn new_with_start(
+        spec: &str,
+        start: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
+        let timezone = start.timezone();
+        Self {
+            timezone,
+            dtm: start.clone(),
+            start: StartDateTime(start),
+            spec: spec.to_string(),
+            end: NoEnd,
+            marker_sealed: PhantomData,
+        }
+    }
+}
+
+impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+        SpecIteratorBuilder {
+            timezone: self.timezone,
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            end: EndDateTime(end),
+            marker_sealed: PhantomData,
+        }
+    }
+
+    pub fn with_end_spec(
+        self,
+        end_spec: impl Into<String>,
+    ) -> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
+        SpecIteratorBuilder {
+            timezone: self.timezone,
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            end: EndSpec(end_spec.into()),
+            marker_sealed: PhantomData,
+        }
+    }
+
+    pub fn build(self) -> Result<SpecIterator<Tz>> {
+        SpecIterator::new_with_start(&self.spec, self.dtm)
+    }
+}
+
+impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+    pub fn build(self) -> Result<SpecIterator<Tz>> {
+        SpecIterator::new_with_end(&self.spec, self.dtm, self.end.0)
+    }
+}
+
+impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
+    pub fn build(self) -> Result<SpecIterator<Tz>> {
+        SpecIterator::new_with_end_spec(&self.spec, self.dtm, &self.end.0)
+    }
+}
+
 /// ## SpecIterator
 /// An iterator for generating recurring timezone aware datetimes as per time based specifications.
 /// ### Examples
 ///
 /// ```rust
-/// use lib_schedule::time::SpecIterator;
+/// use lib_schedule::time::SpecIteratorBuilder;
 /// use chrono::{DateTime, TimeZone, Utc, Duration};
 /// use fallible_iterator::FallibleIterator;
 ///
 /// let start = Utc.with_ymd_and_hms(2024, 3, 31, 10, 0, 0).unwrap();
-/// let iter = SpecIterator::new_with_start("1H:00:00", start.clone()).unwrap();
+/// let iter = SpecIteratorBuilder::new_with_start("1H:00:00", start.clone()).build().unwrap();
 /// let occurrences = iter.take(3).collect::<Vec<DateTime<_>>>().unwrap();
 ///        
 /// assert_eq!(occurrences, vec![
@@ -25,6 +131,12 @@ use crate::prelude::*;
 /// ]);
 ///
 /// ```
+///
+/// ### See Also
+/// - [NaiveSpecIterator](crate::time::NaiveSpecIterator)
+/// - [SpecIteratorBuilder](crate::time::SpecIteratorBuilder)
+/// - [Spec](crate::time::SPEC_EXPR)
+///
 #[derive(Debug, Clone)]
 pub struct SpecIterator<Tz: TimeZone> {
     tz: Tz,
@@ -32,21 +144,21 @@ pub struct SpecIterator<Tz: TimeZone> {
 }
 
 impl<Tz: TimeZone> SpecIterator<Tz> {
-    pub fn new(spec: &str, start: DateTime<Tz>) -> Result<Self> {
+    fn new_after(spec: &str, dtm: DateTime<Tz>) -> Result<Self> {
         Ok(Self {
-            tz: start.timezone(),
-            naive_spec_iter: NaiveSpecIterator::new(spec, start.naive_local())?,
+            tz: dtm.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_after(spec, dtm.naive_local())?,
         })
     }
 
-    pub fn new_with_start(spec: &str, start: DateTime<Tz>) -> Result<Self> {
+    fn new_with_start(spec: &str, start: DateTime<Tz>) -> Result<Self> {
         Ok(Self {
             tz: start.timezone(),
             naive_spec_iter: NaiveSpecIterator::new_with_start(spec, start.naive_local())?,
         })
     }
 
-    pub fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
+    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
         Ok(Self {
             tz: start.timezone(),
             naive_spec_iter: NaiveSpecIterator::new_with_end(
@@ -57,7 +169,7 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         })
     }
 
-    pub fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
+    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
         Ok(Self {
             tz: start.timezone(),
             naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
@@ -99,7 +211,7 @@ pub struct NaiveSpecIterator {
 }
 
 impl NaiveSpecIterator {
-    pub fn new(spec: &str, dtm: NaiveDateTime) -> Result<Self> {
+    pub fn new_after(spec: &str, dtm: NaiveDateTime) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
             dtm,
@@ -134,7 +246,7 @@ impl NaiveSpecIterator {
 
     pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
         let spec = spec.parse()?;
-        let end = Self::new(end_spec, start.clone())?
+        let end = Self::new_after(end_spec, start.clone())?
             .next()?
             .ok_or(Error::Custom("invalid end spec"))?;
         Ok(Self {
@@ -225,8 +337,16 @@ impl FallibleIterator for NaiveSpecIterator {
             _ => next,
         };
 
-        self.dtm = next;
+        if let Some(end) = &self.end {
+            if &next > end {
+                self.dtm = end.clone();
+                self.index += 1;
+                return Ok(Some(end.clone()));
+            }
+        };
 
+        self.dtm = next;
+        self.index += 1;
         Ok(Some(self.dtm.clone()))
     }
 }
@@ -260,7 +380,7 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
         dbg!(&dtm.to_rfc3339());
         let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
-        let spec_ter = SpecIterator::new("HH:30M:00", dt.with_timezone(&New_York)).unwrap();
+        let spec_ter = SpecIterator::new_after("HH:30M:00", dt).unwrap();
         dbg!(spec_ter.take(6).collect::<Vec<DateTime<_>>>().unwrap());
     }
 
@@ -272,7 +392,7 @@ mod tests {
         let dtm = london.with_ymd_and_hms(2021, 10, 31, 00, 30, 0).unwrap();
         dbg!(&dtm);
         // let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
-        let spec_ter = SpecIterator::new("1H:MM:00", dtm).unwrap();
+        let spec_ter = SpecIterator::new_after("1H:MM:00", dtm).unwrap();
         dbg!(spec_ter.take(5).collect::<Vec<DateTime<_>>>().unwrap());
     }
 

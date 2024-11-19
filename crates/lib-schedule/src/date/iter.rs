@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use super::spec::{self, BizDayAdjustment, Cycle, DayCycle, DayOption, Spec, WeekdayOption};
 use crate::{
     biz_day::{BizDayProcessor, WeekendSkipper},
@@ -11,6 +9,8 @@ use chrono::{
     DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc, Weekday,
 };
 use fallible_iterator::FallibleIterator;
+use std::marker::PhantomData;
+use std::sync::LazyLock;
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
@@ -34,28 +34,9 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     pub fn new(
         spec: &str,
         bdp: BDP,
-        tz: &Tz,
+        tz: Tz,
     ) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
-        let now = Utc::now();
-        let now = tz
-            .with_ymd_and_hms(
-                now.year(),
-                now.month(),
-                now.day(),
-                now.hour(),
-                now.minute(),
-                now.second(),
-            )
-            .unwrap();
-        SpecIteratorBuilder {
-            dtm: now,
-            start: NoStart,
-            spec: spec.to_string(),
-            bd_processor: bdp,
-            end: NoEnd,
-            marker_sealed: PhantomData,
-            timezone: tz.clone(),
-        }
+        SpecIteratorBuilder::new_after(spec, bdp, Utc::now().with_timezone(&tz))
     }
 
     pub fn new_after(
@@ -77,7 +58,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         Ok(SpecIterator {
             tz: self.dtm.timezone(),
-            naive_spec_iter: NaiveSpecIterator::new(
+            naive_spec_iter: NaiveSpecIterator::new_after(
                 &self.spec,
                 self.bd_processor,
                 self.dtm.naive_local(),
@@ -213,6 +194,35 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     }
 }
 
+/// # SpecIterator
+/// datetime::SpecIterator is an iterator that combines a date and time specification to generate a sequence of date-times.
+/// This iterator is created using the SpecIteratorBuilder.
+///
+/// ## Example
+/// ```rust
+/// use lib_schedule::biz_day::WeekendSkipper;
+/// use lib_schedule::date::SpecIteratorBuilder;
+/// use chrono_tz::America::New_York;
+/// use fallible_iterator::FallibleIterator;
+/// use chrono::{offset::TimeZone, DateTime};
+/// use lib_schedule::NextResult;
+/// use chrono::Duration;
+///
+/// let start = New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap();
+/// let iter = SpecIteratorBuilder::new_with_start("YY:1M:31L", WeekendSkipper::new(), start).build().unwrap();
+/// let occurrences = iter.take(4).collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
+/// assert_eq!(occurrences, vec![
+///     NextResult::Single(start.clone()), // 2024-11-30
+///     NextResult::Single(start + Duration::days(31)), // 2024-12-31
+///     NextResult::Single(start + Duration::days(62)), // 2025-01-31
+///     NextResult::Single(start + Duration::days(90)), // 2025-02-28
+/// ]);
+/// ```
+///
+/// ## See Also
+/// - [SpecIteratorBuilder](crate::date::SpecIteratorBuilder)
+/// - [SPEC_EXPR](crate::date::SPEC_EXPR)
+/// - [NaiveSpecIterator](crate::date::NaiveSpecIterator)
 #[derive(Debug)]
 pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     tz: Tz,
@@ -249,7 +259,7 @@ pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
 }
 
 impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
-    fn new(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
+    fn new_after(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
             spec,
@@ -699,6 +709,14 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             return Ok(None);
         }
 
+        if let Some(end) = &self.end {
+            if next.actual() > &end {
+                self.dtm = end.clone();
+                self.index += 1;
+                return Ok(Some(NextResult::Single(end.clone())));
+            }
+        };
+
         self.index += 1;
         self.dtm = next.actual().clone();
         Ok(Some(next))
@@ -712,8 +730,6 @@ fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
     new_month = (new_month - 1) % 12 + 1;
     (new_year, new_month)
 }
-
-use std::sync::LazyLock;
 
 static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipper::new());
 
@@ -730,49 +746,6 @@ fn adjusted_to_next_result(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::biz_day::WeekendSkipper;
-
-    use super::*;
-    use chrono_tz::America::New_York;
-
-    #[test]
-    fn test_time_spec_with_start() {
-        // US Eastern Time (EST/EDT)
-        let est = New_York;
-        // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
-
-        dbg!(&dtm);
-        let spec_iter = SpecIteratorBuilder::new_with_start("YY:1M:DD", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
-        dbg!(spec_iter
-            .take(15)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap());
-    }
-
-    #[test]
-    fn test_time_spec() {
-        // US Eastern Time (EST/EDT)
-        let est = New_York;
-        // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
-
-        dbg!(&dtm);
-        let spec_iter =
-            SpecIteratorBuilder::new_with_start("YY:1M:31N", WeekendSkipper::new(), dtm)
-                .build()
-                .unwrap();
-        dbg!(spec_iter
-            .take(15)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap());
-    }
-}
-
 #[derive(Debug)]
 struct NextResulterByWeekDay<'a> {
     dtm: &'a NaiveDateTime,
@@ -785,7 +758,7 @@ struct NextResulterByWeekDay<'a> {
 }
 
 impl<'a> NextResulterByWeekDay<'a> {
-    pub fn new(dtm: &'a NaiveDateTime, wd: &'a Weekday, wd_opt: &'a WeekdayOption) -> Self {
+    fn new(dtm: &'a NaiveDateTime, wd: &'a Weekday, wd_opt: &'a WeekdayOption) -> Self {
         Self {
             dtm,
             wd,
@@ -797,27 +770,27 @@ impl<'a> NextResulterByWeekDay<'a> {
         }
     }
 
-    pub fn month(&mut self, month: u32) -> &mut Self {
+    fn month(&mut self, month: u32) -> &mut Self {
         self.month = Some(month);
         self
     }
 
-    pub fn year(&mut self, year: u32) -> &mut Self {
+    fn year(&mut self, year: u32) -> &mut Self {
         self.year = Some(year);
         self
     }
 
-    pub fn num_months(&mut self, num_months: u32) -> &mut Self {
+    fn num_months(&mut self, num_months: u32) -> &mut Self {
         self.num_months = Some(num_months);
         self
     }
 
-    pub fn num_years(&mut self, num_years: u32) -> &mut Self {
+    fn num_years(&mut self, num_years: u32) -> &mut Self {
         self.num_years = Some(num_years);
         self
     }
 
-    pub fn build(&self) -> NextResult<NaiveDateTime> {
+    fn build(&self) -> NextResult<NaiveDateTime> {
         let dtm = self.dtm.clone();
         let wd = self.wd;
         let wd_opt = self.wd_opt;
@@ -894,7 +867,7 @@ struct NextResulterByDay<'a> {
 }
 
 impl<'a> NextResulterByDay<'a> {
-    pub fn new(dtm: &'a NaiveDateTime) -> Self {
+    fn new(dtm: &'a NaiveDateTime) -> Self {
         Self {
             dtm,
             day: None,
@@ -904,32 +877,32 @@ impl<'a> NextResulterByDay<'a> {
         }
     }
 
-    pub fn day(&mut self, day: u32) -> &mut Self {
+    fn day(&mut self, day: u32) -> &mut Self {
         self.day = Some(day);
         self
     }
 
-    pub fn month(&mut self, month: u32) -> &mut Self {
+    fn month(&mut self, month: u32) -> &mut Self {
         self.month = Some(month);
         self
     }
 
-    pub fn year(&mut self, year: u32) -> &mut Self {
+    fn year(&mut self, year: u32) -> &mut Self {
         self.year = Some(year);
         self
     }
 
-    pub fn day_option(&mut self, opt: &DayOption) -> &mut Self {
+    fn day_option(&mut self, opt: &DayOption) -> &mut Self {
         self.day_opt = Some(opt.clone());
         self
     }
 
-    pub fn last_day(&mut self) -> &mut Self {
+    fn last_day(&mut self) -> &mut Self {
         self.day_opt = Some(DayOption::LastDay);
         self
     }
 
-    pub fn build(&self) -> NextResult<NaiveDateTime> {
+    fn build(&self) -> NextResult<NaiveDateTime> {
         use spec::DayOption::*;
         let dtm = self.dtm.clone();
         let day_opt = self.day_opt.as_ref().unwrap_or(&DayOption::NA);
@@ -984,5 +957,48 @@ impl<'a> NextResulterByDay<'a> {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::biz_day::WeekendSkipper;
+
+    use super::*;
+    use chrono_tz::America::New_York;
+
+    #[test]
+    fn test_time_spec_with_start() {
+        // US Eastern Time (EST/EDT)
+        let est = New_York;
+        // Before DST starts (Standard Time)
+        let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
+
+        dbg!(&dtm);
+        let spec_iter = SpecIteratorBuilder::new_with_start("YY:1M:DD", WeekendSkipper::new(), dtm)
+            .build()
+            .unwrap();
+        dbg!(spec_iter
+            .take(15)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap());
+    }
+
+    #[test]
+    fn test_time_spec() {
+        // US Eastern Time (EST/EDT)
+        let est = New_York;
+        // Before DST starts (Standard Time)
+        let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
+
+        dbg!(&dtm);
+        let spec_iter =
+            SpecIteratorBuilder::new_with_start("YY:1M:31N", WeekendSkipper::new(), dtm)
+                .build()
+                .unwrap();
+        dbg!(spec_iter
+            .take(15)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap());
     }
 }

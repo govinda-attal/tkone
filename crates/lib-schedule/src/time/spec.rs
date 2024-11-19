@@ -1,7 +1,7 @@
 use crate::prelude::*;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 /// ## SPEC_EXPR
 /// Regular expression for matching time recurrence specifications.
@@ -17,9 +17,9 @@ use std::str::FromStr;
 /// - `12:34:56`: Matches time in hours, minutes, and seconds.
 /// - `1H:1M:1S`: Matches duration in hours, minutes, and seconds.
 pub const SPEC_EXPR: &str = r"([01][0-9]|2[0-3]|[0-9]H|1[0-9]H|2[0-3]H|HH):([0-5][0-9]|[0-5]?[0-9]M|MM):([0-5][0-9]|[0-5]?[0-9]S|SS)";
-static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR).unwrap());
+static SPEC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(SPEC_EXPR).unwrap());
 const CYCLE_EXPR: &str = r"(?:HH|MM|SS)|(?:(?<num>\d+)(?<type>[HMS])?)";
-static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
+static CYCLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(CYCLE_EXPR).unwrap());
 
 /// ## Spec
 /// Represents a time specification.

@@ -6,10 +6,10 @@ edition = "2021"
 [lib]
 
 [dependencies]
-regex ={ version = "1.10" }
-chrono ={ version = "*"}
-chrono-tz ={ version = "*"}
-# lib-utils = {version = "*", path = "../../crates/lib-utils"}
-once_cell = { version = "*" }
+regex ={ version = "1.11.1" }
+chrono ={ version = "0.4.38"}
 fallible-iterator = "0.3.0"
-thiserror = "1.0.65"
+thiserror = "2.0.3"
+
+[dev-dependencies]
+chrono-tz ={ version = "0.10.0"}

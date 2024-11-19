@@ -1,6 +1,7 @@
 use crate::{biz_day::Direction as AdjustmentDirection, prelude::*};
 use chrono::Weekday;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
+
 use regex::Regex;
 use std::str::FromStr;
 
@@ -86,15 +87,15 @@ const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>[MTWRFSU])(?:(?<last_num>[1-4])?(?<l
 /// - `YY:1M:TL`: Is recurrence specification for last Tuesday of every month
 /// - `YY:1M:TL:B`: Is recurrence specification for last Tuesday of every month or nearest business day.
 /// - `YY:MM:T`: Is recurrence specification for every Tuesday.
-pub static SPEC_EXPR: Lazy<String> = Lazy::new(|| {
+pub static SPEC_EXPR: LazyLock<String> = LazyLock::new(|| {
     format!("{YEAR_EXPR}:{MONTH_EXPR}:(?:{WEEKDAY_EXPR}|{DAY_EXPR}){BDAY_ADJ_EXPR}").to_string()
 });
 
 const CYCLE_EXPR: &str = r"(?:YY|MM)|(?:(?<num>\d+)?(?<type>[YMPN])?)";
 
-static SPEC_RE: Lazy<Regex> = Lazy::new(|| Regex::new(SPEC_EXPR.as_str()).unwrap());
-static CYCLE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(CYCLE_EXPR).unwrap());
-static DAY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(DAY_EXTRACTOR_EXPR).unwrap());
+static SPEC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(SPEC_EXPR.as_str()).unwrap());
+static CYCLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(CYCLE_EXPR).unwrap());
+static DAY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(DAY_EXTRACTOR_EXPR).unwrap());
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct Spec {
@@ -108,7 +109,6 @@ impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        dbg!(SPEC_EXPR.as_str());
         let caps = SPEC_RE
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;

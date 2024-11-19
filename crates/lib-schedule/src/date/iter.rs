@@ -1,4 +1,4 @@
-use super::spec::{self, BizDayAdjustment, Cycle, DayCycle, DayOption, Spec, WeekdayOption};
+use super::spec::{self, BizDayAdjustment, Cycle, DayCycle, DayOption, EveryDayOption, Spec, WeekdayOption};
 use crate::{
     biz_day::{BizDayProcessor, WeekendSkipper},
     prelude::*,
@@ -358,16 +358,16 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 .day_option(opt)
                 .day(*day)
                 .build(),
-            (Cycle::NA, Cycle::NA, DayCycle::Every(num)) => {
+            (Cycle::NA, Cycle::NA, DayCycle::Every(num, EveryDayOption::Regular)) => {
                 NextResult::Single(next + Duration::days(*num as i64))
             }
-            (Cycle::NA, Cycle::NA, DayCycle::EveryBizDay(num)) => {
-                NextResult::Single(self.bd_processor.add(&next, *num)?)
+            (Cycle::NA, Cycle::NA, DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
+                NextResult::Single(self.bd_processor.add(&next, *num_days)?)
             }
-            (Cycle::NA, Cycle::NA, DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::NA, Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt).build()
             }
-            (Cycle::NA, Cycle::NA, DayCycle::Last) => {
+            (Cycle::NA, Cycle::NA, DayCycle::OnLastDay) => {
                 NextResulterByDay::new(&next).last_day().build()
             }
             (Cycle::NA, Cycle::In(month), DayCycle::NA) => {
@@ -378,20 +378,20 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 .day(*day)
                 .month(*month)
                 .build(),
-            (Cycle::NA, Cycle::In(month), DayCycle::Every(num)) => {
+            (Cycle::NA, Cycle::In(month), DayCycle::Every(num, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num as i64);
                 NextResulterByDay::new(&next).month(*month).build()
             }
-            (Cycle::NA, Cycle::In(month), DayCycle::EveryBizDay(num)) => {
-                let next = self.bd_processor.add(&next, *num)?;
+            (Cycle::NA, Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
+                let next = self.bd_processor.add(&next, *num_days)?;
                 NextResulterByDay::new(&next).month(*month).build()
             }
-            (Cycle::NA, Cycle::In(month), DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::NA, Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .month(*month)
                     .build()
             }
-            (Cycle::NA, Cycle::In(month), DayCycle::Last) => NextResulterByDay::new(&next)
+            (Cycle::NA, Cycle::In(month), DayCycle::OnLastDay) => NextResulterByDay::new(&next)
                 .last_day()
                 .month(*month)
                 .build(),
@@ -412,7 +412,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::Every(num_days)) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 let (year, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -420,7 +420,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::EveryBizDay(num_days)) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 let (year, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -428,12 +428,12 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .num_months(*num_months)
                     .build()
             }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::Last) => {
+            (Cycle::NA, Cycle::Every(num_months), DayCycle::OnLastDay) => {
                 let (year, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
                     .last_day()
@@ -449,20 +449,20 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 .day(*day)
                 .year(*year)
                 .build(),
-            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days)) => {
+            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 NextResulterByDay::new(&next).year(*year).build()
             }
-            (Cycle::In(year), Cycle::NA, DayCycle::EveryBizDay(num_days)) => {
+            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 NextResulterByDay::new(&next).year(*year).build()
             }
-            (Cycle::In(year), Cycle::NA, DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::In(year), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::NA, DayCycle::Last) => {
+            (Cycle::In(year), Cycle::NA, DayCycle::OnLastDay) => {
                 NextResulterByDay::new(&next).last_day().year(*year).build()
             }
             (Cycle::In(year), Cycle::In(month), DayCycle::NA) => NextResulterByDay::new(&next)
@@ -477,27 +477,27 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::In(month), DayCycle::Every(num_days)) => {
+            (Cycle::In(year), Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 NextResulterByDay::new(&next)
                     .month(*month)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::In(month), DayCycle::EveryBizDay(num_days)) => {
+            (Cycle::In(year), Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 NextResulterByDay::new(&next)
                     .month(*month)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::In(month), DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::In(year), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .month(*month)
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::In(month), DayCycle::Last) => NextResulterByDay::new(&next)
+            (Cycle::In(year), Cycle::In(month), DayCycle::OnLastDay) => NextResulterByDay::new(&next)
                 .last_day()
                 .month(*month)
                 .year(*year)
@@ -518,7 +518,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Every(num_days)) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -526,7 +526,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::EveryBizDay(num_days)) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -534,13 +534,13 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .year(*year)
                     .num_months(*num_months)
                     .build()
             }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::Last) => {
+            (Cycle::In(year), Cycle::Every(num_months), DayCycle::OnLastDay) => {
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
                     .last_day()
@@ -558,24 +558,24 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::Every(num_days)) => {
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 NextResulterByDay::new(&next)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::EveryBizDay(num_days)) => {
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 NextResulterByDay::new(&next)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .num_years(*num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::Last) => NextResulterByDay::new(&next)
+            (Cycle::Every(num_years), Cycle::NA, DayCycle::OnLastDay) => NextResulterByDay::new(&next)
                 .last_day()
                 .year(next.year() as u32 + *num_years)
                 .build(),
@@ -593,27 +593,27 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Every(num_days)) => {
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 NextResulterByDay::new(&next)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::EveryBizDay(num_days)) => {
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 NextResulterByDay::new(&next)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .num_years(*num_years)
                     .month(*month)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::Last) => {
+            (Cycle::Every(num_years), Cycle::In(month), DayCycle::OnLastDay) => {
                 NextResulterByDay::new(&next)
                     .last_day()
                     .month(*month)
@@ -636,7 +636,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Every(num_days)) => {
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Every(num_days, EveryDayOption::Regular)) => {
                 let next = next + Duration::days(*num_days as i64);
                 let (year, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -647,7 +647,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (
                 Cycle::Every(num_years),
                 Cycle::Every(num_months),
-                DayCycle::EveryBizDay(num_days),
+                DayCycle::Every(num_days, EveryDayOption::BizDay),
             ) => {
                 let next = self.bd_processor.add(&next, *num_days)?;
                 let (year, month) = ffwd_months(&next, *num_months as u32);
@@ -656,20 +656,21 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year + *num_years)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::WeekDay(wd, opt)) => {
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
                 NextResulterByWeekDay::new(&next, wd, opt)
                     .num_years(*num_years)
                     .num_months(*num_months)
                     .build()
             }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::Last) => {
+            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::OnLastDay) => {
                 let (year, month) = ffwd_months(&next, *num_months as u32);
                 NextResulterByDay::new(&next)
                     .last_day()
                     .month(month)
                     .year(year + *num_years)
                     .build()
-            }
+            },
+            _ => panic!("invalid spec"),
         };
 
         if next.actual() <= &self.dtm {

@@ -10,10 +10,10 @@ pub enum DayCycle {
     #[default]
     NA,
     On(u32, DayOption),
-    Every(u32),
-    EveryBizDay(u32),
-    Last,
-    WeekDay(chrono::Weekday, WeekdayOption),
+    Every(u32, EveryDayOption),
+    // EveryBizDay(u32),
+    OnLastDay,
+    OnWeekDay(chrono::Weekday, WeekdayOption),
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
@@ -31,6 +31,14 @@ pub enum DayOption {
     LastDay,
     NextMonthFirstDay,
     NextMonthOverflow,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
+pub enum EveryDayOption {
+    #[default]
+    Regular,
+    BizDay,
+    WeekDay,
 }
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
@@ -54,12 +62,12 @@ pub enum Cycle {
 const MONTH_EXPR: &str = r"(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM)";
 const YEAR_EXPR: &str = r"(YY|19|20\d{2}|1Y)";
 const DAY_EXPR: &str =
-    r"(DD|BB|L|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29(?:[BDLNO])?|3[01](?:[BDLNO])?)";
+    r"(DD|L|[1-9](?:BD|WD|D)|0[1-9]|[12][0-8](?:BD|WD|D)?|29(?:BD|WD|D|L|N|O)?|3[01](?:BD|WD|D|L|N|O)?)";
 const BDAY_ADJ_EXPR: &str = r"(?::(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?";
 const WEEKDAY_EXPR: &str = r"([MTWRFSU](?:[1-4]{0,1}L|[1-4])?)";
 
-const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>[MTWRFSU])(?:(?<last_num>[1-4])?(?<last>L)|(?<start_num>[1-4]))?)|(?:(?:DD|BB)|(?<num>\d+)?(?<type>[BDLNO])?)";
-
+const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>[MTWRFSU])(?:(?<last_num>[1-4])?(?<last>L)|(?<start_num>[1-4]))?)|(?:(?:DD|BB)|(?<num>\d+)?(?<type>BD|WD|[DLNO])?)";
+// (YY|19|20\\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(?:([MTWRFSU](?:[1-4]{0,1}L|[1-4])?)|(DD|BB|L|[1-9][BDW]|0[1-9]|[12][0-8][BDW]?|29(?:[BDLNOW])?|3[01](?:[BDLNOW])?))(?::(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?
 /// ## SPEC_EXPR
 /// Regular expression for matching date recurrence specifications.
 /// It matches various combinations of years, months, and days.
@@ -109,6 +117,7 @@ impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
+        dbg!(&SPEC_EXPR.to_string());
         let caps = SPEC_RE
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;
@@ -233,7 +242,7 @@ impl FromStr for DayCycle {
             } else {
                 WeekdayOption::NA
             };
-            return Ok(DayCycle::WeekDay(weekday, wd_option));
+            return Ok(DayCycle::OnWeekDay(weekday, wd_option));
         }
 
         let Some(num) = cycle.name("num") else {
@@ -241,14 +250,14 @@ impl FromStr for DayCycle {
                 return Ok(DayCycle::NA);
             };
             match ty.as_str() {
-                "L" => return Ok(DayCycle::Last),
-                "M" => return Ok(DayCycle::WeekDay(chrono::Weekday::Mon, WeekdayOption::NA)),
-                "T" => return Ok(DayCycle::WeekDay(chrono::Weekday::Tue, WeekdayOption::NA)),
-                "W" => return Ok(DayCycle::WeekDay(chrono::Weekday::Wed, WeekdayOption::NA)),
-                "R" => return Ok(DayCycle::WeekDay(chrono::Weekday::Thu, WeekdayOption::NA)),
-                "F" => return Ok(DayCycle::WeekDay(chrono::Weekday::Fri, WeekdayOption::NA)),
-                "S" => return Ok(DayCycle::WeekDay(chrono::Weekday::Sat, WeekdayOption::NA)),
-                "U" => return Ok(DayCycle::WeekDay(chrono::Weekday::Sun, WeekdayOption::NA)),
+                "L" => return Ok(DayCycle::OnLastDay),
+                "M" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Mon, WeekdayOption::NA)),
+                "T" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Tue, WeekdayOption::NA)),
+                "W" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Wed, WeekdayOption::NA)),
+                "R" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Thu, WeekdayOption::NA)),
+                "F" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Fri, WeekdayOption::NA)),
+                "S" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sat, WeekdayOption::NA)),
+                "U" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sun, WeekdayOption::NA)),
                 _ => return Ok(DayCycle::NA),
             };
         };
@@ -259,8 +268,9 @@ impl FromStr for DayCycle {
         };
 
         let cycle = match ty.as_str() {
-            "D" => DayCycle::Every(num),
-            "B" => DayCycle::EveryBizDay(num),
+            "BD" => DayCycle::Every(num, EveryDayOption::BizDay),
+            "WD" => DayCycle::Every(num, EveryDayOption::WeekDay),
+            "D" => DayCycle::Every(num, EveryDayOption::Regular),
             "L" => DayCycle::On(num, DayOption::LastDay),
             "N" => DayCycle::On(num, DayOption::NextMonthFirstDay),
             "O" => DayCycle::On(num, DayOption::NextMonthOverflow),
@@ -296,14 +306,15 @@ impl ToString for Spec {
             DayCycle::On(num, DayOption::LastDay) => f!("{:02}L", num),
             DayCycle::On(num, DayOption::NextMonthFirstDay) => f!("{:02}N", num),
             DayCycle::On(num, DayOption::NextMonthOverflow) => f!("{:02}O", num),
-            DayCycle::Every(num) => f!("{:02}D", num),
-            DayCycle::EveryBizDay(num) => f!("{:02}B", num),
-            DayCycle::Last => "L".to_string(),
-            DayCycle::WeekDay(wd, WeekdayOption::NA) => wd.to_string(),
-            DayCycle::WeekDay(wd, WeekdayOption::Starting(Some(num))) => {
+            DayCycle::Every(num, EveryDayOption::Regular) => f!("{}D", num),
+            DayCycle::Every(num, EveryDayOption::BizDay) => f!("{}BD", num),
+            DayCycle::Every(num, EveryDayOption::WeekDay) => f!("{}WD", num),
+            DayCycle::OnLastDay => "L".to_string(),
+            DayCycle::OnWeekDay(wd, WeekdayOption::NA) => wd.to_string(),
+            DayCycle::OnWeekDay(wd, WeekdayOption::Starting(Some(num))) => {
                 f!("{:?}{}", weekday_code(wd), num)
             }
-            DayCycle::WeekDay(wd, WeekdayOption::Ending(Some(num))) => {
+            DayCycle::OnWeekDay(wd, WeekdayOption::Ending(Some(num))) => {
                 f!("{:?}{}L", weekday_code(wd), num)
             }
             _ => "DD".to_string(),
@@ -363,17 +374,17 @@ mod tests {
 
     #[test]
     fn test_two() {
-        let spec = Spec::from_str("YY:1M:08:W").unwrap();
+        let spec = Spec::from_str("YY:1M:8WD").unwrap();
         assert_eq!(
             &spec,
             &Spec {
                 years: Cycle::NA,
                 months: Cycle::Every(1),
-                days: DayCycle::On(8, DayOption::NA),
-                biz_day_adj: Some(BizDayAdjustment::Weekday(AdjustmentDirection::Nearest)),
+                days: DayCycle::Every(8, EveryDayOption::WeekDay),
+                biz_day_adj: None,
             },
         );
-        assert_eq!(spec.to_string(), "YY:1M:08:W");
+        assert_eq!(spec.to_string(), "YY:1M:8WD");
     }
 
     #[test]

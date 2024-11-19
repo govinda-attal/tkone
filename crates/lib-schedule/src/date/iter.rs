@@ -839,8 +839,16 @@ impl<'a> NextResulterByWeekDay<'a> {
                     .to_months_last_weekday(wd, occurrence)
                     .unwrap_or(interim)
             }
-            WeekdayOption::NA => interim.to_weekday(wd),
+            WeekdayOption::NA => {
+                let next = interim.to_weekday(wd);
+                if next == interim {
+                    next + Duration::days(7)
+                } else {
+                    next
+                }
+            },
         };
+        dbg!(&next);
 
         if let Some(year) = self.year {
             if next.year() != year as i32 {

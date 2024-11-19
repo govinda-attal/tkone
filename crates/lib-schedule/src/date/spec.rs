@@ -56,7 +56,7 @@ const YEAR_EXPR: &str = r"(YY|19|20\d{2}|1Y)";
 const DAY_EXPR: &str =
     r"(DD|BB|L|[1-9][BD]|0[1-9]|[12][0-8][BD]?|29(?:[BDLNO])?|3[01](?:[BDLNO])?)";
 const BDAY_ADJ_EXPR: &str = r"(?::(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?";
-const WEEKDAY_EXPR: &str = r"([MTWRFSU](?:[1-4]{0,1}L|[1-4]))";
+const WEEKDAY_EXPR: &str = r"([MTWRFSU](?:[1-4]{0,1}L|[1-4])?)";
 
 const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>[MTWRFSU])(?:(?<last_num>[1-4])?(?<last>L)|(?<start_num>[1-4]))?)|(?:(?:DD|BB)|(?<num>\d+)?(?<type>[BDLNO])?)";
 

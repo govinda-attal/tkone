@@ -12,6 +12,7 @@
 //! - [`time`]: Contains time-related utilities and structures.
 //! - [`datetime`]: Contains date and time-related utilities and structures.
 
+
 /// The `biz_day` module contains utilities and structures for business day processing.
 pub mod biz_day;
 /// The `date` module provides date-related utilities and structures.
@@ -135,7 +136,7 @@ mod tests {
     #[test]
     fn test_works() {
         let tmp = datetime::SpecIteratorBuilder::new_with_start(
-            "YY:1M:08:WT11:00:00",
+            "YY-1M-08~WT11:00:00",
             WeekendSkipper::new(),
             New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
         )

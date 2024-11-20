@@ -9,11 +9,10 @@ use std::str::FromStr;
 pub enum DayCycle {
     #[default]
     NA,
-    On(u32, DayOption),
     Every(u32, EveryDayOption),
-    // EveryBizDay(u32),
-    OnLastDay,
+    On(u32, DayOption),
     OnWeekDay(chrono::Weekday, WeekdayOption),
+    OnLastDay,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
@@ -60,43 +59,46 @@ pub enum Cycle {
 }
 
 const MONTH_EXPR: &str = r"(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM)";
-const YEAR_EXPR: &str = r"(YY|19|20\d{2}|1Y)";
-const DAY_EXPR: &str =
-    r"(DD|L|[1-9](?:BD|WD|D)|0[1-9]|[12][0-8](?:BD|WD|D)?|29(?:BD|WD|D|L|N|O)?|3[01](?:BD|WD|D|L|N|O)?)";
-const BDAY_ADJ_EXPR: &str = r"(?::(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?";
-const WEEKDAY_EXPR: &str = r"([MTWRFSU](?:[1-4]{0,1}L|[1-4])?)";
+const YEAR_EXPR: &str = r"(YY|19|20[0-9]{2}|1Y)";
+const DAY_EXPR: &str = r"(?:DD|L|[1-9](?:BD|WD|D)|0[1-9]|[12][0-8](?:BD|WD|D)?|29(?:BD|WD|D|L|N|O)?|3[01](?:BD|WD|D|L|N|O)?)";
+const BDAY_ADJ_EXPR: &str = r"(?:~(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?";
+const WEEKDAY_EXPR: &str = r"(?:MON|TUE|WED|THU|FRI|SAT|SUN)(?:#(?:L|[1-4]{0,1}L|[1-4]|L)){0,1}";
 
-const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>[MTWRFSU])(?:(?<last_num>[1-4])?(?<last>L)|(?<start_num>[1-4]))?)|(?:(?:DD|BB)|(?<num>\d+)?(?<type>BD|WD|[DLNO])?)";
-// (YY|19|20\\d{2}|1Y):(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM):(?:([MTWRFSU](?:[1-4]{0,1}L|[1-4])?)|(DD|BB|L|[1-9][BDW]|0[1-9]|[12][0-8][BDW]?|29(?:[BDLNOW])?|3[01](?:[BDLNOW])?))(?::(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?
+const DAY_EXTRACTOR_EXPR: &str = r"(?:(?<wd>MON|TUE|WED|THU|FRI|SAT|SUN)(?:#(?<last_num>[1-4])L|#(?<last>L)|#(?<start_num>[1-4]))?)|(?:(?:DD|BB)|(?<num>\d+)?(?<type>BD|WD|[DLNO])?)";
+// (?:(?<wd>MON|TUE|WED|THU|FRI|SAT|SUN)(?:#(?<last_num>[1-4])L|#(?<last>L)|#(?<start_num>[1-4]))?)|(?:(?:DD|BB)|(?<num>\d+)?(?<type>BD|WD|[DLNO])?)
 /// ## SPEC_EXPR
 /// Regular expression for matching date recurrence specifications.
 /// It matches various combinations of years, months, and days.
 ///
 /// ### Supported Formats
 ///
-/// - `YY:MM:DD`: Date format with years in the range 1900-2099, months in the range 01-12, and days in the range 01-31.
-/// - `<num>Y:<num>M:<num>D`: Duration format with years, months, and days specified as numbers followed by `Y`, `M`, and `D` respectively.
-/// - `YY:MM:<num>B`: Duration format with business days specified as number followed by `B`.
-/// - `YY:MM:(M|T|W|R|F|S|U)(<num>?L|<num>)?`: Date format with weekdays.
-/// - `YY:MM:DD:(PW|NW|PB|NB|B|W|<num>P|<num>N)?`: Date format with business day adjustments.
+/// - `YY-MM-DD`: Date format with years in the range 1900-2099, months in the range 01-12, and days in the range 01-31.
+/// - `<num>Y-<num>M-<num>D`: Duration format with years, months, and days specified as numbers followed by `Y`, `M`, and `D` respectively.
+/// - `YY-MM-<num>BD`: Duration format with business days specified as number followed by `BD`.
+/// - `YY-MM-(MON|TUE|WED|THU|FRI|SAT|SUN)(<num>?L|<num>)?`: Date format with weekdays.
+/// - `YY-MM-DD~(PW|NW|PB|NB|B|W|<num>P|<num>N)?`: Date format with business day adjustments.
 ///
 /// ### Examples
-/// - `YY:MM:1D`: Is recurrence specification for every day.
-/// - `YY:1M:DD`: Is recurrence specification for every month on the specified day.
-/// - `YY:1M:01:W`: Is recurrence specification for nearest weekday to 1st of every month.
-/// - `YY:1M:15:W`: Is recurrence specification for nearest weekday to the 15th of every month.
-/// - `YY:1M:15:PW`: Is recurrence specification for nearest(on previous side) weekday to 15th of every month.
-/// - `YY:1M:15:NW`: Is recurrence specification for nearest(on next side) business day to 15th of every month.
-/// - `YY:1M:L`: Is recurrence specification for last day of every month.
-/// - `YY:1M:29L`: Is recurrence specification for 29th of every month or last day in case of February.
-/// - `YY:1M:T1`: Is recurrence specification for first Tuesday of every month.
-/// - `YY:1M:T2`: Is recurrence specification for second Tuesday of every month.
-/// - `YY:1M:T2L`: Is recurrence specification for second last Tuesday of every month.
-/// - `YY:1M:TL`: Is recurrence specification for last Tuesday of every month
-/// - `YY:1M:TL:B`: Is recurrence specification for last Tuesday of every month or nearest business day.
-/// - `YY:MM:T`: Is recurrence specification for every Tuesday.
+/// - `YY-MM-1D`: Recurrence specification for every day.
+/// - `YY-MM-1BD`: Recurrence specification for every business day.
+/// - `YY-MM-1WD`: Recurrence specification for every weekday.
+/// - `1Y-01-01`: Recurrence specification for every year on the 1st of January.
+/// - `2024-1M-01`: Recurrence specification for 1st of every month in 2024.
+/// - `YY-1M-DD`: Recurrence specification for every month on the specified day.
+/// - `YY-1M-01~W`: Recurrence specification for nearest weekday to 1st of every month.
+/// - `YY-1M-15~W`: Recurrence specification for 15th of every month adjusted to nearest weekday.
+/// - `YY-1M-15~PW`: Recurrence specification for 15th of every month adjusted to nearest(on previous side) weekday.
+/// - `YY-1M-15~NB`: Recurrence specification for 15th of every month adjusted to nearest(on next side) business day.
+/// - `YY-1M-L`: Recurrence specification for last day of every month.
+/// - `YY-1M-29L`: Recurrence specification for 29th of every month or last day in case of February.
+/// - `YY-1M-TUE#1`: Recurrence specification for first Tuesday of every month.
+/// - `YY-1M-TUE#2`: Recurrence specification for second Tuesday of every month.
+/// - `YY-1M-TUE#2L`: Recurrence specification for second last Tuesday of every month.
+/// - `YY-1M-TUE#L`: Recurrence specification for last Tuesday of every month
+/// - `YY-1M-TUE#L~B`: Recurrence specification for last Tuesday of every month adjusted to nearest business day.
+/// - `YY-MM-TUE`: Recurrence specification for every Tuesday.
 pub static SPEC_EXPR: LazyLock<String> = LazyLock::new(|| {
-    format!("{YEAR_EXPR}:{MONTH_EXPR}:(?:{WEEKDAY_EXPR}|{DAY_EXPR}){BDAY_ADJ_EXPR}").to_string()
+    format!("{YEAR_EXPR}-{MONTH_EXPR}-({WEEKDAY_EXPR}|{DAY_EXPR}){BDAY_ADJ_EXPR}").to_string()
 });
 
 const CYCLE_EXPR: &str = r"(?:YY|MM)|(?:(?<num>\d+)?(?<type>[YMPN])?)";
@@ -221,13 +223,13 @@ impl FromStr for DayCycle {
         if let Some(wd) = cycle.name("wd") {
             let wd = wd.as_str();
             let weekday = match wd {
-                "M" => chrono::Weekday::Mon,
-                "T" => chrono::Weekday::Tue,
-                "W" => chrono::Weekday::Wed,
-                "R" => chrono::Weekday::Thu,
-                "F" => chrono::Weekday::Fri,
-                "S" => chrono::Weekday::Sat,
-                "U" => chrono::Weekday::Sun,
+                "MON" => chrono::Weekday::Mon,
+                "TUE" => chrono::Weekday::Tue,
+                "WED" => chrono::Weekday::Wed,
+                "THU" => chrono::Weekday::Thu,
+                "FRI" => chrono::Weekday::Fri,
+                "SAT" => chrono::Weekday::Sat,
+                "SUN" => chrono::Weekday::Sun,
                 _ => Err(Error::ParseError("Invalid weekday spec"))?,
             };
 
@@ -251,13 +253,13 @@ impl FromStr for DayCycle {
             };
             match ty.as_str() {
                 "L" => return Ok(DayCycle::OnLastDay),
-                "M" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Mon, WeekdayOption::NA)),
-                "T" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Tue, WeekdayOption::NA)),
-                "W" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Wed, WeekdayOption::NA)),
-                "R" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Thu, WeekdayOption::NA)),
-                "F" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Fri, WeekdayOption::NA)),
-                "S" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sat, WeekdayOption::NA)),
-                "U" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sun, WeekdayOption::NA)),
+                "MON" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Mon, WeekdayOption::NA)),
+                "TUE" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Tue, WeekdayOption::NA)),
+                "WED" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Wed, WeekdayOption::NA)),
+                "THU" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Thu, WeekdayOption::NA)),
+                "FRI" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Fri, WeekdayOption::NA)),
+                "SAT" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sat, WeekdayOption::NA)),
+                "SUN" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sun, WeekdayOption::NA)),
                 _ => return Ok(DayCycle::NA),
             };
         };
@@ -281,15 +283,15 @@ impl FromStr for DayCycle {
     }
 }
 
-fn weekday_code(wd: &Weekday) -> char {
+fn weekday_code(wd: &Weekday) -> &'static str{
     match wd {
-        Weekday::Mon => 'M',
-        Weekday::Tue => 'T',
-        Weekday::Wed => 'W',
-        Weekday::Thu => 'R',
-        Weekday::Fri => 'F',
-        Weekday::Sat => 'S',
-        Weekday::Sun => 'U',
+        Weekday::Mon => "MON",
+        Weekday::Tue => "TUE",
+        Weekday::Wed => "WED",
+        Weekday::Thu => "THU",
+        Weekday::Fri => "FRI",
+        Weekday::Sat => "SAT",
+        Weekday::Sun => "SUN",
     }
 }
 
@@ -312,26 +314,30 @@ impl ToString for Spec {
             DayCycle::OnLastDay => "L".to_string(),
             DayCycle::OnWeekDay(wd, WeekdayOption::NA) => wd.to_string(),
             DayCycle::OnWeekDay(wd, WeekdayOption::Starting(Some(num))) => {
-                f!("{:?}{}", weekday_code(wd), num)
+                f!("{}#{}", weekday_code(wd), num)
             }
             DayCycle::OnWeekDay(wd, WeekdayOption::Ending(Some(num))) => {
-                f!("{:?}{}L", weekday_code(wd), num)
+                f!("{}#{}L", weekday_code(wd), num)
             }
             _ => "DD".to_string(),
         };
         let spec_str = f!(
-            "{}:{}:{}",
+            "{}-{}-{}",
             to_string(&self.years, 'Y'),
             to_string(&self.months, 'M'),
             day_to_string(&self.days),
         );
         if let Some(biz_day_adj) = &self.biz_day_adj {
-            f!("{}:{}", spec_str, biz_day_adj.to_string())
+            f!("{}~{}", spec_str, biz_day_adj.to_string())
         } else {
             spec_str
         }
     }
 }
+
+
+// (YY|19|20\\d{2}|1Y)-(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM)-((?:MON|TUE|WED|THU|FRI|SAT|SUN)(?:#(?:L|[1-4]{0,1}L|[1-4]|L)){0,1}|(?:DD|L|[1-9](?:BD|WD|D)|0[1-9]|[12][0-8](?:BD|WD|D)?|29(?:BD|WD|D|L|N|O)?|3[01](?:BD|WD|D|L|N|O)?))(?:~(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?
+// (YY|19|20\\d{2}|1Y)-(MM|0[1-9]|1[0-2]|[1-9]M|1[0-2]M|MM)-((?:MON|TUE|WED|THU|FRI|SAT|SUN)(?:#(?:L|[1-4]{0,1}L|[1-4]|L)){0,1}|(?:DD|L|[1-9](?:BD|WD|D)|0[1-9]|[12][0-8](?:BD|WD|D)?|29(?:BD|WD|D|L|N|O)?|3[01](?:BD|WD|D|L|N|O)?))(?:~(PW|NW|PB|NB|B|W|[1-9]{0,1}[PN]))?
 
 impl ToString for BizDayAdjustment {
     fn to_string(&self) -> String {
@@ -359,7 +365,7 @@ mod tests {
 
     #[test]
     fn test_one() {
-        let spec = Spec::from_str("YY:1M:29L:W").unwrap();
+        let spec = Spec::from_str("YY-1M-29L~W").unwrap();
         assert_eq!(
             &spec,
             &Spec {
@@ -369,36 +375,51 @@ mod tests {
                 biz_day_adj: Some(BizDayAdjustment::Weekday(AdjustmentDirection::Nearest)),
             },
         );
-        assert_eq!(spec.to_string(), "YY:1M:29L:W");
+        assert_eq!(spec.to_string(), "YY-1M-29L~W");
     }
 
     #[test]
     fn test_two() {
-        let spec = Spec::from_str("YY:1M:8WD").unwrap();
+        let spec = Spec::from_str("YY-1M-1WD").unwrap();
         assert_eq!(
             &spec,
             &Spec {
                 years: Cycle::NA,
                 months: Cycle::Every(1),
-                days: DayCycle::Every(8, EveryDayOption::WeekDay),
+                days: DayCycle::Every(1, EveryDayOption::WeekDay),
                 biz_day_adj: None,
             },
         );
-        assert_eq!(spec.to_string(), "YY:1M:8WD");
+        assert_eq!(spec.to_string(), "YY-1M-1WD");
     }
 
     #[test]
-    fn test_weekday() {
-        let spec = Spec::from_str("2024:MM:31N:2N").unwrap();
+    fn test_31st() {
+        let spec = Spec::from_str("2024-MM-31L~3P").unwrap();
         assert_eq!(
             &spec,
             &Spec {
                 years: Cycle::In(2024),
                 months: Cycle::NA,
-                days: DayCycle::On(31, DayOption::NextMonthFirstDay),
-                biz_day_adj: Some(BizDayAdjustment::Next(2)),
+                days: DayCycle::On(31, DayOption::LastDay),
+                biz_day_adj: Some(BizDayAdjustment::Prev(3)),
             },
         );
-        assert_eq!(&spec.to_string(), "2024:MM:31N:2N");
+        assert_eq!(&spec.to_string(), "2024-MM-31L~3P");
+    }
+
+    #[test]
+    fn test_weekday() {
+        let spec = Spec::from_str("2024-1M-TUE#2L~3P").unwrap();
+        assert_eq!(
+            &spec,
+            &Spec {
+                years: Cycle::In(2024),
+                months: Cycle::Every(1),
+                days: DayCycle::OnWeekDay(chrono::Weekday::Tue, WeekdayOption::Ending(Some(2))),
+                biz_day_adj: Some(BizDayAdjustment::Prev(3)),
+            },
+        );
+        assert_eq!(&spec.to_string(), "2024-1M-TUE#2L~3P");
     }
 }

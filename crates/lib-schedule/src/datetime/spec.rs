@@ -11,8 +11,8 @@ use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 /// (DATE_SPEC_EXPR)T(TIME_SPEC_EXPR)
 ///
 /// ## Examples
-/// - "YY:1M:01:PT12:00:00" Recurrence on the first day of every month at 12:00:00
-/// - "YY:MM:FL:PT12:00:00" Recurrence on the last Friday of every month at 12:00:00
+/// - "YY-1M-01~PT12:00:00" Recurrence on the first day of every month at 12:00:00
+/// - "YY-MM-FL~PT12:00:00" Recurrence on the last Friday of every month at 12:00:00
 pub static SPEC_EXPR: LazyLock<String> = LazyLock::new(|| {
     format!(
         "(?:(?<date>{})?T(?<time>{}))",
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_one() {
-        let spec = SPEC_RE.captures("YY:1M:DD:PT12:00:00").unwrap();
+        let spec = SPEC_RE.captures("YY-1M-DD~PT12:00:00").unwrap();
         dbg!(&spec);
     }
 }

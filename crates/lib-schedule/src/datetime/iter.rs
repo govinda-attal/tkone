@@ -29,7 +29,7 @@ use crate::time::{
 ///
 /// let start = New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap();
 /// let end = New_York.with_ymd_and_hms(2025, 7, 31, 11, 0, 0).unwrap();
-/// let iter = SpecIteratorBuilder::new_with_start("YY:1M:08:WT11:00:00", WeekendSkipper::new(), start).with_end(end).build().unwrap();
+/// let iter = SpecIteratorBuilder::new_with_start("YY-1M-08~WT11:00:00", WeekendSkipper::new(), start).with_end(end).build().unwrap();
 /// let occurrences = iter.take(3).collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
 /// ```
 ///
@@ -388,7 +388,7 @@ mod tests {
     use chrono::Utc;
     #[test]
     fn test_spec_iter() {
-        let tmp = SpecIteratorBuilder::new("YY:1M:31LT11:00:00", WeekendSkipper::new(), &Utc)
+        let tmp = SpecIteratorBuilder::new("YY-1M-31LT11:00:00", WeekendSkipper::new(), &Utc)
             // .with_end(Utc::with_ymd_and_hms(&Utc, 2025, 07, 31, 11, 00, 0).unwrap())
             .build()
             .unwrap();

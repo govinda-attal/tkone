@@ -907,7 +907,12 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::NA, Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
             (Cycle::NA, Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => todo!(),
             (Cycle::NA, Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
-            (Cycle::In(year), Cycle::Values(months), DayCycle::NA) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::NA) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(&BTreeSet::from([*year]))
+                    .with_months(months)
+                    .next()
+            }
             (Cycle::In(year), Cycle::Values(months), DayCycle::Every(num_days, opt)) => todo!(),
             (Cycle::In(year), Cycle::Values(months), DayCycle::OnDays(days)) => {
                 let years = BTreeSet::from([*year]);
@@ -917,30 +922,84 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .with_months(months)
                     .next()
             }
-            (Cycle::In(year), Cycle::Values(months), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::On(day, opt)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(&BTreeSet::from([*year]))
+                    .with_days(&BTreeSet::from([*day]))
+                    .with_months(months)
+                    .next()
+            }
             (Cycle::In(year), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
             (Cycle::In(year), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => todo!(),
             (Cycle::In(year), Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::NA, DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::NA) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(years)
+                    .next()
+            }
             (Cycle::Values(years), Cycle::NA, DayCycle::Every(num_days, opt)) => todo!(),
-            (Cycle::Values(years), Cycle::NA, DayCycle::OnDays(days)) => todo!(),
-            (Cycle::Values(years), Cycle::NA, DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::OnDays(days)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(years)
+                    .with_days(days)
+                    .next()
+            }
+            (Cycle::Values(years), Cycle::NA, DayCycle::On(day, opt)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(years)
+                    .with_days(&BTreeSet::from([*day]))
+                    .next()
+            }
             (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => todo!(),
             (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDays(weekdays)) => todo!(),
             (Cycle::Values(years), Cycle::NA, DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::In(month), DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::NA) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(&BTreeSet::from([*month]))
+                    .with_years(years)
+                    .next()
+            }
             (Cycle::Values(years), Cycle::In(month), DayCycle::Every(num_days, opt)) => todo!(),
-            (Cycle::Values(years), Cycle::In(month), DayCycle::OnDays(days)) => todo!(),
-            (Cycle::Values(years), Cycle::In(month), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::OnDays(days)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(&BTreeSet::from([*month]))
+                    .with_days(days)
+                    .with_years(years)
+                    .next()
+            }
+            (Cycle::Values(years), Cycle::In(month), DayCycle::On(day, opt)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(&BTreeSet::from([*month]))
+                    .with_days(&BTreeSet::from([*day]))
+                    .with_years(years)
+                    .next()
+            }
             (Cycle::Values(years), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => todo!(),
             (Cycle::Values(years), Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => todo!(),
             (Cycle::Values(years), Cycle::In(month), DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::NA) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(months)
+                    .with_years(years)
+                    .next()
+            }
             (Cycle::Values(years), Cycle::Values(months), DayCycle::Every(num_days, opt)) => {
                 todo!()
             }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnDays(days)) => todo!(),
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnDays(days)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(months)
+                    .with_days(days)
+                    .with_years(years)
+                    .next()
+            }
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::On(day, opt)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(months)
+                    .with_days(&BTreeSet::from([*day]))
+                    .with_years(years)
+                    .next()
+            }
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
                 todo!()
@@ -1309,13 +1368,10 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
 
         dbg!(&dtm);
-        let spec_iter = SpecIteratorBuilder::new_after(
-            "YY-[02]-[01,28,29,31]",
-            WeekendSkipper::new(),
-            dtm,
-        )
-        .build()
-        .unwrap();
+        let spec_iter =
+            SpecIteratorBuilder::new_after("YY-[02]-[01,02,03]", WeekendSkipper::new(), dtm)
+                .build()
+                .unwrap();
         dbg!(spec_iter
             .take(15)
             .collect::<Vec<NextResult<DateTime<_>>>>()

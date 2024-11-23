@@ -205,3 +205,10 @@ impl<Tz: TimeZone> DateLikeUtils for DateTime<Tz> {
             .map(|date| DateTime::<Tz>::from(W((self.timezone(), date))))
     }
 }
+
+pub fn naive_date_with_last_day_of_month_in_year(year: i32, month: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(year, month + 1, 1)
+        .unwrap_or(NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap())
+        .pred_opt()
+        .unwrap()
+}

@@ -1,5 +1,8 @@
-use super::spec::{
-    self, BizDayAdjustment, Cycle, DayCycle, DayOption, EveryDayOption, Spec, WeekdayOption,
+use super::{
+    spec::{
+        self, BizDayAdjustment, Cycle, DayCycle, EveryDayOption, LastDayOption, Spec, WeekdayOption,
+    },
+    utils::NextResulterByMultiplesAndDay,
 };
 use crate::{
     biz_day::{BizDayProcessor, WeekendSkipper},
@@ -11,8 +14,8 @@ use chrono::{
     DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc, Weekday,
 };
 use fallible_iterator::FallibleIterator;
-use std::marker::PhantomData;
 use std::sync::LazyLock;
+use std::{collections::BTreeSet, marker::PhantomData};
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
@@ -357,7 +360,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
         let next = match spec {
             (Cycle::NA, Cycle::NA, DayCycle::NA) => NextResult::Single(next),
             (Cycle::NA, Cycle::NA, DayCycle::On(day, opt)) => NextResulterByDay::new(&next)
-                .day_option(opt)
+                .last_day_option(opt)
                 .day(*day)
                 .build(),
             (Cycle::NA, Cycle::NA, DayCycle::Every(num, EveryDayOption::Regular)) => {
@@ -375,11 +378,20 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::NA, Cycle::NA, DayCycle::OnLastDay) => {
                 NextResulterByDay::new(&next).last_day().build()
             }
+            (Cycle::NA, Cycle::NA, DayCycle::OnDays(days)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_days(days)
+                    .next()
+                // todo!("spec not implemented")
+            }
+            (Cycle::NA, Cycle::NA, DayCycle::OnWeekDays(weekdays)) => {
+                todo!("spec not implemented")
+            }
             (Cycle::NA, Cycle::In(month), DayCycle::NA) => {
                 NextResulterByDay::new(&next).month(*month).build()
             }
             (Cycle::NA, Cycle::In(month), DayCycle::On(day, opt)) => NextResulterByDay::new(&next)
-                .day_option(opt)
+                .last_day_option(opt)
                 .day(*day)
                 .month(*month)
                 .build(),
@@ -404,6 +416,45 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 .last_day()
                 .month(*month)
                 .build(),
+            (Cycle::NA, Cycle::In(month), DayCycle::OnDays(days)) => {
+                let months = BTreeSet::from([*month]);
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(&months)
+                    .with_days(days)
+                    .next()
+                // let day = next.day();
+                // if next.month() == *month && days.contains(&day) {
+                //     let next_day = days.lower_bound(std::ops::Bound::Excluded(&day)).next();
+                //     if let Some(next_day) = next_day {
+                //         NextResult::Single(next.with_day(*next_day).unwrap())
+                //     } else {
+                //         let first_day = days.first().unwrap();
+                //         let next_date =
+                //             NaiveDate::from_ymd_opt(next.year() + 1, *month, *first_day);
+                //         let next_date = next_date.unwrap_or(
+                //             NaiveDate::from_ymd_opt(next.year() + 1, month + 1, 1)
+                //                 .unwrap()
+                //                 .pred_opt()
+                //                 .unwrap(),
+                //         );
+                //         NextResult::Single(NaiveDateTime::new(next_date, next.time()))
+                //     }
+                // } else if next.month() > *month {
+                //     let next_date =
+                //         NaiveDate::from_ymd_opt(next.year() + 1, *month, *days.first().unwrap())
+                //             .unwrap();
+                //     NextResult::Single(NaiveDateTime::new(next_date, next.time()))
+                // } else {
+                //     let next_date =
+                //         NaiveDate::from_ymd_opt(next.year(), *month, *days.first().unwrap())
+                //             .unwrap();
+                //     NextResult::Single(NaiveDateTime::new(next_date, next.time()))
+                // }
+                // todo!("spec not implemented")
+            }
+            (Cycle::NA, Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => {
+                todo!("spec not implemented")
+            }
             (Cycle::NA, Cycle::Every(num), DayCycle::NA) => {
                 let (year, month) = ffwd_months(&next, *num);
                 NextResulterByDay::new(&next)
@@ -415,7 +466,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 let (year, month) = ffwd_months(&next, *num_months);
 
                 NextResulterByDay::new(&next)
-                    .day_option(opt)
+                    .last_day_option(opt)
                     .day(*day)
                     .month(month)
                     .year(year)
@@ -474,7 +525,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 NextResulterByDay::new(&next).year(*year).build()
             }
             (Cycle::In(year), Cycle::NA, DayCycle::On(day, opt)) => NextResulterByDay::new(&next)
-                .day_option(opt)
+                .last_day_option(opt)
                 .day(*day)
                 .year(*year)
                 .build(),
@@ -498,13 +549,23 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::In(year), Cycle::NA, DayCycle::OnLastDay) => {
                 NextResulterByDay::new(&next).last_day().year(*year).build()
             }
+            (Cycle::In(year), Cycle::NA, DayCycle::OnDays(days)) => {
+                let years = BTreeSet::from([*year]);
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(&years)
+                    .with_days(days)
+                    .next()
+            }
+            (Cycle::In(year), Cycle::NA, DayCycle::OnWeekDays(weekdays)) => {
+                todo!("spec not implemented")
+            }
             (Cycle::In(year), Cycle::In(month), DayCycle::NA) => NextResulterByDay::new(&next)
                 .month(*month)
                 .year(*year)
                 .build(),
             (Cycle::In(year), Cycle::In(month), DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(&next)
-                    .day_option(opt)
+                    .last_day_option(opt)
                     .day(*day)
                     .month(*month)
                     .year(*year)
@@ -556,6 +617,18 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(*year)
                     .build()
             }
+            (Cycle::In(year), Cycle::In(month), DayCycle::OnDays(days)) => {
+                let years = BTreeSet::from([*year]);
+                let months = BTreeSet::from([*month]);
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(&years)
+                    .with_months(&months)
+                    .with_days(days)
+                    .next()
+            }
+            (Cycle::In(year), Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => {
+                todo!("spec not implemented")
+            }
             (Cycle::In(year), Cycle::Every(num_months), DayCycle::NA) => {
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
@@ -566,7 +639,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::In(year), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
                 let (_, month) = ffwd_months(&next, *num_months);
                 NextResulterByDay::new(&next)
-                    .day_option(opt)
+                    .last_day_option(opt)
                     .day(*day)
                     .month(month)
                     .year(*year)
@@ -627,7 +700,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                 .build(),
             (Cycle::Every(num_years), Cycle::NA, DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(&next)
-                    .day_option(opt)
+                    .last_day_option(opt)
                     .day(*day)
                     .year(next.year() as u32 + *num_years)
                     .build()
@@ -681,7 +754,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             }
             (Cycle::Every(num_years), Cycle::In(month), DayCycle::On(day, opt)) => {
                 NextResulterByDay::new(&next)
-                    .day_option(opt)
+                    .last_day_option(opt)
                     .day(*day)
                     .month(*month)
                     .year(next.year() as u32 + *num_years)
@@ -743,7 +816,7 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
                 let (year, month) = ffwd_months(&next, *num_months as u32);
                 NextResulterByDay::new(&next)
-                    .day_option(opt)
+                    .last_day_option(opt)
                     .day(*day)
                     .month(month)
                     .year(year + *num_years)
@@ -799,6 +872,89 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .year(year + *num_years)
                     .build()
             }
+            (Cycle::Every(_), _, DayCycle::OnDays(_)) => {
+                Result::Err(Error::Custom("invalid spec"))?
+            }
+            (Cycle::Every(_), _, DayCycle::OnWeekDays(_)) => {
+                Result::Err(Error::Custom("invalid spec"))?
+            }
+            (Cycle::Every(_), Cycle::Values(_), _) => Result::Err(Error::Custom("invalid spec"))?,
+            (_, Cycle::Every(_), DayCycle::OnDays(_)) => {
+                Result::Err(Error::Custom("invalid spec"))?
+            }
+            (_, Cycle::Every(_), DayCycle::OnWeekDays(_)) => {
+                Result::Err(Error::Custom("invalid spec"))?
+            }
+            (Cycle::NA, Cycle::Values(months), DayCycle::NA) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_months(months)
+                    .next()
+            }
+            (Cycle::NA, Cycle::Values(months), DayCycle::Every(num_days, opt)) => todo!(),
+            (Cycle::NA, Cycle::Values(months), DayCycle::OnDays(days)) => {
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_days(days)
+                    .with_months(months)
+                    .next()
+            }
+            (Cycle::NA, Cycle::Values(months), DayCycle::On(day, _)) => {
+                let days = BTreeSet::from([*day]);
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_days(&days)
+                    .with_months(months)
+                    .next()
+            }
+            (Cycle::NA, Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
+            (Cycle::NA, Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => todo!(),
+            (Cycle::NA, Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::NA) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::Every(num_days, opt)) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::OnDays(days)) => {
+                let years = BTreeSet::from([*year]);
+                NextResulterByMultiplesAndDay::new(&next)
+                    .with_years(&years)
+                    .with_days(days)
+                    .with_months(months)
+                    .next()
+            }
+            (Cycle::In(year), Cycle::Values(months), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => todo!(),
+            (Cycle::In(year), Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::Every(num_days, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::OnDays(days)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDays(weekdays)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::OnLastDay) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::Every(num_days, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::OnDays(days)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::OnLastDay) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::Every(num_days, opt)) => {
+                todo!()
+            }
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnDays(days)) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
+                todo!()
+            }
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::NA) => todo!(),
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::Every(num_days, opt)) => {
+                todo!()
+            }
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
+                todo!()
+            }
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnLastDay) => todo!(),
         };
 
         if next.actual() <= &self.dtm {
@@ -997,7 +1153,7 @@ impl<'a> NextResulterByWeekDay<'a> {
 #[derive(Debug)]
 struct NextResulterByDay<'a> {
     dtm: &'a NaiveDateTime,
-    day_opt: Option<DayOption>,
+    ld_opt: Option<LastDayOption>,
     day: Option<u32>,
     month: Option<u32>,
     year: Option<u32>,
@@ -1010,7 +1166,7 @@ impl<'a> NextResulterByDay<'a> {
             day: None,
             month: None,
             year: None,
-            day_opt: None,
+            ld_opt: None,
         }
     }
 
@@ -1029,20 +1185,26 @@ impl<'a> NextResulterByDay<'a> {
         self
     }
 
-    fn day_option(&mut self, opt: &DayOption) -> &mut Self {
-        self.day_opt = Some(opt.clone());
+    fn last_day_option(&mut self, opt: &LastDayOption) -> &mut Self {
+        self.ld_opt = Some(opt.clone());
         self
     }
 
     fn last_day(&mut self) -> &mut Self {
-        self.day_opt = Some(DayOption::LastDay);
+        self.ld_opt = Some(LastDayOption::LastDay);
         self
     }
 
+    // given that day, month and year are all optional, need to write function such that
+    // if all three are not provided it should pick next day, it is okay to overflow to next month in dtm
+    // if month is provided it should pick next day in that month and adjusted or observed datetime in `next result`` should be as per day option, if year is not provided it is okay to overflow to next year in dtm
+    // if year is provided and month is none then it should pick next day in that year and adjusted or observed datetime in `next result`` should be as per day option. it is okay for next to overflow to next month in dtm
+    // if year is provided and month is provided then it should pick next day in that month and year and adjusted or observed datetime in `next result`` should be as per day option
+    // if
     fn build(&self) -> NextResult<NaiveDateTime> {
-        use spec::DayOption::*;
+        use spec::LastDayOption::*;
         let dtm = self.dtm.clone();
-        let day_opt = self.day_opt.as_ref().unwrap_or(&DayOption::NA);
+        let ld_opt = self.ld_opt.as_ref().unwrap_or(&LastDayOption::NA);
 
         let month = self.month.unwrap_or(dtm.month());
         let year = self
@@ -1051,7 +1213,7 @@ impl<'a> NextResulterByDay<'a> {
             .unwrap_or(dtm.year() as i32);
 
         let day = self.day.unwrap_or_else(|| {
-            if day_opt == &DayOption::LastDay {
+            if ld_opt == &LastDayOption::LastDay {
                 if month == 12 {
                     let next_day = NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap();
                     let last_day = next_day.pred_opt().unwrap();
@@ -1070,7 +1232,7 @@ impl<'a> NextResulterByDay<'a> {
             return NextResult::Single(NaiveDateTime::new(updated, dtm.time()));
         }
 
-        match *day_opt {
+        match *ld_opt {
             NA | LastDay => {
                 let next_mnth_day = NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap();
                 let last_day = next_mnth_day.pred_opt().unwrap();
@@ -1105,7 +1267,7 @@ mod tests {
     use chrono_tz::America::New_York;
 
     #[test]
-    fn test_time_spec_with_start() {
+    fn test_with_start() {
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
@@ -1122,7 +1284,7 @@ mod tests {
     }
 
     #[test]
-    fn test_time_spec() {
+    fn test_spec_iter() {
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
@@ -1133,6 +1295,27 @@ mod tests {
             SpecIteratorBuilder::new_with_start("YY-1M-31N", WeekendSkipper::new(), dtm)
                 .build()
                 .unwrap();
+        dbg!(spec_iter
+            .take(15)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap());
+    }
+
+    #[test]
+    fn test_spec_iter_multiples() {
+        // US Eastern Time (EST/EDT)
+        let est = New_York;
+        // Before DST starts (Standard Time)
+        let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
+
+        dbg!(&dtm);
+        let spec_iter = SpecIteratorBuilder::new_after(
+            "YY-[02]-[01,28,29,31]",
+            WeekendSkipper::new(),
+            dtm,
+        )
+        .build()
+        .unwrap();
         dbg!(spec_iter
             .take(15)
             .collect::<Vec<NextResult<DateTime<_>>>>()

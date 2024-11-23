@@ -1,4 +1,5 @@
 #![feature(let_chains)]
+#![feature(btree_cursors)]
 
 //! # lib-schedule
 //!
@@ -11,7 +12,6 @@
 //! - [`date`]: Provides date-related utilities and structures.
 //! - [`time`]: Contains time-related utilities and structures.
 //! - [`datetime`]: Contains date and time-related utilities and structures.
-
 
 /// The `biz_day` module contains utilities and structures for business day processing.
 pub mod biz_day;

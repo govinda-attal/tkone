@@ -13,6 +13,7 @@ use crate::{
 use chrono::{
     DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc, Weekday,
 };
+use core::num;
 use fallible_iterator::FallibleIterator;
 use std::sync::LazyLock;
 use std::{collections::BTreeSet, marker::PhantomData};
@@ -937,7 +938,21 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .with_years(years)
                     .next()
             }
-            (Cycle::Values(years), Cycle::NA, DayCycle::Every(num_days, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::Every(num_days, opt)) => {
+                let last_year = years.last().unwrap();
+                let mut next = next + Duration::days(*num_days as i64);
+
+                if next.year() as u32 > *last_year {
+                    return Ok(None);
+                }
+                while !years.contains(&(next.year() as u32)) {
+                    next = next + Duration::days(*num_days as i64);
+                    if next.year() as u32 > *last_year {
+                        return Ok(None);
+                    }
+                }
+                NextResult::Single(next)
+            }
             (Cycle::Values(years), Cycle::NA, DayCycle::OnDays(days)) => {
                 NextResulterByMultiplesAndDay::new(&next)
                     .with_years(years)
@@ -959,7 +974,22 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .with_years(years)
                     .next()
             }
-            (Cycle::Values(years), Cycle::In(month), DayCycle::Every(num_days, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::In(month), DayCycle::Every(num_days, opt)) => {
+                let max_year = years.last().unwrap();
+                let next = next + Duration::days(*num_days as i64);
+                let mut next_result = NextResulterByDay::new(&next).month(*month).build();
+                if next_result.actual().year() as u32 > *max_year {
+                    return Ok(None);
+                }
+                while !years.contains(&(next_result.actual().year() as u32)) {
+                    let next = next_result.actual().clone() + Duration::days(*num_days as i64);
+                    next_result = NextResulterByDay::new(&next).month(*month).build();
+                    if next_result.actual().year() as u32 > *max_year {
+                        return Ok(None);
+                    }
+                }
+                next_result
+            }
             (Cycle::Values(years), Cycle::In(month), DayCycle::OnDays(days)) => {
                 NextResulterByMultiplesAndDay::new(&next)
                     .with_months(&BTreeSet::from([*month]))
@@ -984,7 +1014,23 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .next()
             }
             (Cycle::Values(years), Cycle::Values(months), DayCycle::Every(num_days, opt)) => {
-                todo!()
+                let max_year = *years.last().unwrap() as i32;
+                let mut interim = next + Duration::days(*num_days as i64);
+                if interim.year() > max_year {
+                    return Ok(None);
+                }
+
+                while !(months.contains(&interim.month())
+                    && years.contains(&(interim.year() as u32)))
+                {
+                    interim = interim + Duration::days(*num_days as i64);
+                    // dbg!(&interim, years, months);
+                    if interim.year() > max_year {
+                        return Ok(None);
+                    }
+                }
+                NextResult::Single(interim)
+                // todo!()
             }
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnDays(days)) => {
                 NextResulterByMultiplesAndDay::new(&next)
@@ -1004,16 +1050,119 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
                 todo!()
             }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::NA) => todo!(),
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::Every(num_days, opt)) => {
+            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnLastDay) => {
+                // NextResulterByMultiplesAndDay::new(&next)
+                //     .with_months(months)
+                //     .with_years(years)
+                //     .with_days(&BTreeSet::from([31]))
+                //     .next()
                 todo!()
             }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::On(day, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::NA) => {
+                let last_year = years.last().unwrap();
+                let (mut year, mut month) = ffwd_months(&next, *num_months);
+                let mut next_result = NextResulterByDay::new(&next)
+                    .month(month)
+                    .year(year)
+                    .build();
+                if year > *last_year {
+                    return Ok(None);
+                }
+                while !years.contains(&year) {
+                    (year, month) = ffwd_months(&next, *num_months);
+                    if year > *last_year {
+                        return Ok(None);
+                    }
+                    next_result = NextResulterByDay::new(next_result.actual())
+                        .month(month)
+                        .year(year)
+                        .build();
+                }
+                next_result
+            }
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::Every(num_days, opt)) => {
+                let last_year = years.last().unwrap();
+                let next = next + Duration::days(*num_days as i64);
+                let (mut year, mut month) = ffwd_months(&next, *num_months);
+
+                if year > *last_year {
+                    return Ok(None);
+                }
+
+                let mut next_result = NextResulterByDay::new(&next)
+                    .month(month)
+                    .year(year)
+                    .build();
+                while !years.contains(&year) {
+                    (year, month) = ffwd_months(&next_result.actual(), *num_months);
+                    if year > *last_year {
+                        return Ok(None);
+                    }
+                    next_result = NextResulterByDay::new(next_result.actual())
+                        .month(month)
+                        .year(year)
+                        .build();
+                }
+                next_result
+            }
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
+                let last_year = years.last().unwrap();
+                let (mut year, mut month) = ffwd_months(&next, *num_months);
+
+                if year > *last_year {
+                    return Ok(None);
+                }
+
+                let mut next_result = NextResulterByDay::new(&next)
+                    .last_day_option(opt)
+                    .day(*day)
+                    .month(month)
+                    .year(year)
+                    .build();
+
+                while !years.contains(&year) {
+                    (year, month) = ffwd_months(&next_result.actual(), *num_months);
+                    if year > *last_year {
+                        return Ok(None);
+                    }
+                    next_result = NextResulterByDay::new(next_result.actual())
+                        .last_day_option(opt)
+                        .day(*day)
+                        .month(month)
+                        .year(year)
+                        .build();
+                }
+                next_result
+            }
             (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
                 todo!()
             }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnLastDay) => todo!(),
+            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnLastDay) => {
+                let last_year = years.last().unwrap();
+                let (mut year, mut month) = ffwd_months(&next, *num_months);
+                if year > *last_year {
+                    return Ok(None);
+                }
+
+                let mut next_result = NextResulterByDay::new(&next)
+                    .last_day()
+                    .month(month)
+                    .year(year)
+                    .build();
+
+                while !years.contains(&year) {
+                    (year, month) = ffwd_months(&next_result.actual(), *num_months);
+                    if year > *last_year {
+                        return Ok(None);
+                    }
+                    next_result = NextResulterByDay::new(next_result.actual())
+                        .last_day()
+                        .month(month)
+                        .year(year)
+                        .build();
+                }
+                next_result
+            }
         };
 
         if next.actual() <= &self.dtm {
@@ -1370,6 +1519,24 @@ mod tests {
         dbg!(&dtm);
         let spec_iter =
             SpecIteratorBuilder::new_after("YY-[02]-[01,02,03]", WeekendSkipper::new(), dtm)
+                .build()
+                .unwrap();
+        dbg!(spec_iter
+            .take(15)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap());
+    }
+
+    #[test]
+    fn test_spec_iter_multiples_every_day() {
+        // US Eastern Time (EST/EDT)
+        let est = New_York;
+        // Before DST starts (Standard Time)
+        let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
+
+        dbg!(&dtm);
+        let spec_iter =
+            SpecIteratorBuilder::new_after("[2023,2025]-MM-30D", WeekendSkipper::new(), dtm)
                 .build()
                 .unwrap();
         dbg!(spec_iter

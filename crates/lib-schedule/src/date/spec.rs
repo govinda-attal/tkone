@@ -266,17 +266,8 @@ impl FromStr for DayCycle {
         }
 
         if let Some(wd) = cycle.name("wd") {
-            let wd = wd.as_str();
-            let weekday = match wd {
-                "MON" => chrono::Weekday::Mon,
-                "TUE" => chrono::Weekday::Tue,
-                "WED" => chrono::Weekday::Wed,
-                "THU" => chrono::Weekday::Thu,
-                "FRI" => chrono::Weekday::Fri,
-                "SAT" => chrono::Weekday::Sat,
-                "SUN" => chrono::Weekday::Sun,
-                _ => Err(Error::ParseError("Invalid weekday spec"))?,
-            };
+            let weekday = Weekday::from_str(wd.as_str())
+                .map_err(|e| Error::ParseError("Invalid weekday spec"))?;
 
             let wd_option = if let Some(_) = cycle.name("last") {
                 WeekdayOption::Ending(None)
@@ -298,13 +289,12 @@ impl FromStr for DayCycle {
             };
             match ty.as_str() {
                 "L" => return Ok(DayCycle::OnLastDay),
-                "MON" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Mon, WeekdayOption::NA)),
-                "TUE" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Tue, WeekdayOption::NA)),
-                "WED" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Wed, WeekdayOption::NA)),
-                "THU" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Thu, WeekdayOption::NA)),
-                "FRI" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Fri, WeekdayOption::NA)),
-                "SAT" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sat, WeekdayOption::NA)),
-                "SUN" => return Ok(DayCycle::OnWeekDay(chrono::Weekday::Sun, WeekdayOption::NA)),
+                "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN" => {
+                    return Ok(DayCycle::OnWeekDay(
+                        chrono::Weekday::from_str(ty.as_str()).unwrap(),
+                        WeekdayOption::NA,
+                    ))
+                }
                 _ => return Ok(DayCycle::NA),
             };
         };
@@ -325,18 +315,6 @@ impl FromStr for DayCycle {
         };
 
         Ok(cycle)
-    }
-}
-
-fn weekday_code(wd: &Weekday) -> &'static str {
-    match wd {
-        Weekday::Mon => "MON",
-        Weekday::Tue => "TUE",
-        Weekday::Wed => "WED",
-        Weekday::Thu => "THU",
-        Weekday::Fri => "FRI",
-        Weekday::Sat => "SAT",
-        Weekday::Sun => "SUN",
     }
 }
 
@@ -372,7 +350,7 @@ impl ToString for Spec {
             DayCycle::OnWeekDays(values) => {
                 let values = values
                     .iter()
-                    .map(|v| weekday_code(v))
+                    .map(|wd| wd.to_string().to_uppercase())
                     .collect::<Vec<_>>()
                     .join(",");
                 f!("[{}]", values)
@@ -383,10 +361,10 @@ impl ToString for Spec {
             DayCycle::OnLastDay => "L".to_string(),
             DayCycle::OnWeekDay(wd, WeekdayOption::NA) => wd.to_string(),
             DayCycle::OnWeekDay(wd, WeekdayOption::Starting(Some(num))) => {
-                f!("{}#{}", weekday_code(wd), num)
+                f!("{}#{}", wd.to_string().to_uppercase(), num)
             }
             DayCycle::OnWeekDay(wd, WeekdayOption::Ending(Some(num))) => {
-                f!("{}#{}L", weekday_code(wd), num)
+                f!("{}#{}L", wd.to_string().to_uppercase(), num)
             }
             _ => "DD".to_string(),
         };
@@ -536,5 +514,22 @@ mod tests {
             },
         );
         assert_eq!(&spec.to_string(), "2024-[01,02]-[SAT,SUN]~3P");
+    }
+
+    // [2023,2025]-MM-165D
+    #[test]
+    fn test_year_month_day() {
+        let spec = Spec::from_str("[2023,2025]-MM-30D").unwrap();
+        dbg!(&spec);
+        assert_eq!(
+            &spec,
+            &Spec {
+                years: Cycle::Values(BTreeSet::from_iter(vec![2023, 2025])),
+                months: Cycle::NA,
+                days: DayCycle::Every(30, EveryDayOption::Regular),
+                biz_day_adj: None,
+            },
+        );
+        assert_eq!(&spec.to_string(), "[2023,2025]-MM-30D");
     }
 }

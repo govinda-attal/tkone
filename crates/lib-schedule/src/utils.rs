@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Weekday};
 
 use crate::{prelude::*, NextResult};
@@ -211,4 +213,29 @@ pub fn naive_date_with_last_day_of_month_in_year(year: i32, month: u32) -> Naive
         .unwrap_or(NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap())
         .pred_opt()
         .unwrap()
+}
+
+#[derive(Debug, Clone, Copy, Eq, Hash)]
+pub struct WeekdayStartingMonday(pub Weekday);
+
+impl PartialOrd for WeekdayStartingMonday {
+    fn partial_cmp(&self, Self(other): &Self) -> Option<std::cmp::Ordering> {
+        self.0
+            .num_days_from_monday()
+            .partial_cmp(&other.num_days_from_monday())
+    }
+}
+
+impl PartialEq for WeekdayStartingMonday {
+    fn eq(&self, Self(other): &Self) -> bool {
+        self.0.num_days_from_monday() == other.num_days_from_monday()
+    }
+}
+
+impl Ord for WeekdayStartingMonday {
+    fn cmp(&self, Self(other): &Self) -> std::cmp::Ordering {
+        self.0
+            .num_days_from_monday()
+            .cmp(&other.num_days_from_monday())
+    }
 }

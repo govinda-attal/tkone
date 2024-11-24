@@ -1,4 +1,4 @@
-use crate::{biz_day::Direction as AdjustmentDirection, prelude::*};
+use crate::{biz_day::Direction as AdjustmentDirection, prelude::*, utils::WeekdayStartingMonday};
 use chrono::Weekday;
 use std::{collections::BTreeSet, sync::LazyLock};
 
@@ -13,7 +13,7 @@ pub enum DayCycle {
     OnDays(BTreeSet<u32>),
     On(u32, LastDayOption),
     OnWeekDay(chrono::Weekday, WeekdayOption),
-    OnWeekDays(Vec<chrono::Weekday>),
+    OnWeekDays(BTreeSet<WeekdayStartingMonday>),
     OnLastDay,
 }
 
@@ -122,7 +122,6 @@ impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        dbg!(&SPEC_EXPR.to_string());
         let caps = SPEC_RE
             .captures(s)
             .ok_or(Error::ParseError("Invalid date spec"))?;
@@ -251,16 +250,16 @@ impl FromStr for DayCycle {
         }
 
         if let Some(wd_values) = cycle.name("wd_values") {
-            let values: Vec<chrono::Weekday> = wd_values
+            let values: BTreeSet<WeekdayStartingMonday> = wd_values
                 .as_str()
                 .split(',')
-                .map(|v| v.parse::<chrono::Weekday>().unwrap())
+                .map(|v| WeekdayStartingMonday(v.parse::<chrono::Weekday>().unwrap()))
                 .collect();
             if values.len() > 1 {
                 return Ok(DayCycle::OnWeekDays(values));
             }
             return Ok(DayCycle::OnWeekDay(
-                values.into_iter().next().unwrap(),
+                values.into_iter().next().unwrap().0,
                 WeekdayOption::NA,
             ));
         }
@@ -350,7 +349,7 @@ impl ToString for Spec {
             DayCycle::OnWeekDays(values) => {
                 let values = values
                     .iter()
-                    .map(|wd| wd.to_string().to_uppercase())
+                    .map(|wd| wd.0.to_string().to_uppercase())
                     .collect::<Vec<_>>()
                     .join(",");
                 f!("[{}]", values)
@@ -506,9 +505,9 @@ mod tests {
             &Spec {
                 years: Cycle::In(2024),
                 months: Cycle::Values(BTreeSet::from_iter(vec![1, 2])),
-                days: DayCycle::OnWeekDays(Vec::from_iter(vec![
-                    chrono::Weekday::Sat,
-                    chrono::Weekday::Sun
+                days: DayCycle::OnWeekDays(BTreeSet::from_iter(vec![
+                    WeekdayStartingMonday(chrono::Weekday::Sat),
+                    WeekdayStartingMonday(chrono::Weekday::Sun),
                 ])),
                 biz_day_adj: Some(BizDayAdjustment::Prev(3)),
             },

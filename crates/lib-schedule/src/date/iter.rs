@@ -1148,7 +1148,71 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
                     .with_days(&BTreeSet::from([*day]))
                     .next()
             }
-            (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => todo!(),
+            (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
+                if years.contains(&(next.year() as u32)) {
+                    let next_result = NextResulterByWeekDay::new(&next, wd, opt)
+                        .year(next.year() as u32)
+                        .build();
+                    let next_result_year = next_result.actual().year() as u32;
+                    if !years.contains(&next_result_year) {
+                        let mut cursor = years.lower_bound(Bound::Excluded(&next_result_year));
+                        let Some(next_year) = cursor.next() else {
+                            return Ok(None);
+                        };
+                        let next = NaiveDateTime::new(
+                            NaiveDate::from_ymd_opt(*next_year as i32, 1, 1).unwrap(),
+                            next.time(),
+                        );
+                        NextResulterByWeekDay::new(&next, wd, opt)
+                            .year(*next_year)
+                            .build()
+                    } else if next_result.actual() > &next {
+                        next_result
+                    } else {
+                        let next = NaiveDateTime::new(
+                            NaiveDate::from_ymd_opt(
+                                next_result_year as i32,
+                                next_result.actual().month() + 1,
+                                1,
+                            )
+                            .unwrap_or(
+                                NaiveDate::from_ymd_opt(next_result_year as i32 + 1, 1, 1).unwrap(),
+                            ),
+                            next.time(),
+                        );
+                        if next.year() as u32 == next_result_year {
+                            NextResulterByWeekDay::new(&next, wd, opt)
+                                .year(next_result_year)
+                                .build()
+                        } else {
+                            let mut cursor = years.lower_bound(Bound::Excluded(&next_result_year));
+                            let Some(next_year) = cursor.next() else {
+                                return Ok(None);
+                            };
+                            let next = NaiveDateTime::new(
+                                NaiveDate::from_ymd_opt(*next_year as i32, 1, 1).unwrap(),
+                                next.time(),
+                            );
+                            NextResulterByWeekDay::new(&next, wd, opt)
+                                .year(*next_year)
+                                .build()
+                        }
+                    }
+                } else {
+                    let mut cursor = years.lower_bound(Bound::Excluded(&(next.year() as u32)));
+                    let Some(next_year) = cursor.next() else {
+                        return Ok(None);
+                    };
+                    let next = NaiveDateTime::new(
+                        NaiveDate::from_ymd_opt(*next_year as i32, 1, 1).unwrap(),
+                        next.time(),
+                    );
+                    dbg!(&next);
+                    NextResulterByWeekDay::new(&next, wd, opt)
+                        .year(*next_year)
+                        .build()
+                }
+            }
             (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDays(weekdays)) => {
                 let mut next = next + Duration::days(1);
                 if !years.contains(&(next.year() as u32)) {
@@ -1266,7 +1330,88 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             }
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
-                todo!()
+                // let year = next.year() as u32;
+                let year_computer = |year: &u32| -> Option<&u32> {
+                    years.get(&year).or_else(|| {
+                        let mut cursor = years.lower_bound(Bound::Excluded(&year));
+                        let Some(year) = cursor.next() else {
+                            return None;
+                        };
+                        Some(year)
+                    })
+                };
+
+                let year_month_computer = |year: u32, month: u32| -> Option<(u32, u32)> {
+                    months.get(&month).map_or_else(
+                        || {
+                            let mut cursor = months.lower_bound(Bound::Excluded(&month));
+                            let Some(month) = cursor.next() else {
+                                let mut year_cursor = years.lower_bound(Bound::Excluded(&year));
+                                let Some(year) = year_cursor.next() else {
+                                    return None;
+                                };
+                                return Some((*year, *months.first().unwrap()));
+                            };
+                            let Some(next_year) = year_computer(&year) else {
+                                return None;
+                            };
+                            if *next_year > year {
+                                let first_month = months.first().unwrap();
+                                return Some((*next_year, *first_month));
+                            }
+                            Some((*next_year, *month))
+                        },
+                        |month| {
+                            let Some(next_year) = year_computer(&year) else {
+                                return None;
+                            };
+                            if *next_year > year {
+                                let first_month = months.first().unwrap();
+                                return Some((*next_year, *first_month));
+                            }
+                            Some((*next_year, *month))
+                        },
+                    )
+                };
+
+                let month = next.month();
+                let year = next.year() as u32;
+
+                let nxt_year_month = year_month_computer(year, month);
+
+                let Some((nxt_year, nxt_month)) = nxt_year_month else {
+                    return Ok(None);
+                };
+
+                let mut next = if nxt_year > year || nxt_month > month {
+                    NaiveDateTime::new(
+                        NaiveDate::from_ymd_opt(nxt_year as i32, nxt_month, 1).unwrap(),
+                        next.time(),
+                    )
+                } else {
+                    next
+                };
+
+                next = next + Duration::days(1);
+                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
+                    next = next + Duration::days(1);
+                    let year = next.year() as u32;
+                    let month = next.month();
+                    let nxt_year_month = year_month_computer(year, month);
+                    let Some((nxt_year, nxt_month)) = nxt_year_month else {
+                        return Ok(None);
+                    };
+                    if nxt_year > year || nxt_month > month {
+                        next = NaiveDateTime::new(
+                            NaiveDate::from_ymd_opt(nxt_year as i32, nxt_month, 1).unwrap(),
+                            next.time(),
+                        );
+                    };
+                }
+                if year_month_computer(next.year() as u32, next.month()).is_none() {
+                    return Ok(None);
+                }
+                NextResult::Single(next)
             }
             (Cycle::Values(years), Cycle::Values(months), DayCycle::OnLastDay) => {
                 // NextResulterByMultiplesAndDay::new(&next)
@@ -1782,12 +1927,16 @@ mod tests {
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
-        let dtm = est.with_ymd_and_hms(2024, 12, 28, 23, 0, 0).unwrap();
+        let dtm = est.with_ymd_and_hms(2024, 12, 27, 23, 0, 0).unwrap();
 
         dbg!(&dtm);
-        let spec_iter = SpecIteratorBuilder::new_after("YY-MM-MON#2L", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
+        let spec_iter = SpecIteratorBuilder::new_after(
+            "[2024,2025]-[01,03]-[MON,TUE]",
+            WeekendSkipper::new(),
+            dtm,
+        )
+        .build()
+        .unwrap();
         dbg!(spec_iter
             .take(18)
             .collect::<Vec<NextResult<DateTime<_>>>>()

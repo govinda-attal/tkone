@@ -58,8 +58,6 @@ impl DateLikeUtils for NaiveDate {
     }
 
     fn to_first_day_of_month(&self) -> Self {
-        dbg!(self);
-        dbg!(NaiveDate::from_ymd_opt(self.year(), self.month(), 1).unwrap());
         NaiveDate::from_ymd_opt(self.year(), self.month(), 1).unwrap()
     }
 

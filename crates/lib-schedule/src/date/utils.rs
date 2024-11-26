@@ -456,7 +456,6 @@ impl<'a> NextResulterByDay<'a> {
             .map(|year| year as i32)
             .unwrap_or(dtm.year() as i32);
 
-
         let day = self.day.unwrap_or_else(|| {
             if ld_opt == &LastDayOption::LastDay {
                 if month == 12 {
@@ -497,7 +496,10 @@ impl<'a> NextResulterByDay<'a> {
                 let last_day_num = last_day.day();
                 NextResult::AdjustedLater(
                     NaiveDateTime::new(last_day, dtm.time()),
-                    dtm + Duration::days(day as i64 - last_day_num as i64),
+                    NaiveDateTime::new(
+                        last_day + Duration::days(day as i64 - last_day_num as i64),
+                        dtm.time(),
+                    ),
                 )
             }
         };
@@ -590,8 +592,6 @@ impl<'a> NextResulterByWeekDay<'a> {
             next_rs_by_day = next_rs_by_day.year(year);
         }
 
-        dbg!(&next_rs_by_day);
-
         let interim_result = next_rs_by_day.build();
 
         let Some(interim_result) = interim_result else {
@@ -599,7 +599,6 @@ impl<'a> NextResulterByWeekDay<'a> {
         };
 
         let interim = interim_result.actual().clone();
-        dbg!(&interim);
         let next = match wd_opt {
             WeekdayOption::Starting(occurrence) => {
                 let occurrence = occurrence.unwrap_or(1);

@@ -3,12 +3,13 @@ use std::fmt;
 use std::str::FromStr;
 
 use nom::{
+    Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1},
     combinator::{all_consuming, map_res, value, verify},
     error::Error as NomError,
-    sequence::{preceded, tuple},
+    sequence::preceded,
     IResult,
 };
 
@@ -61,77 +62,80 @@ pub enum Cycle {
 
 type Res<'a, T> = IResult<&'a str, T, NomError<&'a str>>;
 
-fn parse_u8(input: &str) -> Res<u8> {
-    map_res(digit1, str::parse)(input)
+fn parse_u8(input: &str) -> Res<'_, u8> {
+    map_res(digit1, str::parse).parse(input)
 }
 
-fn parse_hours_every(input: &str) -> Res<Cycle> {
-    let (input, n) = verify(parse_u8, |&n| n > 0)(input)?;
-    let (input, _) = char('H')(input)?;
+fn parse_hours_every(input: &str) -> Res<'_, Cycle> {
+    let (input, n) = verify(parse_u8, |&n| n > 0).parse(input)?;
+    let (input, _) = char('H').parse(input)?;
     Ok((input, Cycle::Every(n)))
 }
 
-fn parse_hours_at(input: &str) -> Res<Cycle> {
+fn parse_hours_at(input: &str) -> Res<'_, Cycle> {
     let (input, n) = parse_u8(input)?;
     Ok((input, Cycle::At(n)))
 }
 
-fn parse_hours_cycle(input: &str) -> Res<Cycle> {
+fn parse_hours_cycle(input: &str) -> Res<'_, Cycle> {
     alt((
         value(Cycle::ForEach, tag("HH")),
         value(Cycle::AsIs, tag("_")),
         parse_hours_every,
         parse_hours_at,
-    ))(input)
+    ))
+    .parse(input)
 }
 
-fn parse_minutes_every(input: &str) -> Res<Cycle> {
-    let (input, n) = verify(parse_u8, |&n| n > 0)(input)?;
-    let (input, _) = char('M')(input)?;
+fn parse_minutes_every(input: &str) -> Res<'_, Cycle> {
+    let (input, n) = verify(parse_u8, |&n| n > 0).parse(input)?;
+    let (input, _) = char('M').parse(input)?;
     Ok((input, Cycle::Every(n)))
 }
 
-fn parse_minutes_at(input: &str) -> Res<Cycle> {
+fn parse_minutes_at(input: &str) -> Res<'_, Cycle> {
     let (input, n) = parse_u8(input)?;
     Ok((input, Cycle::At(n)))
 }
 
-fn parse_minutes_cycle(input: &str) -> Res<Cycle> {
+fn parse_minutes_cycle(input: &str) -> Res<'_, Cycle> {
     alt((
         value(Cycle::ForEach, tag("MM")),
         value(Cycle::AsIs, tag("_")),
         parse_minutes_every,
         parse_minutes_at,
-    ))(input)
+    ))
+    .parse(input)
 }
 
-fn parse_seconds_every(input: &str) -> Res<Cycle> {
-    let (input, n) = verify(parse_u8, |&n| n > 0)(input)?;
-    let (input, _) = char('S')(input)?;
+fn parse_seconds_every(input: &str) -> Res<'_,  Cycle> {
+    let (input, n) = verify(parse_u8, |&n| n > 0).parse(input)?;
+    let (input, _) = char('S').parse(input)?;
     Ok((input, Cycle::Every(n)))
 }
 
-fn parse_seconds_at(input: &str) -> Res<Cycle> {
+fn parse_seconds_at(input: &str) -> Res<'_, Cycle> {
     let (input, n) = parse_u8(input)?;
     Ok((input, Cycle::At(n)))
 }
 
-fn parse_seconds_cycle(input: &str) -> Res<Cycle> {
+fn parse_seconds_cycle(input: &str) -> Res<'_, Cycle> {
     alt((
         value(Cycle::ForEach, tag("SS")),
         value(Cycle::AsIs, tag("_")),
         parse_seconds_every,
         parse_seconds_at,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_spec(input: &str) -> Result<Spec> {
-    let full_parser = tuple((
+    let full_parser = (
         parse_hours_cycle,
         preceded(char(':'), parse_minutes_cycle),
         preceded(char(':'), parse_seconds_cycle),
-    ));
-    match all_consuming(full_parser)(input) {
+    );
+    match all_consuming(full_parser).parse(input) {
         Ok((_, (hours, minutes, seconds))) => Ok(Spec {
             hours,
             minutes,

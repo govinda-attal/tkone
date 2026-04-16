@@ -6,82 +6,222 @@ use std::fmt;
 use std::str::FromStr;
 
 use nom::{
+    Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1, multispace0},
     combinator::{all_consuming, map_res, opt, recognize, value},
     error::Error as NomError,
     multi::separated_list1,
-    sequence::{delimited, pair, preceded, tuple},
+    sequence::{delimited, pair, preceded},
     IResult,
 };
 
-// --- Your Struct Definitions ---
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
-pub enum DayCycle {
+/// How a single calendar component (years or months) advances on each iteration.
+///
+/// | Variant | Spec token | Description |
+/// |---------|------------|-------------|
+/// | `AsIs` | `_` | Keep the current value unchanged |
+/// | `ForEach` | `YY` / `MM` | Every value in sequence |
+/// | `Values(set)` | `2025` / `[2024,2025]` | Restricted to an explicit set |
+/// | `NextNth(n)` | `1Y` / `3M` | Advance by *n* units, aligned to the iterator start |
+///
+/// # Examples
+///
+/// ```rust
+/// use lib_schedule::date::Cycle;
+/// use std::collections::BTreeSet;
+///
+/// // Parse from a date spec component
+/// let spec: lib_schedule::date::Spec = "YY-3M-15".parse().unwrap();
+/// assert_eq!(spec.years,  Cycle::ForEach);
+/// assert_eq!(spec.months, Cycle::NextNth(3));
+/// assert_eq!(spec.months, Cycle::NextNth(3));
+/// ```
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
+pub enum Cycle {
+    /// Keep the current year/month value unchanged (`_`).
     #[default]
     AsIs,
+    /// Visit every year (`YY`) or every month (`MM`).
     ForEach,
+    /// Restrict to the given set of years or months.
+    ///
+    /// Spec tokens: a bare number (`2025`), or a bracketed list (`[01,06,12]`).
+    Values(BTreeSet<u32>),
+    /// Advance by *n* years (`nY`) or months (`nM`), keeping alignment to the
+    /// iterator's start date.
+    NextNth(u32),
+}
+
+/// How the day component of a date spec advances.
+///
+/// | Variant | Spec tokens | Description |
+/// |---------|-------------|-------------|
+/// | `AsIs` | `_` | Keep current day |
+/// | `ForEach` | `DD` | Every calendar day |
+/// | `NextNth(n, Regular)` | `7D` | Advance *n* calendar days |
+/// | `NextNth(n, BizDay)` | `5BD` | Advance *n* business days |
+/// | `NextNth(n, WeekDay)` | `3WD` | Advance *n* weekdays (Mon–Fri) |
+/// | `OnDays{days, NA}` | `15` / `[5,15,25]` | Specific day(s) of month |
+/// | `OnDays{days, LastDay}` | `31L` | Day or last day if month is shorter |
+/// | `OnDays{{}, LastDay}` | `L` | Last day of month |
+/// | `OnDays{days, NextMonthFirstDay}` | `31N` | Day or 1st of next month on overflow |
+/// | `OnDays{days, NextMonthOverflow}` | `31O` | Day or overflow into next month |
+/// | `OnWeekDays{wds, NA}` | `FRI` / `[MON,WED]` | Specific weekday(s), every occurrence |
+/// | `OnWeekDays{wd, Starting(n)}` | `FRI#2` | *n*th occurrence of weekday from month start |
+/// | `OnWeekDays{wd, Ending(None)}` | `FRI#L` | Last occurrence of weekday in month |
+/// | `OnWeekDays{wd, Ending(n)}` | `FRI#2L` | *n*th-to-last occurrence of weekday |
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
+pub enum DayCycle {
+    /// Keep the current day-of-month unchanged (`_`).
+    #[default]
+    AsIs,
+    /// Every calendar day (`DD`).
+    ForEach,
+    /// Advance by *n* calendar days / business days / weekdays from the current
+    /// position. See [`NextNthDayOption`] for the step variant.
     NextNth(u32, NextNthDayOption),
+    /// Specific day(s) of the month, with an optional overflow handling rule.
     OnDays {
+        /// The set of target days-of-month (1–31). Empty only for `LastDay` with
+        /// no explicit day (`"L"`).
         days: BTreeSet<u32>,
+        /// What to do when a target day does not exist in the current month.
         option: LastDayOption,
     },
+    /// Specific weekday(s) within the month, with an optional occurrence selector.
     OnWeekDays {
+        /// The set of target weekdays.
         weekdays: BTreeSet<WeekdayStartingMonday>,
+        /// Which occurrence of the weekday to use.
         option: WeekdayOption,
     },
 }
 
+/// Selects which occurrence of a weekday within the month to use.
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum WeekdayOption {
+    /// Every occurrence of the weekday in the month (no selector). Default.
     #[default]
     NA,
+    /// The *n*th occurrence from the start of the month (`WD#n`).
+    /// `None` means the 1st occurrence.
     Starting(Option<u8>),
+    /// The *n*th-to-last occurrence in the month.
+    ///
+    /// - `Ending(None)` → last occurrence (`WD#L`).
+    /// - `Ending(Some(n))` → *n*th-to-last (`WD#nL`).
     Ending(Option<u8>),
 }
 
+/// What to do when the target day-of-month does not exist in the current month.
+///
+/// For example, day 31 in February or day 29 in a non-leap-year February.
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum LastDayOption {
+    /// No special handling; the day is clamped to the last valid day of the
+    /// month automatically by the calendar. Default.
     #[default]
     NA,
+    /// Clamp to the last day of the month and emit a [`crate::NextResult::Single`]
+    /// result (`ddL` / `L`).
     LastDay,
+    /// Use the 1st of the following month as the *observed* date; the raw
+    /// calendar date is still the last day of the current month.
+    /// Yields [`crate::NextResult::AdjustedLater`] (`ddN`).
     NextMonthFirstDay,
+    /// Overflow into the next month by the excess days.
+    /// Yields [`crate::NextResult::AdjustedLater`] (`ddO`).
     NextMonthOverflow,
 }
 
+/// The step unit used by [`DayCycle::NextNth`].
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum NextNthDayOption {
+    /// Advance by *n* calendar days (`nD`). Default.
     #[default]
     Regular,
+    /// Advance by *n* business days according to the [`crate::biz_day::BizDayProcessor`]
+    /// supplied to the iterator (`nBD`).
     BizDay,
+    /// Advance by *n* weekdays (Mon–Fri), always using [`crate::biz_day::WeekendSkipper`]
+    /// internally (`nWD`).
     WeekDay,
 }
 
+/// Post-processing adjustment applied to the raw calendar date.
+///
+/// Directional variants (`Weekday`, `BizDay`) are **conditional**: the
+/// adjustment only fires when the raw date is *not* already a valid
+/// business/week day. Numeric variants (`Prev`, `Next`) are **unconditional**
+/// offsets applied every time.
+///
+/// | Spec token | Variant | Condition | Effect |
+/// |------------|---------|-----------|--------|
+/// | `~W` | `BizDay(Next)` | non-biz day | roll to next business day |
+/// | `~B` | `BizDay(Prev)` | non-biz day | roll to previous business day |
+/// | `~NB` | `BizDay(Nearest)` | non-biz day | roll to nearest business day |
+/// | `~NW` | `Weekday(Next)` | weekend | roll to next weekday |
+/// | `~PW` | `Weekday(Prev)` | weekend | roll to previous weekday |
+/// | `~3P` | `Prev(3)` | always | 3 business days earlier |
+/// | `~2N` | `Next(2)` | always | 2 business days later |
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum BizDayAdjustment {
+    /// No adjustment (`~NA`). Default.
     #[default]
     NA,
+    /// Roll to a nearby weekday (Mon–Fri) using [`crate::biz_day::WeekendSkipper`].
     Weekday(Direction),
+    /// Roll to a nearby business day using the iterator's
+    /// [`crate::biz_day::BizDayProcessor`].
     BizDay(Direction),
+    /// Unconditionally retreat by *n* business days (`~nP`).
     Prev(u32),
+    /// Unconditionally advance by *n* business days (`~nN`).
     Next(u32),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
-pub enum Cycle {
-    #[default]
-    AsIs,
-    ForEach,
-    Values(BTreeSet<u32>),
-    NextNth(u32),
-}
-
+/// A fully parsed date recurrence specification.
+///
+/// Obtained by parsing a spec string with [`str::parse`] or
+/// [`std::str::FromStr`], or by calling [`parse_spec`] directly.
+///
+/// # Spec format
+///
+/// ```text
+/// <years>-<months>-<days>[~<adj>]
+/// ```
+///
+/// # Examples
+///
+/// ```rust
+/// use lib_schedule::date::{Spec, Cycle, DayCycle, LastDayOption};
+/// use std::collections::BTreeSet;
+///
+/// // Every year, every month, last day of month
+/// let spec: Spec = "YY-MM-L".parse().unwrap();
+/// assert_eq!(spec.years,  Cycle::ForEach);
+/// assert_eq!(spec.months, Cycle::ForEach);
+/// assert!(matches!(spec.days, DayCycle::OnDays { option: LastDayOption::LastDay, .. }));
+/// assert!(spec.biz_day_adj.is_none());
+///
+/// // Every year, every 3 months, 15th of the month
+/// let spec: Spec = "YY-3M-15".parse().unwrap();
+/// assert_eq!(spec.months, Cycle::NextNth(3));
+///
+/// // Round-trip
+/// assert_eq!(spec.to_string(), "YY-3M-15");
+/// ```
 #[derive(Debug, Clone)]
 pub struct Spec {
+    /// Year recurrence rule.
     pub years: Cycle,
+    /// Month recurrence rule.
     pub months: Cycle,
+    /// Day-of-month / weekday recurrence rule.
     pub days: DayCycle,
+    /// Optional business day adjustment applied after the raw date is resolved.
     pub biz_day_adj: Option<BizDayAdjustment>,
 }
 
@@ -264,19 +404,32 @@ impl FromStr for Spec {
     }
 }
 
-// Ensure Error::ParseError accepts String
-// If Error is defined elsewhere, update its variant to: ParseError(String)
-
-/// Main Entry Point
+/// Parse a date spec string into a [`Spec`].
+///
+/// This is the free-function equivalent of `input.parse::<Spec>()`.
+///
+/// # Errors
+///
+/// Returns [`crate::prelude::Error::ParseError`] if the string does not
+/// conform to the spec grammar.
+///
+/// # Examples
+///
+/// ```rust
+/// use lib_schedule::date::parse_spec;
+///
+/// let spec = parse_spec("YY-1M-31L~W").unwrap();
+/// println!("{spec}"); // round-trips back to "YY-1M-31L~W"
+/// ```
 pub fn parse_spec(input: &str) -> Result<Spec> {
-    let full_parser = tuple((
+    let full_parser = (
         parse_year_cycle,
         preceded(char('-'), parse_month_cycle),
         preceded(char('-'), parse_day_cycle),
         opt(preceded(multispace0, parse_adjustment)),
-    ));
+    );
 
-    match all_consuming(full_parser)(input) {
+    match all_consuming(full_parser).parse(input) {
         Ok((_, (years, months, days, biz_day_adj))) => Ok(Spec {
             years,
             months,
@@ -290,14 +443,14 @@ pub fn parse_spec(input: &str) -> Result<Spec> {
 // --- Helpers ---
 
 fn parse_u32(input: &'_ str) -> Res<'_, u32> {
-    map_res(digit1, str::parse)(input)
+    map_res(digit1, str::parse).parse(input)
 }
 
 // --- Cycle Parsers ---
 
 fn parse_cycle_vals(input: &'_ str) -> Res<'_, Cycle> {
     let (input, nums) =
-        delimited(char('['), separated_list1(char(','), parse_u32), char(']'))(input)?;
+        delimited(char('['), separated_list1(char(','), parse_u32), char(']')).parse(input)?;
     Ok((input, Cycle::Values(nums.into_iter().collect())))
 }
 
@@ -307,12 +460,12 @@ fn parse_cycle_single_val(input: &'_ str) -> Res<'_, Cycle> {
 }
 
 fn parse_cycle_foreach(input: &'_ str) -> Res<'_, Cycle> {
-    value(Cycle::ForEach, alt((tag("YY"), tag("MM"), tag("_"))))(input)
+    value(Cycle::ForEach, alt((tag("YY"), tag("MM"), tag("_")))).parse(input)
 }
 
 fn parse_cycle_next_nth(input: &'_ str) -> Res<'_, Cycle> {
     let (input, num) = parse_u32(input)?;
-    let (input, _) = alt((tag("Y"), tag("M")))(input)?;
+    let (input, _) = alt((tag("Y"), tag("M"))).parse(input)?;
     Ok((input, Cycle::NextNth(num)))
 }
 
@@ -322,7 +475,8 @@ fn parse_year_cycle(input: &'_ str) -> Res<'_, Cycle> {
         parse_cycle_foreach,
         parse_cycle_next_nth,
         parse_cycle_single_val,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_month_cycle(input: &'_ str) -> Res<'_, Cycle> {
@@ -331,7 +485,8 @@ fn parse_month_cycle(input: &'_ str) -> Res<'_, Cycle> {
         parse_cycle_foreach,
         parse_cycle_next_nth,
         parse_cycle_single_val,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 // --- Day Cycle Parsers ---
@@ -345,7 +500,8 @@ fn parse_weekday_enum(input: &'_ str) -> Res<'_, WeekdayStartingMonday> {
         tag("FRI"),
         tag("SAT"),
         tag("SUN"),
-    ))(input)?;
+    ))
+    .parse(input)?;
 
     let w = match w_str {
         "MON" => Weekday::Mon,
@@ -365,7 +521,8 @@ fn parse_day_weekday_list(input: &'_ str) -> Res<'_, DayCycle> {
         char('['),
         separated_list1(char(','), parse_weekday_enum),
         char(']'),
-    )(input)?;
+    )
+    .parse(input)?;
     Ok((
         input,
         DayCycle::OnWeekDays {
@@ -377,7 +534,7 @@ fn parse_day_weekday_list(input: &'_ str) -> Res<'_, DayCycle> {
 
 fn parse_day_int_list(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, nums) =
-        delimited(char('['), separated_list1(char(','), parse_u32), char(']'))(input)?;
+        delimited(char('['), separated_list1(char(','), parse_u32), char(']')).parse(input)?;
     Ok((
         input,
         DayCycle::OnDays {
@@ -400,9 +557,9 @@ fn parse_day_weekday_solo(input: &'_ str) -> Res<'_, DayCycle> {
 
 fn parse_day_weekday_complex(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, wd) = parse_weekday_enum(input)?;
-    let (input, _) = char('#')(input)?;
+    let (input, _) = char('#').parse(input)?;
 
-    let (input, opt_str) = recognize(pair(opt(digit1), opt(char('L'))))(input)?;
+    let (input, opt_str) = recognize(pair(opt(digit1), opt(char('L')))).parse(input)?;
 
     let option = match opt_str {
         "L" => WeekdayOption::Ending(None),
@@ -428,7 +585,7 @@ fn parse_day_weekday_complex(input: &'_ str) -> Res<'_, DayCycle> {
 fn parse_day_next_nth(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, num) = parse_u32(input)?;
     // BD/WD must be tried before plain D to avoid partial match on 'B'/'W'
-    let (input, type_tag) = alt((tag("BD"), tag("WD"), tag("D")))(input)?;
+    let (input, type_tag) = alt((tag("BD"), tag("WD"), tag("D"))).parse(input)?;
 
     let opt = match type_tag {
         "BD" => NextNthDayOption::BizDay,
@@ -440,7 +597,7 @@ fn parse_day_next_nth(input: &'_ str) -> Res<'_, DayCycle> {
 
 fn parse_day_single_complex(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, num) = parse_u32(input)?;
-    let (input, suffix) = opt(alt((tag("L"), tag("N"), tag("O"))))(input)?;
+    let (input, suffix) = opt(alt((tag("L"), tag("N"), tag("O")))).parse(input)?;
 
     let option = match suffix {
         Some("L") => LastDayOption::LastDay,
@@ -469,7 +626,8 @@ fn parse_day_literals(input: &'_ str) -> Res<'_, DayCycle> {
             },
             tag("L"),
         ),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_day_cycle(input: &'_ str) -> Res<'_, DayCycle> {
@@ -481,13 +639,14 @@ fn parse_day_cycle(input: &'_ str) -> Res<'_, DayCycle> {
         parse_day_next_nth,
         parse_day_literals,
         parse_day_single_complex,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 // --- Adjustment Parser ---
 
 fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
-    let (input, _) = char('~')(input)?;
+    let (input, _) = char('~').parse(input)?;
     let (input, code) = alt((
         tag("PW"),
         tag("NW"),
@@ -496,7 +655,8 @@ fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
         tag("B"),
         tag("W"),
         recognize(pair(opt(digit1), alt((tag("P"), tag("N"))))),
-    ))(input)?;
+    ))
+    .parse(input)?;
 
     let adj = match code {
         "PW" => BizDayAdjustment::Weekday(Direction::Prev),

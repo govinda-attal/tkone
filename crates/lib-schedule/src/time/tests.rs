@@ -1,7 +1,6 @@
 use crate::time::{Cycle, Spec, SpecIteratorBuilder};
 use chrono::{DateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
-use std::str::FromStr;
 
 struct TestCase<Tz: TimeZone> {
     spec: &'static str,

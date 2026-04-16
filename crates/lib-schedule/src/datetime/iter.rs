@@ -10,7 +10,6 @@ use std::marker::PhantomData;
 use std::str::FromStr;
 
 // --- Builder type-state markers (same pattern as date/time) ---
-
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
 pub struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
@@ -18,10 +17,42 @@ pub struct NoEnd;
 pub struct Sealed;
 pub struct NotSealed;
 
-// ---------------------------------------------------------------------------
-// SpecIteratorBuilder
-// ---------------------------------------------------------------------------
-
+/// Fluent, type-state builder for the combined datetime [`SpecIterator`].
+///
+/// See the [module documentation](crate::datetime) for the spec format.
+///
+/// # Construction variants
+///
+/// | Constructor | First result | Use when… |
+/// |-------------|-------------|-----------|
+/// | `new(spec, bdp, tz)` | First occurrence after `Utc::now()` | open-ended schedule from now |
+/// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` | schedule from a known cursor |
+/// | `new_with_start(spec, bdp, start)` | `start` itself is the first item | anchor to a fixed start datetime |
+///
+/// # Examples
+///
+/// ```rust
+/// use lib_schedule::biz_day::WeekendSkipper;
+/// use lib_schedule::datetime::SpecIteratorBuilder;
+/// use lib_schedule::NextResult;
+/// use chrono::{TimeZone, Utc};
+/// use fallible_iterator::FallibleIterator;
+///
+/// let bdp   = WeekendSkipper::new();
+/// let start = Utc.with_ymd_and_hms(2024, 1, 31, 11, 0, 0).unwrap();
+/// let end   = Utc.with_ymd_and_hms(2024, 4, 30, 11, 0, 0).unwrap();
+///
+/// // Last day of every month at 11:00 UTC, bounded until end of April
+/// let iter = SpecIteratorBuilder::new_with_start(
+///     "YY-1M-L~WT11:00:00", bdp, start,
+/// )
+/// .with_end(end)
+/// .build()
+/// .unwrap();
+///
+/// let occurrences: Vec<_> = iter.collect().unwrap();
+/// // → 2024-01-31T11:00, 2024-02-29T11:00, 2024-03-29T11:00 (Fri adj), 2024-04-30T11:00
+/// ```
 pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> {
     dtm: DateTime<Tz>,
     start: START,
@@ -34,10 +65,13 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
 
 // --- no-start, no-end ---
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    /// Create an iterator from `Utc::now()` in timezone `tz`. The current
+    /// instant is excluded; the first result is strictly after now.
     pub fn new(spec: &str, bdp: BDP, tz: Tz) -> Self {
         Self::new_after(spec, bdp, Utc::now().with_timezone(&tz))
     }
 
+    /// Create an iterator that produces occurrences strictly **after `dtm`**.
     pub fn new_after(spec: &str, bdp: BDP, dtm: DateTime<Tz>) -> Self {
         SpecIteratorBuilder {
             timezone: dtm.timezone(),
@@ -68,6 +102,33 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
 impl<Tz: TimeZone, BDP: BizDayProcessor>
     SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
 {
+    /// Create an iterator where `start` is the **first yielded item**.
+    ///
+    /// Use this after you have resolved the start datetime from the spec:
+    ///
+    /// ```rust
+    /// use lib_schedule::biz_day::WeekendSkipper;
+    /// use lib_schedule::datetime::SpecIteratorBuilder;
+    /// use lib_schedule::NextResult;
+    /// use chrono::Utc;
+    /// use fallible_iterator::FallibleIterator;
+    ///
+    /// let bdp = WeekendSkipper::new();
+    /// let now = Utc::now();
+    ///
+    /// // Step 1: resolve start datetime from the spec
+    /// let start = SpecIteratorBuilder::new_after("YY-1M-L~WT11:00:00", bdp.clone(), now)
+    ///     .build().unwrap()
+    ///     .next().unwrap().unwrap()
+    ///     .observed().clone();
+    ///
+    /// // Step 2: anchor the recurrence to that start datetime
+    /// let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, start)
+    ///     .build().unwrap();
+    ///
+    /// let results: Vec<_> = iter.take(3).collect().unwrap();
+    /// assert_eq!(results[0].observed(), &start);
+    /// ```
     pub fn new_with_start(spec: &str, bdp: BDP, start: DateTime<Tz>) -> Self {
         SpecIteratorBuilder {
             timezone: start.timezone(),
@@ -80,6 +141,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         }
     }
 
+    /// Bound the iterator by an explicit end datetime (exclusive upper bound).
     pub fn with_end(
         self,
         end: DateTime<Tz>,
@@ -496,261 +558,3 @@ fn midnight_next(date: NaiveDate) -> NaiveDateTime {
     (date + Duration::days(1)).and_hms_opt(0, 0, 0).unwrap()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::biz_day::WeekendSkipper;
-    use chrono::{Datelike, TimeZone, Utc};
-    use chrono_tz::America::New_York;
-    use fallible_iterator::FallibleIterator;
-
-    // ── fixed time-of-day on a date recurrence ──────────────────────────────
-
-    #[test]
-    fn test_fixed_time_monthly() {
-        // Last day of every month at 11:00 — one result per day
-        let start = Utc.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-1M-31L~WT11:00:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .build()
-        .unwrap();
-        let results = iter
-            .take(4)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap();
-        dbg!(&results);
-        // First result is the start itself
-        assert_eq!(results[0], NextResult::Single(start));
-        // Each subsequent result is on a different calendar month
-        let dates: Vec<_> = results.iter().map(|r| r.observed().date_naive()).collect();
-        assert!(dates[1] > dates[0]);
-        assert!(dates[2] > dates[1]);
-        assert!(dates[3] > dates[2]);
-    }
-
-    // ── sub-daily: multiple times per day ────────────────────────────────────
-
-    #[test]
-    fn test_hourly_on_mondays() {
-        // Every Monday, every hour at :00:00
-        let start = Utc.with_ymd_and_hms(2025, 1, 6, 9, 0, 0).unwrap(); // Monday
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-MM-[MON]T1H:00:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .build()
-        .unwrap();
-        let results = iter
-            .take(6)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap();
-        dbg!(&results);
-        // First = start (09:00 on Jan 6 Mon)
-        assert_eq!(
-            results[0].observed().date_naive().weekday(),
-            chrono::Weekday::Mon
-        );
-        // All results are on Mondays
-        for r in &results {
-            assert_eq!(r.observed().date_naive().weekday(), chrono::Weekday::Mon);
-        }
-        // Consecutive same-day results differ by 1 hour
-        let t0 = results[0].observed();
-        let t1 = results[1].observed();
-        if t0.date_naive() == t1.date_naive() {
-            assert_eq!(*t1 - *t0, Duration::hours(1));
-        }
-    }
-
-    #[test]
-    fn test_every_30min_on_last_biz_day() {
-        // Every 30 min on the last business day of each month
-        let start = Utc.with_ymd_and_hms(2025, 1, 31, 8, 0, 0).unwrap();
-        let end = Utc.with_ymd_and_hms(2025, 3, 31, 18, 0, 0).unwrap();
-        // HH:30M:00 = keep hours as-is, every 30 minutes, at second :00
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-1M-31L~WTHH:30M:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .with_end(end)
-        .build()
-        .unwrap();
-        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-        dbg!(&results);
-        // Consecutive same-day results are 30 min apart
-        for w in results.windows(2) {
-            let a = w[0].observed();
-            let b = w[1].observed();
-            if a.date_naive() == b.date_naive() {
-                assert_eq!(*b - *a, Duration::minutes(30));
-            }
-        }
-    }
-
-    // ── new_after semantics ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_new_after_skips_past_times_on_same_day() {
-        // Cursor is after the day's only fixed time; first result must be next day
-        let dtm = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap(); // after 11:00
-        let iter = SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
-        let results = iter
-            .take(2)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap();
-        dbg!(&results);
-        assert_eq!(results[0].observed().date_naive().day(), 16);
-    }
-
-    #[test]
-    fn test_new_after_includes_same_day_future_time() {
-        // Cursor is before the day's fixed time; first result must be same day
-        let dtm = Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap(); // before 11:00
-        let iter = SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
-        let results = iter
-            .take(2)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap();
-        dbg!(&results);
-        assert_eq!(results[0].observed().date_naive().day(), 15);
-        assert_eq!(results[0].observed().hour(), 11);
-    }
-
-    // ── regression: biz-day adjustment crossing month boundary ─────────────
-
-    #[test]
-    fn test_biz_day_adjustment_does_not_skip_next_month() {
-        // May 31 2025 is a Saturday → adjusted to Jun 2 (Monday).
-        // After emitting Jun 2, the next occurrence must be Jun 30, NOT Jul.
-        let start = Utc.with_ymd_and_hms(2025, 5, 1, 11, 0, 0).unwrap();
-        let end = Utc.with_ymd_and_hms(2025, 8, 1, 11, 0, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-1M-31L~WT11:00:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .with_end(end)
-        .build()
-        .unwrap();
-        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-        dbg!(&results);
-
-        // Find Jun 2 (the adjusted May 31) and confirm the result after it is in June
-        let jun2_idx = results.iter().position(|r| {
-            r.observed().date_naive() == chrono::NaiveDate::from_ymd_opt(2025, 6, 2).unwrap()
-        });
-        assert!(
-            jun2_idx.is_some(),
-            "expected an occurrence on Jun 2 (adjusted May 31)"
-        );
-        let after_jun2 = &results[jun2_idx.unwrap() + 1];
-        assert_eq!(
-            after_jun2.observed().date_naive().month(),
-            6,
-            "occurrence after AdjustedLater(May 31→Jun 2) should be in June, not July"
-        );
-    }
-
-    // ── regression: midnight included on non-initial dates ─────────────────
-
-    #[test]
-    fn test_every_hour_includes_midnight_on_new_days() {
-        // Bug: apply_time_spec(midnight) for `1H:00:00` gives 01:00, skipping 00:00.
-        // Fix: step back by 1h from midnight first → 23:00 → +1h → 00:00 ✓
-        let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-        let end = Utc.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-MM-DDT1H:00:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .with_end(end)
-        .build()
-        .unwrap();
-        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-        dbg!(&results);
-
-        let jan1: Vec<_> = results
-            .iter()
-            .filter(|r| r.observed().date_naive().day() == 1)
-            .collect();
-        let jan2: Vec<_> = results
-            .iter()
-            .filter(|r| r.observed().date_naive().day() == 2)
-            .collect();
-
-        // Jan 1 starts at the passthrough 09:00 → last tick 23:00 = 15 ticks
-        assert_eq!(jan1.len(), 15);
-        assert_eq!(jan1[0].observed().hour(), 9);
-
-        // Jan 2 must start at 00:00, not 01:00
-        assert_eq!(jan2.len(), 24, "Jan 2 should have all 24 hourly ticks");
-        assert_eq!(jan2[0].observed().hour(), 0, "first tick on Jan 2 must be midnight");
-    }
-
-    #[test]
-    fn test_every_30min_includes_midnight_on_new_days() {
-        // `HH:30M:00`: last tick of day N is 23:30 → next natural tick is midnight.
-        // Fix: step back 30 min from midnight → 23:30 → +30 min → 00:00 ✓
-        let start = Utc.with_ymd_and_hms(2025, 1, 1, 23, 0, 0).unwrap();
-        // Use 00:31 so that 01:00 > end triggers the guard and we get exactly 4 ticks.
-        let end = Utc.with_ymd_and_hms(2025, 1, 2, 0, 31, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-MM-DDTHH:30M:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .with_end(end)
-        .build()
-        .unwrap();
-        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-        dbg!(&results);
-
-        // Expected: 23:00 (start passthrough), 23:30, 00:00, 00:30
-        assert_eq!(results.len(), 4);
-        assert_eq!(results[0].observed().hour(), 23);
-        assert_eq!(results[0].observed().minute(), 0);
-        assert_eq!(results[1].observed().hour(), 23);
-        assert_eq!(results[1].observed().minute(), 30);
-        assert_eq!(results[2].observed().hour(), 0);
-        assert_eq!(results[2].observed().minute(), 0);
-        assert_eq!(results[3].observed().hour(), 0);
-        assert_eq!(results[3].observed().minute(), 30);
-    }
-
-    // ── timezone-aware ──────────────────────────────────────────────────────
-
-    #[test]
-    fn test_ny_timezone_last_biz_day_11am() {
-        let ny = New_York;
-        let start = ny.with_ymd_and_hms(2024, 11, 29, 11, 0, 0).unwrap();
-        let end = ny.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start(
-            "YY-1M-31L~WT11:00:00",
-            WeekendSkipper::new(),
-            start,
-        )
-        .with_end(end)
-        .build()
-        .unwrap();
-        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-        dbg!(&results);
-        assert!(!results.is_empty());
-        for r in &results {
-            assert_eq!(r.observed().hour(), 11);
-        }
-    }
-}

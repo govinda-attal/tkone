@@ -135,7 +135,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
 /// ### See Also
 /// - [NaiveSpecIterator](crate::time::NaiveSpecIterator)
 /// - [SpecIteratorBuilder](crate::time::SpecIteratorBuilder)
-/// - [Spec](crate::time::SPEC_EXPR)
+/// - [Spec](crate::time::Spec)
 ///
 #[derive(Debug, Clone)]
 pub struct SpecIterator<Tz: TimeZone> {
@@ -321,22 +321,37 @@ impl FallibleIterator for NaiveSpecIterator {
 
         let next = self.dtm.clone();
 
+        // When no explicit Every cadence exists, the finest ForEach component
+        // acts as Every(1) for its own unit (seconds > minutes > hours).
+        // Coarser ForEach components carry the value forward unchanged.
+        // AsIs is a true no-op — it always carries the current value.
+        let has_any_every = matches!(self.spec.seconds, Cycle::Every(_))
+            || matches!(self.spec.minutes, Cycle::Every(_))
+            || matches!(self.spec.hours, Cycle::Every(_));
+        let seconds_is_foreach = matches!(self.spec.seconds, Cycle::ForEach);
+        let minutes_is_foreach = matches!(self.spec.minutes, Cycle::ForEach);
+
         let next = match &self.spec.seconds {
             Cycle::At(s) => next.with_second(*s as u32).unwrap(),
             Cycle::Every(s) => next + Duration::seconds(*s as i64),
-            _ => next,
+            Cycle::ForEach if !has_any_every => next + Duration::seconds(1),
+            Cycle::ForEach | Cycle::AsIs => next,
         };
 
         let next = match &self.spec.minutes {
             Cycle::At(m) => next.with_minute(*m as u32).unwrap(),
             Cycle::Every(m) => next + Duration::minutes(*m as i64),
-            _ => next,
+            Cycle::ForEach if !has_any_every && !seconds_is_foreach => next + Duration::minutes(1),
+            Cycle::ForEach | Cycle::AsIs => next,
         };
 
         let next = match &self.spec.hours {
             Cycle::At(h) => next.with_hour(*h as u32).unwrap(),
             Cycle::Every(h) => next + Duration::hours(*h as i64),
-            _ => next,
+            Cycle::ForEach if !has_any_every && !seconds_is_foreach && !minutes_is_foreach => {
+                next + Duration::hours(1)
+            }
+            Cycle::ForEach | Cycle::AsIs => next,
         };
 
         if let Some(end) = &self.end {
@@ -424,6 +439,73 @@ mod tests {
                 Utc.with_ymd_and_hms(2024, 3, 31, 10, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 3, 31, 11, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2024, 3, 31, 12, 0, 0).unwrap(),
+            ]
+        );
+    }
+
+    // HH:MM:SS — all ForEach → every second (finest ForEach drives)
+    #[test]
+    fn test_foreach_seconds_drives() {
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+        let iter = SpecIterator::new_with_start("HH:MM:SS", start).unwrap();
+        let results = iter.take(4).collect::<Vec<DateTime<_>>>().unwrap();
+        assert_eq!(
+            results,
+            vec![
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 1).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 2).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 3).unwrap(),
+            ]
+        );
+    }
+
+    // HH:MM:00 — ForEach H, ForEach M, At(0) S → every minute at :00 second
+    #[test]
+    fn test_foreach_minutes_drives() {
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+        let iter = SpecIterator::new_with_start("HH:MM:00", start).unwrap();
+        let results = iter.take(4).collect::<Vec<DateTime<_>>>().unwrap();
+        assert_eq!(
+            results,
+            vec![
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 1, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 2, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 3, 0).unwrap(),
+            ]
+        );
+    }
+
+    // HH:00:00 — ForEach H, At(0) M, At(0) S → every hour at :00:00
+    #[test]
+    fn test_foreach_hours_drives() {
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+        let iter = SpecIterator::new_with_start("HH:00:00", start).unwrap();
+        let results = iter.take(4).collect::<Vec<DateTime<_>>>().unwrap();
+        assert_eq!(
+            results,
+            vec![
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 11, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 12, 0, 0).unwrap(),
+            ]
+        );
+    }
+
+    // 1H:MM:SS — Every H with ForEach M and S → H drives, M and S carry (unchanged)
+    #[test]
+    fn test_every_h_foreach_carry() {
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();
+        let iter = SpecIterator::new_with_start("1H:MM:SS", start).unwrap();
+        let results = iter.take(3).collect::<Vec<DateTime<_>>>().unwrap();
+        assert_eq!(
+            results,
+            vec![
+                Utc.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 10, 22, 45).unwrap(),
+                Utc.with_ymd_and_hms(2025, 1, 1, 11, 22, 45).unwrap(),
             ]
         );
     }

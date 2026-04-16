@@ -1,31 +1,25 @@
 use crate::prelude::*;
-use regex::Regex;
+use std::fmt;
 use std::str::FromStr;
-use std::sync::LazyLock;
 
-/// ## SPEC_EXPR
-/// Regular expression for matching time recurrence specifications.
-/// It matches various combinations of hours, minutes, and seconds.
-///
-/// ### Supported Formats
-///
-/// - `HH:MM:SS`: Time format with hours in the range 00-23, minutes in the range 00-59, and seconds in the range 00-59.
-/// - `<num>H:<num>M:<num>S`: Duration format with hours, minutes, and seconds specified as numbers followed by `H`, `M`, and `S` respectively.
-///
-/// ### Examples
-///
-/// - `12:34:56`: Matches time in hours, minutes, and seconds.
-/// - `1H:1M:1S`: Matches duration in hours, minutes, and seconds.
-pub const SPEC_EXPR: &str = r"([01][0-9]|2[0-3]|[0-9]H|1[0-9]H|2[0-3]H|HH):([0-5][0-9]|[0-5]?[0-9]M|MM):([0-5][0-9]|[0-5]?[0-9]S|SS)";
-static SPEC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(SPEC_EXPR).unwrap());
-const CYCLE_EXPR: &str = r"(?:HH|MM|SS)|(?:(?<num>\d+)(?<type>[HMS])?)";
-static CYCLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(CYCLE_EXPR).unwrap());
+use nom::{
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::{char, digit1},
+    combinator::{all_consuming, map_res, value},
+    error::Error as NomError,
+    sequence::{preceded, tuple},
+    IResult,
+};
 
 /// ## Spec
 /// Represents a time specification.
 ///
 /// The `Spec` struct is used to define specification for time to support flexible scheduling options.
-/// Best way to instantiate a `Spec` is to parse it from a string that matches the `SPEC_EXPR` regular expression.
+/// Best way to instantiate a `Spec` is to parse it from a string using the format `HH:MM:SS`,
+/// where each component is one of: `HH`/`MM`/`SS` (ForEach), `_` (AsIs), `nH`/`nM`/`nS` (Every),
+/// or a 2-digit number (At).
+///
 /// ### Examples
 ///
 /// ```rust
@@ -34,7 +28,7 @@ static CYCLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(CYCLE_EXPR).unwra
 /// let spec = "1H:30:SS".parse::<Spec>().unwrap();
 /// assert_eq!(spec.hours, Cycle::Every(1));
 /// assert_eq!(spec.minutes, Cycle::At(30));
-/// assert_eq!(spec.seconds, Cycle::AsIs);
+/// assert_eq!(spec.seconds, Cycle::ForEach);
 /// ```
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct Spec {
@@ -43,69 +37,138 @@ pub struct Spec {
     pub seconds: Cycle,
 }
 
+/// ## Cycle
+/// Describes how a single time component (hours, minutes, or seconds) advances on each tick.
+///
+/// | Variant | Syntax | Meaning |
+/// |---------|--------|---------|
+/// | `AsIs`     | `_`          | Keep current value unchanged (no-op) |
+/// | `ForEach`  | `HH`/`MM`/`SS` | Advance each occurrence; acts as `Every(1)` for the finest component when no `Every` is present |
+/// | `At(n)`    | `09`, `30`, `45` | Pin the field to exact value *n* |
+/// | `Every(n)` | `1H`, `30M`, `15S` | Add a duration of *n* units on each tick |
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Cycle {
     #[default]
     AsIs,
+    ForEach,
     At(u8),
     Every(u8),
+}
+
+// ---------------------------------------------------------------------------
+// Parser (nom)
+// ---------------------------------------------------------------------------
+
+type Res<'a, T> = IResult<&'a str, T, NomError<&'a str>>;
+
+fn parse_u8(input: &str) -> Res<u8> {
+    map_res(digit1, str::parse)(input)
+}
+
+fn parse_hours_every(input: &str) -> Res<Cycle> {
+    let (input, n) = parse_u8(input)?;
+    let (input, _) = char('H')(input)?;
+    Ok((input, Cycle::Every(n)))
+}
+
+fn parse_hours_at(input: &str) -> Res<Cycle> {
+    let (input, n) = parse_u8(input)?;
+    Ok((input, Cycle::At(n)))
+}
+
+fn parse_hours_cycle(input: &str) -> Res<Cycle> {
+    alt((
+        value(Cycle::ForEach, tag("HH")),
+        value(Cycle::AsIs, tag("_")),
+        parse_hours_every,
+        parse_hours_at,
+    ))(input)
+}
+
+fn parse_minutes_every(input: &str) -> Res<Cycle> {
+    let (input, n) = parse_u8(input)?;
+    let (input, _) = char('M')(input)?;
+    Ok((input, Cycle::Every(n)))
+}
+
+fn parse_minutes_at(input: &str) -> Res<Cycle> {
+    let (input, n) = parse_u8(input)?;
+    Ok((input, Cycle::At(n)))
+}
+
+fn parse_minutes_cycle(input: &str) -> Res<Cycle> {
+    alt((
+        value(Cycle::ForEach, tag("MM")),
+        value(Cycle::AsIs, tag("_")),
+        parse_minutes_every,
+        parse_minutes_at,
+    ))(input)
+}
+
+fn parse_seconds_every(input: &str) -> Res<Cycle> {
+    let (input, n) = parse_u8(input)?;
+    let (input, _) = char('S')(input)?;
+    Ok((input, Cycle::Every(n)))
+}
+
+fn parse_seconds_at(input: &str) -> Res<Cycle> {
+    let (input, n) = parse_u8(input)?;
+    Ok((input, Cycle::At(n)))
+}
+
+fn parse_seconds_cycle(input: &str) -> Res<Cycle> {
+    alt((
+        value(Cycle::ForEach, tag("SS")),
+        value(Cycle::AsIs, tag("_")),
+        parse_seconds_every,
+        parse_seconds_at,
+    ))(input)
+}
+
+fn parse_spec(input: &str) -> Result<Spec> {
+    let full_parser = tuple((
+        parse_hours_cycle,
+        preceded(char(':'), parse_minutes_cycle),
+        preceded(char(':'), parse_seconds_cycle),
+    ));
+    match all_consuming(full_parser)(input) {
+        Ok((_, (hours, minutes, seconds))) => Ok(Spec {
+            hours,
+            minutes,
+            seconds,
+        }),
+        Err(_) => Err(Error::ParseError("Failed to parse time spec")),
+    }
 }
 
 impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let caps = &SPEC_RE
-            .captures(s)
-            .ok_or(Error::ParseError("Invalid time spec"))?;
-        let mut cycles = caps
-            .iter()
-            .skip(1)
-            .flatten()
-            .map(|m| Cycle::try_from(m.as_str()))
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(Self {
-            hours: cycles.remove(0),
-            minutes: cycles.remove(0),
-            seconds: cycles.remove(0),
-        })
+        parse_spec(s)
     }
 }
 
-impl TryFrom<&str> for Cycle {
-    type Error = Error;
+// ---------------------------------------------------------------------------
+// Display
+// ---------------------------------------------------------------------------
 
-    fn try_from(value: &str) -> Result<Self> {
-        let cycle = CYCLE_RE
-            .captures(value)
-            .ok_or(Error::ParseError("Invalid time spec"))?;
-
-        let Some(num) = cycle.name("num") else {
-            return Ok(Cycle::AsIs);
+impl fmt::Display for Spec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let fmt_cycle = |cycle: &Cycle, letter: char| -> String {
+            match cycle {
+                Cycle::AsIs => "_".to_string(),
+                Cycle::ForEach => format!("{}{}", letter, letter),
+                Cycle::At(n) => format!("{:02}", n),
+                Cycle::Every(n) => format!("{}{}", n, letter),
+            }
         };
-        let num = num.as_str().parse::<u8>().unwrap();
-        let cycle = if cycle.name("type").is_some() {
-            Cycle::Every(num)
-        } else {
-            Cycle::At(num)
-        };
-        Ok(cycle)
-    }
-}
-
-impl ToString for Spec {
-    fn to_string(&self) -> String {
-        let to_string = |cycle: &Cycle, cycle_type: char| match cycle {
-            Cycle::AsIs => f!("{}{}", cycle_type, cycle_type),
-            Cycle::At(num) => f!("{:02}", num),
-            Cycle::Every(num) => f!("{:02}{}", num, cycle_type),
-        };
-        f!(
+        write!(
+            f,
             "{}:{}:{}",
-            to_string(&self.hours, 'H'),
-            to_string(&self.minutes, 'M'),
-            to_string(&self.seconds, 'S')
+            fmt_cycle(&self.hours, 'H'),
+            fmt_cycle(&self.minutes, 'M'),
+            fmt_cycle(&self.seconds, 'S'),
         )
     }
 }
@@ -120,12 +183,56 @@ mod tests {
         assert_eq!(
             &time_spec,
             &Spec {
-                hours: Cycle::AsIs,
+                hours: Cycle::ForEach,
                 minutes: Cycle::Every(30),
                 seconds: Cycle::At(5),
                 ..Default::default()
             },
         );
         assert_eq!(time_spec.to_string(), "HH:30M:05");
+    }
+
+    #[test]
+    fn test_time_spec_asis_parsing() {
+        let spec = "_:00:00".parse::<Spec>().unwrap();
+        assert_eq!(spec.hours, Cycle::AsIs);
+        assert_eq!(spec.minutes, Cycle::At(0));
+        assert_eq!(spec.seconds, Cycle::At(0));
+        assert_eq!(spec.to_string(), "_:00:00");
+    }
+
+    #[test]
+    fn test_time_spec_all_foreach() {
+        let spec = "HH:MM:SS".parse::<Spec>().unwrap();
+        assert_eq!(spec.hours, Cycle::ForEach);
+        assert_eq!(spec.minutes, Cycle::ForEach);
+        assert_eq!(spec.seconds, Cycle::ForEach);
+        assert_eq!(spec.to_string(), "HH:MM:SS");
+    }
+
+    #[test]
+    fn test_time_spec_mixed() {
+        let spec = "1H:30:SS".parse::<Spec>().unwrap();
+        assert_eq!(spec.hours, Cycle::Every(1));
+        assert_eq!(spec.minutes, Cycle::At(30));
+        assert_eq!(spec.seconds, Cycle::ForEach);
+        assert_eq!(spec.to_string(), "1H:30:SS");
+    }
+
+    #[test]
+    fn test_time_spec_roundtrip() {
+        for s in &[
+            "HH:MM:SS",
+            "1H:00:00",
+            "HH:30M:00",
+            "_:_:_",
+            "_:00:00",
+            "09:30:00",
+            "HH:MM:30S",
+            "2H:15:00",
+        ] {
+            let parsed = s.parse::<Spec>().unwrap();
+            assert_eq!(&parsed.to_string(), s, "roundtrip failed for {}", s);
+        }
     }
 }

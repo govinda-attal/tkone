@@ -630,7 +630,8 @@ On each tick: **seconds → minutes → hours**, in that fixed order. The second
 
 ## Semantically Illogical Combinations
 
-The following specs produce infinite loops or backwards movement. **Avoid them.**
+The following combinations either fail at parse time or terminate after a bounded number of
+results. They are documented here for clarity.
 
 ---
 
@@ -638,39 +639,48 @@ The following specs produce infinite loops or backwards movement. **Avoid them.*
 
 **Examples:** `09:30:00`, `13:00:00`
 
-**Problem:** Each call pins all three fields to the same fixed values. If the current time already equals or exceeds the target, the `At` transform for hours moves time backwards. The iterator then loops forever between the current time and the pinned time.
+**Behaviour:** Each call pins all three fields to the same fixed values. Because `At` transforms
+can move a field backward (e.g. setting hours to 09 when the cursor is already at 10:00 makes
+time go backward), the computed `next` is ≤ the current cursor.  The **no-progress guard** fires
+and the iterator terminates.
 
-```
-09:30:00 as iterator from 09:30:00 → 09:30, 09:30, 09:30 ... (infinite)
-09:30:00 as iterator from 10:00:00 → 09:30 (backwards!), then loops at 09:30
-```
+- `new_with_start` from `09:30:00` → yields `09:30:00` (passthrough) then terminates.
+- `new_after` from `09:30:00` → yields nothing (first `next = 09:30:00 = dtm`, guard fires).
+- `new_after` from `09:00:00` → yields `09:30:00` once, then terminates.
 
-**Safe use:** All-`At` specs are valid exclusively as **end specs** (passed to `with_end_spec`), where they are evaluated exactly once to produce an absolute boundary.
+**Preferred use:** All-`At` specs are most useful as **end specs** (passed to `with_end_spec`),
+where they are evaluated exactly once to produce an absolute boundary.
 
 ---
 
 ### `_:_:_` (all AsIs) used as a pure time iterator
 
-**Problem:** `AsIs` never advances time. Every call returns the same datetime. Infinite loop.
+**Behaviour:** `AsIs` is a true no-op — the computed `next` always equals `self.dtm`. The
+**no-progress guard** fires and the iterator terminates immediately after any passthrough.
 
-**Safe use:** `AsIs` components are meaningful only within **combined datetime specs** (e.g. `YY-1M-31T_:_:_`) where the date spec advances and the time portion is preserved.
+- `new_with_start` from any time → yields start once then terminates.
+- `new_after` from any time → yields nothing.
+
+**Preferred use:** `AsIs` components are meaningful only within **combined datetime specs**
+(e.g. `YY-1M-31T_:_:_`) where the date spec advances and the time portion is preserved.
 
 ---
 
-### Every(0) — zero-size interval
+### `Every(0)` — zero-size interval
 
 **Examples:** `0H:00:00`, `HH:0M:00`, `HH:MM:0S`
 
-**Problem:** Adding a duration of 0 produces no forward movement. The iterator returns the same value on every call.
+**Result:** **Parse error.** `Every(0)` is rejected at parse time by `verify(parse_u8, |&n| n > 0)`
+in the nom parser.  These specs cannot be constructed.
 
-**Safe alternative:** Use `Every(n)` with n ≥ 1.
+**Use:** `Every(n)` with n ≥ 1 (enforced).
 
 ---
 
 ### Summary table
 
-| Combination | Problem | Safe alternative |
-|-------------|---------|-----------------|
-| `hh:mm:ss` (as iterator) | Backwards on every tick | Use as `end_spec` only |
-| `_:_:_` (as pure time iterator) | No advance, infinite loop | Use in combined datetime spec only |
-| `0H:00:00` / `HH:0M:00` / `HH:MM:0S` | Zero advance, infinite loop | Use n ≥ 1 |
+| Combination | Behaviour | Notes |
+|-------------|-----------|-------|
+| `hh:mm:ss` (as iterator) | Terminates via no-progress guard: one tick with `new_with_start`, zero with `new_after` | Preferred as `end_spec` only |
+| `_:_:_` (as pure time iterator) | Terminates via no-progress guard: one tick with `new_with_start`, zero with `new_after` | Use in combined datetime spec only |
+| `0H:00:00` / `HH:0M:00` / `HH:MM:0S` | **Parse error** — rejected at construction | Use n ≥ 1 (enforced by parser) |

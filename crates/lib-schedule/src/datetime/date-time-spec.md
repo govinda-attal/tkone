@@ -721,19 +721,26 @@ Always pair sub-minute specs with a `with_end` boundary or consume with a bounde
 
 ---
 
-### All-`At` time spec is a valid end boundary but a broken iterator
+### All-`At` time spec produces one tick per date (or terminates as standalone)
 
-**Spec:** `hh:mm:ss` (e.g. `11:00:00`, `16:30:00`) used as a standalone time iterator
+**Spec:** `hh:mm:ss` (e.g. `11:00:00`, `16:30:00`)
 
-Within a datetime spec the time part is only applied to the first tick of each date using
+Within a datetime spec the time part is applied to the first tick of each date using
 `apply_time_spec(date_midnight − delta)`.  For an all-`At` spec the delta is 1 s, and
 `apply_time_spec(23:59:59)` produces `hh:mm:ss` of the previous day — which is `< midnight`,
 so the fallback `apply_time_spec(midnight)` is used.  This correctly produces one tick per day
 at the fixed time.
 
-However, using an all-`At` spec as the **time iterator** in isolation (no date spec) causes
-`apply_time_spec` to be called on the same cursor repeatedly, pinning all three fields to the
-same value and looping forever.  All-`At` time specs are safe only when:
+Using an all-`At` spec as the **time iterator** in isolation (no date spec) now terminates
+safely via the **no-progress guard** in `NaiveSpecIterator`: because `At` transforms can move
+a field backwards (e.g. pinning hours to 11 when the cursor is already at 12:00 moves time
+backward), the computed `next` is ≤ the current cursor and `Ok(None)` is returned.
+
+- `new_with_start` from `11:00:00` → yields `11:00:00` (passthrough) then terminates.
+- `new_after` from `11:00:00` → yields nothing (guard fires on first tick).
+- `new_after` from `10:00:00` → yields `11:00:00` once, then terminates.
+
+All-`At` time specs remain most useful when:
 
 1. Used as the time component of a datetime spec (where the date iterator drives progression).
 2. Used as an `end_spec` boundary (evaluated exactly once).
@@ -751,4 +758,4 @@ same value and looping forever.  All-`At` time specs are safe only when:
 | `new_after` with past daily time | Entire initial date silently skipped | Use `new_with_start` if start inclusivity is required |
 | `1H:MM:SS` / `HH:nM:SS` with non-daily date spec | Carry `:mm:ss` resets on each new date to derived-from-cursor values | Use pinned `At` for minutes/seconds (`1H:30:00`) |
 | `HH:MM:SS` or `HH:MM:00` without end bound | 86 400 / 1 440 results per day | Always set a `with_end` boundary |
-| All-`At` time spec as standalone iterator | Infinite loop | Use only as datetime time component or as `end_spec` |
+| All-`At` time spec as standalone iterator | Terminates via no-progress guard (one tick with `new_with_start`, zero with `new_after` from spec time) | Use as datetime time component or `end_spec` for clearest intent |

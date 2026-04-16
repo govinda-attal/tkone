@@ -1,70 +1,27 @@
 use super::spec::Spec;
 use crate::biz_day::BizDayProcessor;
-use crate::{prelude::*, NextResult};
-use core::marker::PhantomData;
+use crate::date::NaiveSpecIterator as DateNaiveSpecIterator;
+use crate::prelude::*;
+use crate::time::{Cycle as TimeCycle, Spec as TimeSpec};
+use crate::NextResult;
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
+use fallible_iterator::FallibleIterator;
+use std::marker::PhantomData;
 use std::str::FromStr;
 
-use chrono::{DateTime, TimeZone, Utc};
-use fallible_iterator::FallibleIterator;
+// --- Builder type-state markers (same pattern as date/time) ---
 
-use crate::date::{
-    SpecIterator as DateSpecIterator, SpecIteratorBuilder as DateSpecIteratorBuilder,
-};
-use crate::time::{
-    SpecIterator as TimeSpecIterator, SpecIteratorBuilder as TimeSpecIteratorBuilder,
-};
-
-/// # SpecIterator
-/// datetime::SpecIterator is an iterator that combines a date and time specification to generate a sequence of date-times.
-/// This iterator is created using the SpecIteratorBuilder.
-///
-/// ## Example
-/// ```rust
-/// use lib_schedule::biz_day::WeekendSkipper;
-/// use lib_schedule::datetime::SpecIteratorBuilder;
-/// use chrono_tz::America::New_York;
-/// use fallible_iterator::FallibleIterator;
-/// use chrono::{offset::TimeZone, DateTime};
-/// use lib_schedule::NextResult;
-///
-/// let start = New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap();
-/// let end = New_York.with_ymd_and_hms(2025, 7, 31, 11, 0, 0).unwrap();
-/// let iter = SpecIteratorBuilder::new_with_start("YY-1M-08~WT11:00:00", WeekendSkipper::new(), start).with_end(end).build().unwrap();
-/// let occurrences = iter.take(3).collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-/// ```
-///
-/// ## See Also
-/// [SpecIteratorBuilder](crate::datetime::SpecIteratorBuilder)
-/// [DateSpecIterator](crate::date::SpecIterator)
-/// [TimeSpecIterator](crate::time::SpecIterator)
-/// [TIME_SPEC_EXPR](crate::time::SPEC_EXPR)
-/// [DATE_SPEC_EXPR](crate::date::SPEC_EXPR)
-///
-#[derive(Debug)]
-pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
-    date_iter: DateSpecIterator<Tz, BDP>,
-    time_iter: TimeSpecIterator<Tz>,
-    dtm: DateTime<Tz>,
-    start: Option<DateTime<Tz>>,
-    end: Option<DateTime<Tz>>,
-    index: usize,
-}
-
-pub struct Start<Tz: TimeZone>(DateTime<Tz>);
+pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
 pub struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
-pub struct EndSpec(String);
 pub struct NoEnd;
 pub struct Sealed;
 pub struct NotSealed;
 
-/// # SpecIteratorBuilder
-/// datetime::SpecIteratorBuilder is a builder for SpecIterator.
-/// It can be used to build a SpecIterator with a start date-time, end date-time, or end spec.
-/// If no start date-time is provided, the current date-time is used.
-///
-/// ## See Also
-/// [`SpecIterator`](crate::datetime::SpecIterator)
+// ---------------------------------------------------------------------------
+// SpecIteratorBuilder
+// ---------------------------------------------------------------------------
+
 pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> {
     dtm: DateTime<Tz>,
     start: START,
@@ -75,107 +32,16 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
     marker_sealed: PhantomData<S>,
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, Start<Tz>, NoEnd, NotSealed> {
-    pub fn with_end_spec(
-        self,
-        end_spec: impl Into<String>,
-    ) -> SpecIteratorBuilder<Tz, BDP, Start<Tz>, EndSpec, Sealed> {
-        SpecIteratorBuilder {
-            dtm: self.dtm,
-            start: self.start,
-            spec: self.spec,
-            bd_processor: self.bd_processor,
-            end: EndSpec(end_spec.into()),
-            marker_sealed: PhantomData,
-            timezone: self.timezone,
-        }
-    }
-
-    pub fn with_end(
-        self,
-        end: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, BDP, Start<Tz>, EndDateTime<Tz>, Sealed> {
-        SpecIteratorBuilder {
-            dtm: self.dtm,
-            start: self.start,
-            spec: self.spec,
-            bd_processor: self.bd_processor,
-            end: EndDateTime(end),
-            marker_sealed: PhantomData,
-            timezone: self.timezone,
-        }
-    }
-}
-
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, Start<Tz>, EndDateTime<Tz>, Sealed>
-{
-    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        let start = self.start.0;
-        Ok(SpecIterator::new_with_end(
-            &self.spec,
-            start,
-            self.bd_processor,
-            self.end.0,
-        )?)
-    }
-}
-
-impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, Start<Tz>, EndSpec, Sealed> {
-    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        let start = self.start.0;
-        Ok(SpecIterator::new_with_end_spec(
-            &self.spec,
-            start,
-            self.bd_processor,
-            &self.end.0,
-        )?)
-    }
-}
-
-impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, Start<Tz>, NoEnd, NotSealed> {
-    pub fn new_with_start(
-        spec: &str,
-        bdp: BDP,
-        start: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, BDP, Start<Tz>, NoEnd, NotSealed> {
-        SpecIteratorBuilder {
-            dtm: start.clone(),
-            timezone: start.timezone(),
-            start: Start(start),
-            spec: spec.to_string(),
-            bd_processor: bdp,
-            end: NoEnd,
-            marker_sealed: PhantomData,
-        }
-    }
-
-    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator::new_with_start(
-            &self.spec,
-            self.bd_processor,
-            self.start.0,
-        )?)
-    }
-}
-
+// --- no-start, no-end ---
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
-    pub fn new(
-        spec: &str,
-        bdp: BDP,
-        tz: &Tz,
-    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
-        SpecIteratorBuilder::new_after(spec, bdp, Utc::now().with_timezone(tz))
+    pub fn new(spec: &str, bdp: BDP, tz: Tz) -> Self {
+        Self::new_after(spec, bdp, Utc::now().with_timezone(&tz))
     }
 
-    pub fn new_after(
-        spec: &str,
-        bdp: BDP,
-        dtm: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    pub fn new_after(spec: &str, bdp: BDP, dtm: DateTime<Tz>) -> Self {
         SpecIteratorBuilder {
             timezone: dtm.timezone(),
-            dtm,
+            dtm: dtm.clone(),
             start: NoStart,
             spec: spec.to_string(),
             bd_processor: bdp,
@@ -185,217 +51,579 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator::new_after(
-            &self.spec,
-            self.bd_processor,
-            self.dtm,
-        )?)
+        let spec = Spec::from_str(&self.spec)?;
+        Ok(SpecIterator {
+            tz: self.dtm.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_after(
+                &spec.date_spec,
+                &spec.time_spec,
+                self.bd_processor,
+                self.dtm.naive_local(),
+            )?,
+        })
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
-    fn new_after(spec: &str, bd_processor: BDP, dtm: DateTime<Tz>) -> Result<Self> {
-        let spec = Spec::from_str(spec)?;
-        let time_iter = TimeSpecIteratorBuilder::new_after(&spec.time_spec, dtm.clone()).build()?;
-        let date_iter =
-            DateSpecIteratorBuilder::new_after(&spec.date_spec, bd_processor.clone(), dtm.clone())
-                .build()?;
+// --- with-start, no-end ---
+impl<Tz: TimeZone, BDP: BizDayProcessor>
+    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
+{
+    pub fn new_with_start(spec: &str, bdp: BDP, start: DateTime<Tz>) -> Self {
+        SpecIteratorBuilder {
+            timezone: start.timezone(),
+            dtm: start.clone(),
+            start: StartDateTime(start),
+            spec: spec.to_string(),
+            bd_processor: bdp,
+            end: NoEnd,
+            marker_sealed: PhantomData,
+        }
+    }
 
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+        SpecIteratorBuilder {
+            timezone: self.timezone,
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end: EndDateTime(end),
+            marker_sealed: PhantomData,
+        }
+    }
+
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let spec = Spec::from_str(&self.spec)?;
+        let start = self.start.0;
+        Ok(SpecIterator {
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_start(
+                &spec.date_spec,
+                &spec.time_spec,
+                self.bd_processor,
+                start.naive_local(),
+            )?,
+        })
+    }
+}
+
+// --- with-start, with-end ---
+impl<Tz: TimeZone, BDP: BizDayProcessor>
+    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed>
+{
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let spec = Spec::from_str(&self.spec)?;
+        let start = self.start.0;
+        Ok(SpecIterator {
+            tz: start.timezone(),
+            naive_spec_iter: NaiveSpecIterator::new_with_end(
+                &spec.date_spec,
+                &spec.time_spec,
+                self.bd_processor,
+                start.naive_local(),
+                self.end.0.naive_local(),
+            )?,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SpecIterator (timezone-aware wrapper)
+// ---------------------------------------------------------------------------
+
+/// Timezone-aware datetime recurrence iterator combining a date spec and a time spec.
+///
+/// Use [`SpecIteratorBuilder`] to construct one.
+#[derive(Debug)]
+pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
+    tz: Tz,
+    naive_spec_iter: NaiveSpecIterator<BDP>,
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor + Clone> FallibleIterator for SpecIterator<Tz, BDP> {
+    type Item = NextResult<DateTime<Tz>>;
+    type Error = Error;
+
+    fn next(&mut self) -> Result<Option<Self::Item>> {
+        let next = self.naive_spec_iter.next()?;
+        let Some(next) = next else {
+            return Ok(None);
+        };
+        Ok(Some(NextResult::<DateTime<Tz>>::from(W((
+            self.tz.clone(),
+            next,
+        )))))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NaiveSpecIterator
+// ---------------------------------------------------------------------------
+
+/// Naive (non-timezone-aware) datetime recurrence iterator.
+///
+/// Combines a date spec (which calendar days to visit) with a time spec
+/// (which times within each day to emit), using a **date-first** strategy:
+///
+/// 1. Find the next valid calendar date via the date spec.
+/// 2. Within that date, emit every matching time produced by the time spec.
+/// 3. When times are exhausted for that date, advance to the next valid date.
+///
+/// This correctly handles sub-daily recurrence on specific dates, e.g.
+/// "every 30 minutes on the last business day of each month".
+#[derive(Debug, Clone)]
+pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
+    date_iter: DateNaiveSpecIterator<BDP>,
+    time_spec: TimeSpec,
+    /// Exclusive end of the current date window (next midnight after the date
+    /// we are currently emitting times for).  `None` until the first date is
+    /// entered.
+    current_date_end: Option<NaiveDateTime>,
+    /// Set to `true` the first time we successfully consume a result from
+    /// `date_iter`.  Until then we must NOT call `date_iter.update_cursor`,
+    /// because the iterator is already pre-positioned before the starting date
+    /// and advancing it would make `NextNth(n)` skip the first eligible period.
+    date_iter_started: bool,
+    /// Cursor to use when advancing the date iterator to the next period.
+    /// Stored as `actual_date 23:59:59` (the *unadjusted* date) rather than
+    /// `observed_date 23:59:59`, so that business-day adjustments that push
+    /// the observed date into the next month do not cause that month's natural
+    /// occurrence to be skipped.  For `Single` results actual == observed, so
+    /// there is no behavioural difference in the common case.
+    next_period_cursor: Option<NaiveDateTime>,
+    /// Moving cursor — the last datetime returned (or the initial value).
+    dtm: NaiveDateTime,
+    /// The very first cursor value supplied by the caller, used to restrict
+    /// which times are eligible on the first day.
+    initial_dtm: NaiveDateTime,
+    start: Option<NaiveDateTime>,
+    end: Option<NaiveDateTime>,
+    index: usize,
+}
+
+impl<BDP: BizDayProcessor + Clone> NaiveSpecIterator<BDP> {
+    /// Iterate occurrences strictly after `dtm`.
+    pub(crate) fn new_after(
+        date_spec: &str,
+        time_spec: &str,
+        bdp: BDP,
+        dtm: NaiveDateTime,
+    ) -> Result<Self> {
+        // Position the date iterator just before today so that today is a
+        // candidate on the first `date_iter.next()` call.
+        let before_today = dtm.date().and_hms_opt(0, 0, 0).unwrap() - Duration::seconds(1);
         Ok(Self {
-            time_iter,
-            date_iter,
+            date_iter: DateNaiveSpecIterator::new_after(date_spec, bdp, before_today)?,
+            time_spec: time_spec.parse()?,
+            current_date_end: None,
+            date_iter_started: false,
+            next_period_cursor: None,
             dtm,
+            initial_dtm: dtm,
             start: None,
             end: None,
             index: 0,
         })
     }
 
-    fn new_with_start(spec: &str, bd_processor: BDP, start: DateTime<Tz>) -> Result<Self> {
-        let spec = Spec::from_str(spec)?;
-        let time_iter =
-            TimeSpecIteratorBuilder::new_with_start(&spec.time_spec, start.clone()).build()?;
-
-        let date_iter = DateSpecIteratorBuilder::new_with_start(
-            &spec.date_spec,
-            bd_processor.clone(),
-            start.clone(),
-        )
-        .build()?;
-
+    /// Include `start` as the first result, then iterate forward.
+    pub(crate) fn new_with_start(
+        date_spec: &str,
+        time_spec: &str,
+        bdp: BDP,
+        start: NaiveDateTime,
+    ) -> Result<Self> {
+        let before_today = start.date().and_hms_opt(0, 0, 0).unwrap() - Duration::seconds(1);
         Ok(Self {
-            time_iter,
-            date_iter,
-            dtm: start.clone(),
+            date_iter: DateNaiveSpecIterator::new_after(date_spec, bdp, before_today)?,
+            time_spec: time_spec.parse()?,
+            current_date_end: None,
+            date_iter_started: false,
+            next_period_cursor: None,
+            dtm: start,
+            initial_dtm: start,
             start: Some(start),
             end: None,
             index: 0,
         })
     }
 
-    fn new_with_end(
-        spec: &str,
-        start: DateTime<Tz>,
-        bd_processor: BDP,
-        end: DateTime<Tz>,
+    /// Like [`new_with_start`] but stop at `end` (inclusive).
+    pub(crate) fn new_with_end(
+        date_spec: &str,
+        time_spec: &str,
+        bdp: BDP,
+        start: NaiveDateTime,
+        end: NaiveDateTime,
     ) -> Result<Self> {
-        if end <= start {
-            return Err(Error::Custom(
-                "end date-time must be after the start date-time",
-            ));
-        }
-        let spec = Spec::from_str(spec)?;
-        let time_iter = TimeSpecIteratorBuilder::new_with_start(&spec.time_spec, start.clone())
-            .with_end(end.clone())
-            .build()?;
-        let date_iter = DateSpecIteratorBuilder::new_with_start(
-            &spec.date_spec,
-            bd_processor.clone(),
-            start.clone(),
-        )
-        .with_end(end.clone())
-        .build()?;
-
-        Ok(Self {
-            time_iter,
-            date_iter,
-            dtm: start.clone(),
-            start: Some(start),
-            end: Some(end),
-            index: 0,
-        })
-    }
-
-    fn new_with_end_spec(
-        spec: &str,
-        start: DateTime<Tz>,
-        bd_processor: BDP,
-        end_spec: &str,
-    ) -> Result<Self> {
-        let spec = Spec::from_str(spec)?;
-        let end_spec = Spec::from_str(end_spec)?;
-        let mut time_spec_iter =
-            TimeSpecIteratorBuilder::new_after(&end_spec.time_spec, start.clone()).build()?;
-        let end = match time_spec_iter.next()? {
-            Some(dtm) => {
-                let mut date_spec_iter = DateSpecIteratorBuilder::new_after(
-                    &end_spec.date_spec,
-                    bd_processor.clone(),
-                    dtm,
-                )
-                .build()?;
-                date_spec_iter.next()?
-            }
-            None => None,
-        };
-        let Some(end) = end else {
-            return Err(Error::Custom(
-                "End spec must result in a date-time after the start date-time",
-            ));
-        };
-        if end.actual() <= &start {
-            return Err(Error::Custom(
-                "End spec must result in a date-time after the start date-time",
-            ));
-        }
-        let time_iter = TimeSpecIteratorBuilder::new_with_start(&spec.time_spec, start.clone())
-            .with_end(end.actual().clone())
-            .build()?;
-        let date_iter = DateSpecIteratorBuilder::new_with_start(
-            &spec.date_spec,
-            bd_processor.clone(),
-            start.clone(),
-        )
-        .with_end(end.actual().clone())
-        .build()?;
-
-        Ok(Self {
-            time_iter,
-            date_iter,
-            dtm: start.clone(),
-            start: Some(start),
-            end: Some(end.actual().clone()),
-            index: 0,
-        })
+        let mut s = Self::new_with_start(date_spec, time_spec, bdp, start)?;
+        s.end = Some(end);
+        Ok(s)
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDP> {
-    type Item = NextResult<DateTime<Tz>>;
+impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
+    type Item = NextResult<NaiveDateTime>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        if let Some(end) = &self.end {
-            if &self.dtm >= end {
+        // ── global end guard ──────────────────────────────────────────────
+        if let Some(end) = self.end {
+            if self.dtm >= end {
                 return Ok(None);
             }
         }
 
+        // ── index-0 start passthrough ─────────────────────────────────────
         if self.index == 0 {
-            if let Some(start) = &self.start {
-                if &self.dtm <= start {
-                    self.dtm = start.clone();
+            if let Some(start) = self.start {
+                if self.dtm <= start {
+                    self.dtm = start;
                     self.index += 1;
-                    return Ok(Some(NextResult::Single(start.clone())));
+                    self.current_date_end = Some(midnight_next(start.date()));
+                    // Prime the date iterator so that when the time loop for
+                    // this day exhausts, update_cursor advances past start's
+                    // date rather than re-emitting it from midnight.
+                    self.date_iter_started = true;
+                    self.next_period_cursor = Some(start.date().and_hms_opt(23, 59, 59).unwrap());
+                    return Ok(Some(NextResult::Single(start)));
                 }
             }
         }
 
-        let time_iter = &mut self.time_iter;
-        time_iter.update_cursor(self.dtm.clone());
-        let next = match time_iter.next()? {
-            None => self.dtm.clone(),
-            Some(next) => next,
-        };
-
-        if let Some(end) = &self.end {
-            if &next > &end {
-                return Ok(None);
+        // ── try next time within the current date window ──────────────────
+        if let Some(date_end) = self.current_date_end {
+            let candidate = apply_time_spec(&self.time_spec, self.dtm);
+            if candidate > self.dtm && candidate < date_end {
+                if let Some(end) = self.end {
+                    if candidate > end {
+                        return Ok(None);
+                    }
+                }
+                self.dtm = candidate;
+                self.index += 1;
+                return Ok(Some(NextResult::Single(candidate)));
             }
-        };
-
-        let date_iter = &mut self.date_iter;
-        date_iter.update_cursor(next.clone());
-        let next = date_iter.next()?;
-
-        let Some(next) = next else {
-            return Ok(None);
-        };
-
-        if next.actual() < &self.dtm {
-            return Ok(None);
         }
 
-        if let Some(end) = &self.end {
-            if next.actual() > end {
-                self.dtm = end.clone();
-                self.index += 1;
-                return Ok(Some(NextResult::Single(end.clone())));
+        // ── advance to the next valid date ────────────────────────────────
+        //
+        // Prefer `next_period_cursor` (actual_date 23:59:59) over the plain
+        // `date_end - 1s` fallback.  When a business-day adjustment pushes the
+        // observed date into the next month (AdjustedLater), using the *actual*
+        // (unadjusted) date as the cursor keeps the month-counting epoch correct
+        // and prevents that next month's natural occurrence from being skipped.
+        //
+        // We only call update_cursor once the date iterator has been used at
+        // least once (`date_iter_started`).  Before that first use the iterator
+        // is already pre-positioned before the starting date; advancing it
+        // further would cause `NextNth(n)` month cycles to skip the first
+        // eligible period (e.g. May → June when we want May 31).
+        if self.date_iter_started {
+            if let Some(cursor) = self.next_period_cursor.take() {
+                self.date_iter.update_cursor(cursor);
+            } else if let Some(date_end) = self.current_date_end {
+                self.date_iter
+                    .update_cursor(date_end - Duration::seconds(1));
             }
-        };
+        }
 
-        self.index += 1;
-        self.dtm = next.actual().clone();
+        loop {
+            let next_date = self.date_iter.next()?;
+            let Some(next_date) = next_date else {
+                return Ok(None);
+            };
+            self.date_iter_started = true;
 
-        Ok(Some(next))
+            let observed_date = next_date.observed().date();
+            let date_midnight = observed_date.and_hms_opt(0, 0, 0).unwrap();
+            let date_end = midnight_next(observed_date);
+
+            // Always use the *actual* (unadjusted) date for the next period
+            // cursor so that month-boundary adjustments don't shift the epoch.
+            let next_period_cursor = next_date.actual().date().and_hms_opt(23, 59, 59).unwrap();
+
+            // On the very first date entry (current_date_end is still None),
+            // if the date returned is today, use `initial_dtm` as the time
+            // cursor so we only emit times *after* the caller's starting point.
+            // On any subsequent date, start from midnight to get all times.
+            let is_initial_day =
+                self.current_date_end.is_none() && observed_date == self.initial_dtm.date();
+
+            let time_cursor = if is_initial_day {
+                self.initial_dtm
+            } else {
+                date_midnight
+            };
+
+            let first_time = apply_time_spec(&self.time_spec, time_cursor);
+
+            let is_valid = if is_initial_day {
+                // Must be strictly after the initial cursor and within today
+                first_time > self.initial_dtm && first_time < date_end
+            } else {
+                // Must be within the day window (>= midnight is guaranteed;
+                // only fail if Every-cycle pushes past midnight)
+                first_time < date_end
+            };
+
+            if !is_valid {
+                // No eligible time on this date — skip it and try the next.
+                self.current_date_end = Some(date_end);
+                self.date_iter.update_cursor(next_period_cursor);
+                continue;
+            }
+
+            // End-of-range check
+            if let Some(end) = self.end {
+                if first_time > end {
+                    return Ok(None);
+                }
+            }
+
+            self.current_date_end = Some(date_end);
+            self.next_period_cursor = Some(next_period_cursor);
+            self.dtm = first_time;
+            self.index += 1;
+
+            // Propagate business-day adjustment info from the date result.
+            let result = match next_date {
+                NextResult::Single(_) => NextResult::Single(first_time),
+                NextResult::AdjustedEarlier(actual, _) => NextResult::AdjustedEarlier(
+                    actual.date().and_time(first_time.time()),
+                    first_time,
+                ),
+                NextResult::AdjustedLater(actual, _) => {
+                    NextResult::AdjustedLater(actual.date().and_time(first_time.time()), first_time)
+                }
+            };
+
+            return Ok(Some(result));
+        }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Apply a time spec to a cursor datetime, mirroring the time iterator logic:
+/// seconds → minutes → hours, each either `At(n)` (set absolute) or `Every(n)` (add delta).
+fn apply_time_spec(spec: &TimeSpec, cursor: NaiveDateTime) -> NaiveDateTime {
+    let next = cursor;
+    let next = match &spec.seconds {
+        TimeCycle::At(s) => next.with_second(*s as u32).unwrap(),
+        TimeCycle::Every(s) => next + Duration::seconds(*s as i64),
+        TimeCycle::AsIs => next,
+    };
+    let next = match &spec.minutes {
+        TimeCycle::At(m) => next.with_minute(*m as u32).unwrap(),
+        TimeCycle::Every(m) => next + Duration::minutes(*m as i64),
+        TimeCycle::AsIs => next,
+    };
+    match &spec.hours {
+        TimeCycle::At(h) => next.with_hour(*h as u32).unwrap(),
+        TimeCycle::Every(h) => next + Duration::hours(*h as i64),
+        TimeCycle::AsIs => next,
+    }
+}
+
+/// Returns midnight at the start of the *next* day after `date`.
+fn midnight_next(date: NaiveDate) -> NaiveDateTime {
+    (date + Duration::days(1)).and_hms_opt(0, 0, 0).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::biz_day::WeekendSkipper;
-    use chrono::Utc;
+    use chrono::{Datelike, TimeZone, Utc};
+    use chrono_tz::America::New_York;
+    use fallible_iterator::FallibleIterator;
+
+    // ── fixed time-of-day on a date recurrence ──────────────────────────────
+
     #[test]
-    fn test_spec_iter() {
-        let tmp = SpecIteratorBuilder::new("YY-1M-31LT11:00:00", WeekendSkipper::new(), &Utc)
-            // .with_end(Utc::with_ymd_and_hms(&Utc, 2025, 07, 31, 11, 00, 0).unwrap())
-            .build()
+    fn test_fixed_time_monthly() {
+        // Last day of every month at 11:00 — one result per day
+        let start = Utc.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-1M-31L~WT11:00:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .build()
+        .unwrap();
+        let results = iter
+            .take(4)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
             .unwrap();
-        let tmp = tmp
+        dbg!(&results);
+        // First result is the start itself
+        assert_eq!(results[0], NextResult::Single(start));
+        // Each subsequent result is on a different calendar month
+        let dates: Vec<_> = results.iter().map(|r| r.observed().date_naive()).collect();
+        assert!(dates[1] > dates[0]);
+        assert!(dates[2] > dates[1]);
+        assert!(dates[3] > dates[2]);
+    }
+
+    // ── sub-daily: multiple times per day ────────────────────────────────────
+
+    #[test]
+    fn test_hourly_on_mondays() {
+        // Every Monday, every hour at :00:00
+        let start = Utc.with_ymd_and_hms(2025, 1, 6, 9, 0, 0).unwrap(); // Monday
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-MM-[MON]T1H:00:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .build()
+        .unwrap();
+        let results = iter
             .take(6)
             .collect::<Vec<NextResult<DateTime<_>>>>()
             .unwrap();
-        dbg!(&tmp);
+        dbg!(&results);
+        // First = start (09:00 on Jan 6 Mon)
+        assert_eq!(
+            results[0].observed().date_naive().weekday(),
+            chrono::Weekday::Mon
+        );
+        // All results are on Mondays
+        for r in &results {
+            assert_eq!(r.observed().date_naive().weekday(), chrono::Weekday::Mon);
+        }
+        // Consecutive same-day results differ by 1 hour
+        let t0 = results[0].observed();
+        let t1 = results[1].observed();
+        if t0.date_naive() == t1.date_naive() {
+            assert_eq!(*t1 - *t0, Duration::hours(1));
+        }
+    }
+
+    #[test]
+    fn test_every_30min_on_last_biz_day() {
+        // Every 30 min on the last business day of each month
+        let start = Utc.with_ymd_and_hms(2025, 1, 31, 8, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2025, 3, 31, 18, 0, 0).unwrap();
+        // HH:30M:00 = keep hours as-is, every 30 minutes, at second :00
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-1M-31L~WTHH:30M:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .with_end(end)
+        .build()
+        .unwrap();
+        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
+        dbg!(&results);
+        // Consecutive same-day results are 30 min apart
+        for w in results.windows(2) {
+            let a = w[0].observed();
+            let b = w[1].observed();
+            if a.date_naive() == b.date_naive() {
+                assert_eq!(*b - *a, Duration::minutes(30));
+            }
+        }
+    }
+
+    // ── new_after semantics ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_new_after_skips_past_times_on_same_day() {
+        // Cursor is after the day's only fixed time; first result must be next day
+        let dtm = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap(); // after 11:00
+        let iter = SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm)
+            .build()
+            .unwrap();
+        let results = iter
+            .take(2)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap();
+        dbg!(&results);
+        assert_eq!(results[0].observed().date_naive().day(), 16);
+    }
+
+    #[test]
+    fn test_new_after_includes_same_day_future_time() {
+        // Cursor is before the day's fixed time; first result must be same day
+        let dtm = Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap(); // before 11:00
+        let iter = SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm)
+            .build()
+            .unwrap();
+        let results = iter
+            .take(2)
+            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .unwrap();
+        dbg!(&results);
+        assert_eq!(results[0].observed().date_naive().day(), 15);
+        assert_eq!(results[0].observed().hour(), 11);
+    }
+
+    // ── regression: biz-day adjustment crossing month boundary ─────────────
+
+    #[test]
+    fn test_biz_day_adjustment_does_not_skip_next_month() {
+        // May 31 2025 is a Saturday → adjusted to Jun 2 (Monday).
+        // After emitting Jun 2, the next occurrence must be Jun 30, NOT Jul.
+        let start = Utc.with_ymd_and_hms(2025, 5, 1, 11, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2025, 8, 1, 11, 0, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-1M-31L~WT11:00:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .with_end(end)
+        .build()
+        .unwrap();
+        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
+        dbg!(&results);
+
+        // Find Jun 2 (the adjusted May 31) and confirm the result after it is in June
+        let jun2_idx = results.iter().position(|r| {
+            r.observed().date_naive() == chrono::NaiveDate::from_ymd_opt(2025, 6, 2).unwrap()
+        });
+        assert!(
+            jun2_idx.is_some(),
+            "expected an occurrence on Jun 2 (adjusted May 31)"
+        );
+        let after_jun2 = &results[jun2_idx.unwrap() + 1];
+        assert_eq!(
+            after_jun2.observed().date_naive().month(),
+            6,
+            "occurrence after AdjustedLater(May 31→Jun 2) should be in June, not July"
+        );
+    }
+
+    // ── timezone-aware ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_ny_timezone_last_biz_day_11am() {
+        let ny = New_York;
+        let start = ny.with_ymd_and_hms(2024, 11, 29, 11, 0, 0).unwrap();
+        let end = ny.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-1M-31L~WT11:00:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .with_end(end)
+        .build()
+        .unwrap();
+        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
+        dbg!(&results);
+        assert!(!results.is_empty());
+        for r in &results {
+            assert_eq!(r.observed().hour(), 11);
+        }
     }
 }

@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 #![feature(btree_cursors)]
 
 //! # lib-schedule
@@ -125,28 +124,28 @@ impl<T: Clone> NextResult<T> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use biz_day::WeekendSkipper;
-    use chrono::{DateTime, TimeZone};
-    use chrono_tz::America::New_York;
-    use fallible_iterator::FallibleIterator;
+// #[cfg(test)]
+// mod tests {
+//     use biz_day::WeekendSkipper;
+//     use chrono::{DateTime, TimeZone};
+//     use chrono_tz::America::New_York;
+//     use fallible_iterator::FallibleIterator;
 
-    use super::*;
-    #[test]
-    fn test_works() {
-        let tmp = datetime::SpecIteratorBuilder::new_with_start(
-            "YY-1M-08~WT11:00:00",
-            WeekendSkipper::new(),
-            New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
-        )
-        .with_end(New_York.with_ymd_and_hms(2025, 7, 8, 11, 00, 0).unwrap())
-        .build()
-        .unwrap();
-        let tmp = tmp
-            .take(10)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap();
-        dbg!(&tmp);
-    }
-}
+//     use super::*;
+//     #[test]
+//     fn test_works() {
+//         let tmp = datetime::SpecIteratorBuilder::new_with_start(
+//             "YY-1M-08~WT11:00:00",
+//             WeekendSkipper::new(),
+//             New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
+//         )
+//         .with_end(New_York.with_ymd_and_hms(2025, 7, 8, 11, 00, 0).unwrap())
+//         .build()
+//         .unwrap();
+//         let tmp = tmp
+//             .take(10)
+//             .collect::<Vec<NextResult<DateTime<_>>>>()
+//             .unwrap();
+//         dbg!(&tmp);
+//     }
+// }

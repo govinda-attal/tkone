@@ -34,7 +34,7 @@ static CYCLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(CYCLE_EXPR).unwra
 /// let spec = "1H:30:SS".parse::<Spec>().unwrap();
 /// assert_eq!(spec.hours, Cycle::Every(1));
 /// assert_eq!(spec.minutes, Cycle::At(30));
-/// assert_eq!(spec.seconds, Cycle::NA);
+/// assert_eq!(spec.seconds, Cycle::AsIs);
 /// ```
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct Spec {
@@ -46,7 +46,7 @@ pub struct Spec {
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Cycle {
     #[default]
-    NA,
+    AsIs,
     At(u8),
     Every(u8),
 }
@@ -82,7 +82,7 @@ impl TryFrom<&str> for Cycle {
             .ok_or(Error::ParseError("Invalid time spec"))?;
 
         let Some(num) = cycle.name("num") else {
-            return Ok(Cycle::NA);
+            return Ok(Cycle::AsIs);
         };
         let num = num.as_str().parse::<u8>().unwrap();
         let cycle = if cycle.name("type").is_some() {
@@ -97,7 +97,7 @@ impl TryFrom<&str> for Cycle {
 impl ToString for Spec {
     fn to_string(&self) -> String {
         let to_string = |cycle: &Cycle, cycle_type: char| match cycle {
-            Cycle::NA => f!("{}{}", cycle_type, cycle_type),
+            Cycle::AsIs => f!("{}{}", cycle_type, cycle_type),
             Cycle::At(num) => f!("{:02}", num),
             Cycle::Every(num) => f!("{:02}{}", num, cycle_type),
         };
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(
             &time_spec,
             &Spec {
-                hours: Cycle::NA,
+                hours: Cycle::AsIs,
                 minutes: Cycle::Every(30),
                 seconds: Cycle::At(5),
                 ..Default::default()

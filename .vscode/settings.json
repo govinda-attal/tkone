@@ -1,0 +1,4 @@
+{
+  "rust-analyzer.restartServerOnConfigChange": true,
+  "rust-analyzer.runnables.extraEnv": {"PATH": "${env:HOME}/.cargo/bin:${env:PATH}"}
+}

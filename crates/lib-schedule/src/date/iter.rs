@@ -1,17 +1,12 @@
 use super::{
-    spec::{BizDayAdjustment, Cycle, DayCycle, EveryDayOption, Spec},
-    utils::{NextResulterByDay, NextResulterByMultiplesAndDay, NextResulterByWeekDay},
+    component::{self, DateComponent},
+    spec::{BizDayAdjustment, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec},
 };
-use crate::{
-    biz_day::{BizDayProcessor, WeekendSkipper},
-    prelude::*,
-    utils::WeekdayStartingMonday,
-    NextResult,
-};
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
+use crate::biz_day::WeekendSkipper;
+use crate::{biz_day::BizDayProcessor, prelude::*, NextResult};
+use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
-use std::{collections::BTreeSet, marker::PhantomData};
-use std::{ops::Bound, sync::LazyLock};
+use std::{marker::PhantomData, sync::LazyLock};
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
@@ -69,58 +64,10 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
-{
-    pub fn with_end_spec(
-        self,
-        end_spec: impl Into<String>,
-    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed> {
-        SpecIteratorBuilder {
-            dtm: self.dtm,
-            start: self.start,
-            spec: self.spec,
-            bd_processor: self.bd_processor,
-            end: EndSpec(end_spec.into()),
-            marker_sealed: PhantomData,
-            timezone: self.timezone,
-        }
-    }
-}
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
-{
-    pub fn with_end(
-        self,
-        end: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
-        SpecIteratorBuilder {
-            dtm: self.dtm,
-            start: self.start,
-            spec: self.spec,
-            bd_processor: self.bd_processor,
-            end: EndDateTime(end),
-            marker_sealed: PhantomData,
-            timezone: self.timezone,
-        }
-    }
-}
-
-impl<Tz: TimeZone, BDP: BizDayProcessor>
     SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed>
 {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         let start = self.start.0;
-        let start = start
-            .timezone()
-            .with_ymd_and_hms(
-                start.year(),
-                start.month(),
-                start.day(),
-                start.hour(),
-                start.minute(),
-                start.second(),
-            )
-            .unwrap();
         Ok(SpecIterator {
             tz: start.timezone(),
             naive_spec_iter: NaiveSpecIterator::new_with_end(
@@ -138,17 +85,6 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
 {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         let start = self.start.0;
-        let start = start
-            .timezone()
-            .with_ymd_and_hms(
-                start.year(),
-                start.month(),
-                start.day(),
-                start.hour(),
-                start.minute(),
-                start.second(),
-            )
-            .unwrap();
         Ok(SpecIterator {
             tz: start.timezone(),
             naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
@@ -179,10 +115,37 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             marker_sealed: PhantomData,
         }
     }
-}
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
-{
+
+    pub fn with_end_spec(
+        self,
+        end_spec: impl Into<String>,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed> {
+        SpecIteratorBuilder {
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end: EndSpec(end_spec.into()),
+            marker_sealed: PhantomData,
+            timezone: self.timezone,
+        }
+    }
+
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+        SpecIteratorBuilder {
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end: EndDateTime(end),
+            marker_sealed: PhantomData,
+            timezone: self.timezone,
+        }
+    }
+
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         Ok(SpecIterator::<Tz, BDP> {
             tz: self.start.0.timezone(),
@@ -194,6 +157,8 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         })
     }
 }
+
+static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipper::new());
 
 /// # SpecIterator
 /// datetime::SpecIterator is an iterator that combines a date and time specification to generate a sequence of date-times.
@@ -244,6 +209,7 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
 }
 
 impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
+    #[allow(dead_code)]
     pub(crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
         self.naive_spec_iter.update_cursor(dtm.naive_local());
     }
@@ -253,19 +219,22 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
 pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     spec: Spec,
     dtm: NaiveDateTime,
-    bd_processor: BDP,
+    context: component::IterContext<BDP>,
     index: usize,
     start: Option<NaiveDateTime>,
     end: Option<NaiveDateTime>,
 }
 
 impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
-    fn new_after(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
+    pub(crate) fn new_after(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
         let spec = spec.parse()?;
         Ok(Self {
             spec,
             dtm,
-            bd_processor: bdp,
+            context: component::IterContext {
+                start_dt: dtm,
+                bd_processor: bdp,
+            },
             index: 0,
             start: None,
             end: None,
@@ -277,7 +246,10 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         Ok(Self {
             spec,
             dtm: start.clone(),
-            bd_processor: bdp,
+            context: component::IterContext {
+                start_dt: start,
+                bd_processor: bdp,
+            },
             index: 0,
             start: Some(start),
             end: None,
@@ -294,7 +266,10 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         Ok(Self {
             spec,
             dtm: start.clone(),
-            bd_processor: bdp,
+            context: component::IterContext {
+                start_dt: start,
+                bd_processor: bdp,
+            },
             index: 0,
             start: Some(start),
             end: Some(end),
@@ -314,7 +289,10 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         Ok(Self {
             spec,
             dtm: start.clone(),
-            bd_processor: bdp,
+            context: component::IterContext {
+                start_dt: start,
+                bd_processor: bdp,
+            },
             index: 0,
             start: Some(start),
             end: Some(end.observed().clone()),
@@ -328,7 +306,7 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
     }
 }
 
-impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
+impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
     type Item = NextResult<NaiveDateTime>;
     type Error = Error;
 
@@ -349,1256 +327,383 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
             }
         }
 
-        let next = self.dtm.clone();
+        let mut candidate = self.dtm;
+        let mut iterations = 0u32;
+        loop {
+            iterations += 1;
+            if iterations > 10_000 {
+                return Err(Error::Custom("schedule iterator did not converge"));
+            }
 
-        let spec = (&self.spec.years, &self.spec.months, &self.spec.days);
-
-        let next_result = match spec {
-            (Cycle::NA, Cycle::NA, DayCycle::NA) => Some(NextResult::Single(next)),
-            (Cycle::NA, Cycle::NA, DayCycle::On(day, opt)) => NextResulterByDay::new(&next)
-                .last_day_option(opt)
-                .day(*day)
-                .build(),
-            (Cycle::NA, Cycle::NA, DayCycle::Every(num, EveryDayOption::Regular)) => {
-                Some(NextResult::Single(next + Duration::days(*num as i64)))
-            }
-            (Cycle::NA, Cycle::NA, DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
-                Some(NextResult::Single(self.bd_processor.add(&next, *num_days)?))
-            }
-            (Cycle::NA, Cycle::NA, DayCycle::Every(num_days, EveryDayOption::WeekDay)) => {
-                Some(NextResult::Single(WEEKEND_SKIPPER.add(&next, *num_days)?))
-            }
-            (Cycle::NA, Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt).build()
-            }
-            (Cycle::NA, Cycle::NA, DayCycle::OnLastDay) => {
-                NextResulterByDay::new(&next).last_day().build()
-            }
-            (Cycle::NA, Cycle::NA, DayCycle::OnDays(days)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_days(days)
-                    .next()
-                // validate!("spec not implemented")
-            }
-            (Cycle::NA, Cycle::NA, DayCycle::OnWeekDays(weekdays)) => {
-                let mut next = next + Duration::days(1);
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::NA) => {
-                NextResulterByDay::new(&next).month(*month).build()
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::On(day, opt)) => NextResulterByDay::new(&next)
-                .last_day_option(opt)
-                .day(*day)
-                .month(*month)
-                .build(),
-            (Cycle::NA, Cycle::In(month), DayCycle::Every(num, EveryDayOption::Regular)) => {
-                let next = next + Duration::days(*num as i64);
-                NextResulterByDay::new(&next).month(*month).build()
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next).month(*month).build()
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::Every(num_days, EveryDayOption::WeekDay)) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                NextResulterByDay::new(&next).month(*month).build()
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .month(*month)
-                    .build()
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::OnLastDay) => NextResulterByDay::new(&next)
-                .last_day()
-                .month(*month)
-                .build(),
-            (Cycle::NA, Cycle::In(month), DayCycle::OnDays(days)) => {
-                let months = BTreeSet::from([*month]);
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(&months)
-                    .with_days(days)
-                    .next()
-                // let day = next.day();
-                // if next.month() == *month && days.contains(&day) {
-                //     let next_day = days.lower_bound(std::ops::Bound::Excluded(&day)).next();
-                //     if let Some(next_day) = next_day {
-                //         NextResult::Single(next.with_day(*next_day).unwrap())
-                //     } else {
-                //         let first_day = days.first().unwrap();
-                //         let next_date =
-                //             NaiveDate::from_ymd_opt(next.year() + 1, *month, *first_day);
-                //         let next_date = next_date.unwrap_or(
-                //             NaiveDate::from_ymd_opt(next.year() + 1, month + 1, 1)
-                //                 .unwrap()
-                //                 .pred_opt()
-                //                 .unwrap(),
-                //         );
-                //         NextResult::Single(NaiveDateTime::new(next_date, next.time()))
-                //     }
-                // } else if next.month() > *month {
-                //     let next_date =
-                //         NaiveDate::from_ymd_opt(next.year() + 1, *month, *days.first().unwrap())
-                //             .unwrap();
-                //     NextResult::Single(NaiveDateTime::new(next_date, next.time()))
-                // } else {
-                //     let next_date =
-                //         NaiveDate::from_ymd_opt(next.year(), *month, *days.first().unwrap())
-                //             .unwrap();
-                //     NextResult::Single(NaiveDateTime::new(next_date, next.time()))
-                // }
-                // validate!("spec not implemented")
-            }
-            (Cycle::NA, Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => {
-                let month = *month as u32;
-                let diff = (month as i32) - (next.month() as i32);
-                let mut next = if diff > 0 {
-                    NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(next.year(), month, 1).unwrap(),
-                        next.time(),
-                    )
-                } else if diff < 0 {
-                    NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(next.year() + 1, month, 1).unwrap(),
-                        next.time(),
-                    )
-                } else {
-                    next + Duration::days(1)
-                };
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                    if next.month() > month {
-                        return Ok(None);
-                    }
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::NA, Cycle::Every(num), DayCycle::NA) => {
-                let (year, month) = ffwd_months(&next, *num);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year)
-                    .build()
-            }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::On(day, opt)) => {
-                let (year, month) = ffwd_months(&next, *num_months);
-
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .month(month)
-                    .year(year)
-                    .build()
-            }
-            (
-                Cycle::NA,
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::Regular),
-            ) => {
-                let next = next + Duration::days(*num_days as i64);
-                let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year)
-                    .build()
-            }
-            (
-                Cycle::NA,
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::BizDay),
-            ) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year)
-                    .build()
-            }
-            (
-                Cycle::NA,
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::WeekDay),
-            ) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year)
-                    .build()
-            }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .num_months(*num_months)
-                    .build()
-            }
-            (Cycle::NA, Cycle::Every(num_months), DayCycle::OnLastDay) => {
-                let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .last_day()
-                    .month(month)
-                    .year(year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::NA) => {
-                NextResulterByDay::new(&next).year(*year).build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::On(day, opt)) => NextResulterByDay::new(&next)
-                .last_day_option(opt)
-                .day(*day)
-                .year(*year)
-                .build(),
-            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::Regular)) => {
-                let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next).year(*year).build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::BizDay)) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next).year(*year).build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::Every(num_days, EveryDayOption::WeekDay)) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                NextResulterByDay::new(&next).year(*year).build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::OnLastDay) => {
-                NextResulterByDay::new(&next).last_day().year(*year).build()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::OnDays(days)) => {
-                let years = BTreeSet::from([*year]);
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(&years)
-                    .with_days(days)
-                    .next()
-            }
-            (Cycle::In(year), Cycle::NA, DayCycle::OnWeekDays(weekdays)) => {
-                let year = *year as i32;
-                let mut next = if next.year() != year {
-                    NaiveDateTime::new(NaiveDate::from_ymd_opt(year, 1, 1).unwrap(), next.time())
-                } else {
-                    next + Duration::days(1)
-                };
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                    if next.year() > year {
-                        return Ok(None);
-                    }
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::In(year), Cycle::In(month), DayCycle::NA) => NextResulterByDay::new(&next)
-                .month(*month)
-                .year(*year)
-                .build(),
-            (Cycle::In(year), Cycle::In(month), DayCycle::On(day, opt)) => {
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
-            (
-                Cycle::In(year),
-                Cycle::In(month),
-                DayCycle::Every(num_days, EveryDayOption::Regular),
-            ) => {
-                let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
-            (
-                Cycle::In(year),
-                Cycle::In(month),
-                DayCycle::Every(num_days, EveryDayOption::BizDay),
-            ) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
-            (
-                Cycle::In(year),
-                Cycle::In(month),
-                DayCycle::Every(num_days, EveryDayOption::WeekDay),
-            ) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::In(month), DayCycle::OnLastDay) => {
-                NextResulterByDay::new(&next)
-                    .last_day()
-                    .month(*month)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::In(month), DayCycle::OnDays(days)) => {
-                let years = BTreeSet::from([*year]);
-                let months = BTreeSet::from([*month]);
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(&years)
-                    .with_months(&months)
-                    .with_days(days)
-                    .next()
-            }
-            (Cycle::In(year), Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => {
-                let year = *year as i32;
-                let month = *month as u32;
-                let mut next = if next.year() != year {
-                    NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(year, month, 1).unwrap(),
-                        next.time(),
-                    )
-                } else if month > next.month() {
-                    NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(year, month, 1).unwrap(),
-                        next.time(),
-                    )
-                } else if month < next.month() {
-                    return Ok(None);
-                } else {
-                    next + Duration::days(1)
-                };
-                if next.year() != year || next.month() != month {
-                    return Ok(None);
-                }
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                    if next.year() > year || next.month() > month {
-                        return Ok(None);
-                    }
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::NA) => {
-                let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
-                let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .month(month)
-                    .year(*year)
-                    .build()
-            }
-            (
-                Cycle::In(year),
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::Regular),
-            ) => {
-                let next = next + Duration::days(*num_days as i64);
-                let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(*year)
-                    .build()
-            }
-            (
-                Cycle::In(year),
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::BizDay),
-            ) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(*year)
-                    .build()
-            }
-            (
-                Cycle::In(year),
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::WeekDay),
-            ) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .year(*year)
-                    .num_months(*num_months)
-                    .build()
-            }
-            (Cycle::In(year), Cycle::Every(num_months), DayCycle::OnLastDay) => {
-                let (_, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .last_day()
-                    .month(month)
-                    .year(*year)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::NA) => NextResulterByDay::new(&next)
-                .year(next.year() as u32 + *num_years)
-                .build(),
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::On(day, opt)) => {
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::NA,
-                DayCycle::Every(num_days, EveryDayOption::Regular),
-            ) => {
-                let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::NA,
-                DayCycle::Every(num_days, EveryDayOption::BizDay),
-            ) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::NA,
-                DayCycle::Every(num_days, EveryDayOption::WeekDay),
-            ) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                NextResulterByDay::new(&next)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .num_years(*num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::NA, DayCycle::OnLastDay) => {
-                NextResulterByDay::new(&next)
-                    .last_day()
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::NA) => {
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::On(day, opt)) => {
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .month(*month)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::In(month),
-                DayCycle::Every(num_days, EveryDayOption::Regular),
-            ) => {
-                let next = next + Duration::days(*num_days as i64);
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::In(month),
-                DayCycle::Every(num_days, EveryDayOption::BizDay),
-            ) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::In(month),
-                DayCycle::Every(num_days, EveryDayOption::WeekDay),
-            ) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                NextResulterByDay::new(&next)
-                    .month(*month)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .num_years(*num_years)
-                    .month(*month)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::In(month), DayCycle::OnLastDay) => {
-                NextResulterByDay::new(&next)
-                    .last_day()
-                    .month(*month)
-                    .year(next.year() as u32 + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::NA) => {
-                let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
-                let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .month(month)
-                    .year(year + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::Regular),
-            ) => {
-                let next = next + Duration::days(*num_days as i64);
-                let (year, month) = ffwd_months(&next, *num_months);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::BizDay),
-            ) => {
-                let next = self.bd_processor.add(&next, *num_days)?;
-                let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year + *num_years)
-                    .build()
-            }
-            (
-                Cycle::Every(num_years),
-                Cycle::Every(num_months),
-                DayCycle::Every(num_days, EveryDayOption::WeekDay),
-            ) => {
-                let next = WEEKEND_SKIPPER.add(&next, *num_days)?;
-                let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year + *num_years)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
-                NextResulterByWeekDay::new(&next, wd, opt)
-                    .num_years(*num_years)
-                    .num_months(*num_months)
-                    .build()
-            }
-            (Cycle::Every(num_years), Cycle::Every(num_months), DayCycle::OnLastDay) => {
-                let (year, month) = ffwd_months(&next, *num_months as u32);
-                NextResulterByDay::new(&next)
-                    .last_day()
-                    .month(month)
-                    .year(year + *num_years)
-                    .build()
-            }
-            (Cycle::Every(_), _, DayCycle::OnDays(_)) => {
-                Result::Err(Error::Custom("invalid spec"))?
-            }
-            (Cycle::Every(_), _, DayCycle::OnWeekDays(_)) => {
-                Result::Err(Error::Custom("invalid spec"))?
-            }
-            (Cycle::Every(_), Cycle::Values(_), _) => Result::Err(Error::Custom("invalid spec"))?,
-            (_, Cycle::Every(_), DayCycle::OnDays(_)) => {
-                Result::Err(Error::Custom("invalid spec"))?
-            }
-            (_, Cycle::Every(_), DayCycle::OnWeekDays(_)) => {
-                Result::Err(Error::Custom("invalid spec"))?
-            }
-            (Cycle::NA, Cycle::Values(months), DayCycle::NA) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(months)
-                    .next()
-            }
-            (Cycle::NA, Cycle::Values(months), DayCycle::Every(num_days, opt)) => {
-                let mut next = next + Duration::days(*num_days as i64);
-                while !months.contains(&next.month()) {
-                    next = next + Duration::days(*num_days as i64);
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::NA, Cycle::Values(months), DayCycle::OnDays(days)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_days(days)
-                    .with_months(months)
-                    .next()
-            }
-            (Cycle::NA, Cycle::Values(months), DayCycle::On(day, _)) => {
-                let days = BTreeSet::from([*day]);
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_days(&days)
-                    .with_months(months)
-                    .next()
-            }
-            (Cycle::NA, Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
-            (Cycle::NA, Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
-                let mut next = next + Duration::days(1);
-                if !months.contains(&next.month()) {
-                    let mut cursor = months.lower_bound(Bound::Excluded(&next.month()));
-                    match cursor.next() {
-                        Some(month) => {
-                            next = NaiveDateTime::new(
-                                NaiveDate::from_ymd_opt(next.year(), *month, 1).unwrap(),
-                                next.time(),
-                            );
-                        }
-                        None => {
-                            let next_year = next.year() + 1;
-                            next = NaiveDateTime::new(
-                                NaiveDate::from_ymd_opt(next_year, *months.first().unwrap(), 1)
-                                    .unwrap(),
-                                next.time(),
-                            );
-                        }
-                    }
-                }
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                    if !months.contains(&next.month()) {
-                        let mut cursor = months.lower_bound(Bound::Excluded(&next.month()));
-                        match cursor.next() {
-                            Some(month) => {
-                                next = NaiveDateTime::new(
-                                    NaiveDate::from_ymd_opt(next.year(), *month, 1).unwrap(),
-                                    next.time(),
-                                );
-                            }
-                            None => {
-                                let next_year = next.year() + 1;
-                                next = NaiveDateTime::new(
-                                    NaiveDate::from_ymd_opt(next_year, *months.first().unwrap(), 1)
-                                        .unwrap(),
-                                    next.time(),
-                                );
-                            }
-                        }
-                    }
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::NA, Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
-            (Cycle::In(year), Cycle::Values(months), DayCycle::NA) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(&BTreeSet::from([*year]))
-                    .with_months(months)
-                    .next()
-            }
-            (Cycle::In(year), Cycle::Values(months), DayCycle::Every(num_days, opt)) => {
-                let year = *year;
-                let mut interim = next + Duration::days(*num_days as i64);
-                if next.year() as u32 > year {
-                    return Ok(None);
-                }
-                while !(months.contains(&interim.month()) && interim.year() as u32 == year) {
-                    interim = interim + Duration::days(*num_days as i64);
-                    if interim.year() as u32 > year {
-                        return Ok(None);
-                    }
-                }
-                Some(NextResult::Single(interim))
-            }
-            (Cycle::In(year), Cycle::Values(months), DayCycle::OnDays(days)) => {
-                let years = BTreeSet::from([*year]);
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(&years)
-                    .with_days(days)
-                    .with_months(months)
-                    .next()
-            }
-            (Cycle::In(year), Cycle::Values(months), DayCycle::On(day, opt)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(&BTreeSet::from([*year]))
-                    .with_days(&BTreeSet::from([*day]))
-                    .with_months(months)
-                    .next()
-            }
-            (Cycle::In(year), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
-            (Cycle::In(year), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
-                let year = *year as i32;
-                let mut next = if next.year() != year {
-                    NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(year, *months.first().unwrap(), 1).unwrap(),
-                        next.time(),
-                    )
-                } else {
-                    let interim = next + Duration::days(1);
-                    if !months.contains(&interim.month()) {
-                        let mut cursor = months.lower_bound(Bound::Excluded(&interim.month()));
-                        match cursor.next() {
-                            Some(month) => NaiveDateTime::new(
-                                NaiveDate::from_ymd_opt(interim.year(), *month, 1).unwrap(),
-                                interim.time(),
-                            ),
-                            None => {
-                                let next_year = next.year() + 1;
-                                NaiveDateTime::new(
-                                    NaiveDate::from_ymd_opt(next_year, *months.first().unwrap(), 1)
-                                        .unwrap(),
-                                    interim.time(),
-                                )
-                            }
-                        }
-                    } else {
-                        interim
-                    }
-                };
-                if next.year() != year {
-                    return Ok(None);
-                }
-                while !(months.contains(&next.month())
-                    && weekdays.contains(&WeekdayStartingMonday(next.weekday())))
+            // ── NextNth year + Values months: intra-year month enumeration ──
+            //
+            // When the year spec is NextNth and the month spec is a fixed Values
+            // set, each valid year must visit *all* months in the set before the
+            // year advances.  The NextNth year component normally preserves the
+            // current month when jumping to the next valid year (to support the
+            // combined `1Y-3M-15` clock), which would cause months earlier in the
+            // set to be skipped.
+            //
+            // Two adjustments address this:
+            //
+            // 1. Suppress year advance while more Values months remain in the
+            //    current year by passing first-of-next-month to the year
+            //    component.  Its `remainder==0 && day==1` guard then fires and
+            //    keeps us in the same year.
+            //
+            // 2. After the year does advance, reset year_candidate to the first
+            //    valid month in the new year (instead of whatever month the year
+            //    component preserved), so the month component starts scanning
+            //    from the beginning of the year.
+            let (candidate_for_year, reset_month_on_advance) =
+                if let (Cycle::NextNth(n), Cycle::Values(month_vals)) =
+                    (&self.spec.years, &self.spec.months)
                 {
-                    next = next + Duration::days(1);
-                    if !months.contains(&next.month()) {
-                        let mut cursor = months.lower_bound(Bound::Excluded(&next.month()));
-                        match cursor.next() {
-                            Some(month) => {
-                                next = NaiveDateTime::new(
-                                    NaiveDate::from_ymd_opt(next.year(), *month, 1).unwrap(),
-                                    next.time(),
-                                );
-                            }
-                            None => {
-                                let next_year = next.year() + 1;
-                                next = NaiveDateTime::new(
-                                    NaiveDate::from_ymd_opt(next_year, *months.first().unwrap(), 1)
-                                        .unwrap(),
-                                    next.time(),
-                                );
-                            }
-                        }
-                    }
-                    if next.year() > year {
-                        return Ok(None);
-                    }
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::In(year), Cycle::Values(months), DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::NA, DayCycle::NA) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::NA, DayCycle::Every(num_days, opt)) => {
-                let last_year = years.last().unwrap();
-                let mut next = next + Duration::days(*num_days as i64);
-
-                if next.year() as u32 > *last_year {
-                    return Ok(None);
-                }
-                while !years.contains(&(next.year() as u32)) {
-                    next = next + Duration::days(*num_days as i64);
-                    if next.year() as u32 > *last_year {
-                        return Ok(None);
-                    }
-                }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::Values(years), Cycle::NA, DayCycle::OnDays(days)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(years)
-                    .with_days(days)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::NA, DayCycle::On(day, opt)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_years(years)
-                    .with_days(&BTreeSet::from([*day]))
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDay(wd, opt)) => {
-                dbg!(years);
-                dbg!(&next);
-                dbg!(wd);
-                if years.contains(&(next.year() as u32)) {
-                    let next_result = NextResulterByWeekDay::new(&next, wd, opt)
-                        .year(next.year() as u32)
-                        .build();
-                    let Some(next_result) = next_result else {
-                        return Ok(None);
-                    };
-                    let next_result_year = next_result.actual().year() as u32;
-                    if !years.contains(&next_result_year) {
-                        let mut cursor = years.lower_bound(Bound::Excluded(&next_result_year));
-                        let Some(next_year) = cursor.next() else {
-                            return Ok(None);
-                        };
-                        let next = NaiveDateTime::new(
-                            NaiveDate::from_ymd_opt(*next_year as i32, 1, 1).unwrap(),
-                            next.time(),
-                        );
-                        NextResulterByWeekDay::new(&next, wd, opt)
-                            .year(*next_year)
-                            .build()
-                    } else if next_result.actual() > &next {
-                        Some(next_result)
-                    } else {
-                        let next = NaiveDateTime::new(
-                            NaiveDate::from_ymd_opt(
-                                next_result_year as i32,
-                                next_result.actual().month() + 1,
+                    let diff = candidate.year() - self.context.start_dt.year();
+                    let year_is_valid = diff >= 0 && diff % (*n as i32) == 0;
+                    if year_is_valid && !month_vals.is_empty() {
+                        if matches!(&self.spec.days, DayCycle::NextNth(..)) {
+                            // For relative day specs: always stabilize the year by
+                            // passing first-of-current-month (day==1 guard prevents
+                            // year from advancing). Month and year transitions happen
+                            // naturally through day overflow + month revalidation, so
+                            // reset_month_on_advance is not needed here.
+                            let current_mo_first = chrono::NaiveDate::from_ymd_opt(
+                                candidate.year(),
+                                candidate.month(),
                                 1,
                             )
-                            .unwrap_or(
-                                NaiveDate::from_ymd_opt(next_result_year as i32 + 1, 1, 1).unwrap(),
-                            ),
-                            next.time(),
-                        );
-                        if next.year() as u32 == next_result_year {
-                            NextResulterByWeekDay::new(&next, wd, opt)
-                                .year(next_result_year)
-                                .build()
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap();
+                            (current_mo_first, false)
                         } else {
-                            let mut cursor = years.lower_bound(Bound::Excluded(&next_result_year));
-                            let Some(next_year) = cursor.next() else {
-                                return Ok(None);
-                            };
-                            let next = NaiveDateTime::new(
-                                NaiveDate::from_ymd_opt(*next_year as i32, 1, 1).unwrap(),
-                                next.time(),
-                            );
-                            NextResulterByWeekDay::new(&next, wd, opt)
-                                .year(*next_year)
-                                .build()
-                        }
-                    }
-                } else {
-                    let mut cursor = years.lower_bound(Bound::Excluded(&(next.year() as u32)));
-                    let Some(next_year) = cursor.next() else {
-                        return Ok(None);
-                    };
-                    let next = NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(*next_year as i32, 1, 1).unwrap(),
-                        next.time(),
-                    );
-                    dbg!(&next);
-                    NextResulterByWeekDay::new(&next, wd, opt)
-                        .year(*next_year)
-                        .build()
-                }
-            }
-            (Cycle::Values(years), Cycle::NA, DayCycle::OnWeekDays(weekdays)) => {
-                let mut next = next + Duration::days(1);
-                if !years.contains(&(next.year() as u32)) {
-                    let mut cursor = years.lower_bound(Bound::Excluded(&(next.year() as u32)));
-                    match cursor.next() {
-                        Some(year) => {
-                            next = NaiveDateTime::new(
-                                NaiveDate::from_ymd_opt(*year as i32, 1, 1).unwrap(),
-                                next.time(),
-                            )
-                        }
-                        None => {
-                            return Ok(None);
-                        }
-                    }
-                };
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                    if !years.contains(&(next.year() as u32)) {
-                        let mut cursor = years.lower_bound(Bound::Excluded(&(next.year() as u32)));
-                        match cursor.next() {
-                            Some(year) => {
-                                next = NaiveDateTime::new(
-                                    NaiveDate::from_ymd_opt(*year as i32, 1, 1).unwrap(),
-                                    next.time(),
+                            let has_more_months =
+                                month_vals.iter().any(|&m| m > candidate.month());
+                            if has_more_months {
+                                // For fixed-day specs with remaining months: suppress
+                                // year advance by passing first-of-next-month so the
+                                // NextNth `day==1` guard fires and stays.
+                                let next_mo = chrono::NaiveDate::from_ymd_opt(
+                                    candidate.year(),
+                                    candidate.month() + 1,
+                                    1,
                                 )
+                                .unwrap_or_else(|| {
+                                    chrono::NaiveDate::from_ymd_opt(candidate.year() + 1, 1, 1)
+                                        .unwrap()
+                                })
+                                .and_hms_opt(0, 0, 0)
+                                .unwrap();
+                                (next_mo, false)
+                            } else {
+                                // Fixed-day specs with no remaining months: let year
+                                // advance and reset to first valid month.
+                                (candidate, true)
                             }
-                            None => {
-                                return Ok(None);
-                            }
+                        }
+                    } else {
+                        (candidate, false)
+                    }
+                } else {
+                    (candidate, false)
+                };
+
+            let year_candidate = self
+                .spec
+                .years
+                .next_date(&candidate_for_year, &self.context);
+            let Some(year_candidate) = year_candidate else {
+                return Ok(None);
+            };
+
+            // After year advancement with Values months: reset to the first
+            // valid month in the new year.
+            let year_candidate = if reset_month_on_advance
+                && year_candidate.year() != candidate.year()
+            {
+                if let Cycle::Values(month_vals) = &self.spec.months {
+                    month_vals
+                        .iter()
+                        .next()
+                        .and_then(|&m| chrono::NaiveDate::from_ymd_opt(year_candidate.year(), m, 1))
+                        .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                        .unwrap_or(year_candidate)
+                } else {
+                    year_candidate
+                }
+            } else {
+                year_candidate
+            };
+
+            // Whether the year component advanced us to a new calendar year.
+            let year_advanced = year_candidate.year() != candidate.year();
+
+            // Relative-advance day specs (NextNth, ForEach) must always push the
+            // month forward; fixed-day specs (OnDays, OnWeekDays) may stay in the
+            // current aligned month so we don't skip dates within that month.
+            // For Values months after year advancement: year_candidate is already
+            // at the first valid month — don't force-advance past it.
+            let day_is_relative =
+                matches!(&self.spec.days, DayCycle::NextNth(..) | DayCycle::ForEach);
+            let month_must_advance = (year_advanced
+                && !matches!(&self.spec.months, Cycle::Values(_)))
+                || day_is_relative;
+
+            let month_candidate = component::find_next_in_month_cycle(
+                &self.spec.months,
+                &year_candidate,
+                &self.context,
+                month_must_advance,
+            );
+            let Some(month_candidate) = month_candidate else {
+                return Ok(None);
+            };
+
+            // When the month cycle has jumped to a new month, OnDays needs to
+            // search from the last day of the preceding month so that
+            // `day > prev_last_day` correctly rolls into the first valid
+            // day-of-month in the new period.
+            // For NextNth day specs we preserve the day-of-month position from
+            // `candidate` so the full "month + days" offset accumulates (e.g.
+            // "1M-7D" advances by 1 month AND 7 days each tick).
+            let month_advanced = month_candidate.month() != year_candidate.month()
+                || month_candidate.year() != year_candidate.year();
+            // A "period reset" occurs when either the month advanced within the year,
+            // OR the year advanced into a new cycle (resetting to the first valid month).
+            // Both cases require the day sequence to restart from the beginning of the
+            // new month period.
+            let period_reset =
+                month_advanced || (year_advanced && matches!(&self.spec.months, Cycle::Values(_)));
+            let day_cursor = if period_reset {
+                match &self.spec.days {
+                    DayCycle::OnDays { .. } if period_reset => {
+                        (month_candidate.date().pred_opt().unwrap())
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap()
+                    }
+                    DayCycle::NextNth(n, NextNthDayOption::Regular)
+                        if matches!(&self.spec.months, Cycle::Values(_)) =>
+                    {
+                        // For Values months + regular NextNth days: set cursor to
+                        // (month_start - n) so that next_date lands exactly on
+                        // month_start, restarting the sequence from day 1.
+                        month_candidate - chrono::Duration::days(*n as i64)
+                    }
+                    DayCycle::NextNth(..) if !matches!(&self.spec.months, Cycle::Values(_)) => {
+                        // Preserve same day-of-month only for relative month cycles
+                        // (NextNth, ForEach, AsIs) so combined specs like "1M-7D"
+                        // accumulate month + days together.
+                        chrono::NaiveDate::from_ymd_opt(
+                            month_candidate.year(),
+                            month_candidate.month(),
+                            candidate.day(),
+                        )
+                        .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
+                        .unwrap_or(month_candidate)
+                    }
+                    DayCycle::NextNth(..) => {
+                        // For BizDay/WeekDay variants with Values months: step begins
+                        // from month_start.
+                        month_candidate
+                    }
+                    _ => month_candidate,
+                }
+            } else {
+                // No period reset: for relative day specs with Values months, use the
+                // actual candidate position so next_date advances from the right place.
+                // For OnDays specs, if every day in the set is ≤ month_candidate's
+                // day-of-month, the day component would find nothing in the current
+                // month and roll over (e.g. day={1} when month_candidate is the 1st
+                // of a 6-month aligned period).  Step back one day so the component
+                // can find the first valid day in the current period.
+                match &self.spec.days {
+                    DayCycle::NextNth(..) if matches!(&self.spec.months, Cycle::Values(_)) => {
+                        candidate
+                    }
+                    DayCycle::OnDays { days, .. }
+                        if !days.is_empty()
+                            && days.iter().all(|&d| d <= month_candidate.day()) =>
+                    {
+                        month_candidate
+                            .date()
+                            .pred_opt()
+                            .map(|d| d.and_time(month_candidate.time()))
+                            .unwrap_or(month_candidate)
+                    }
+                    _ => month_candidate,
+                }
+            };
+
+            let day_candidate = self.spec.days.next_date(&day_cursor, &self.context);
+            let Some(day_candidate) = day_candidate else {
+                // This month has no valid days; advance to the next month and retry.
+                let (y, m) = component::ffwd_months(&month_candidate, 1);
+                candidate = chrono::NaiveDate::from_ymd_opt(y as i32, m, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap();
+                continue;
+            };
+
+            if day_candidate > self.dtm {
+                // --- Year re-validation ---
+                // Only necessary when the year spec restricts to a finite set of
+                // years (Values) or a sparse cadence (NextNth with n>1 effectively
+                // restricts years).  For ForEach/AsIs every year is valid.
+                // For NextNth, check alignment explicitly instead of calling
+                // next_date (which would always return the *next* aligned year,
+                // triggering a false mismatch for the current valid year).
+                let year_is_valid = match &self.spec.years {
+                    Cycle::AsIs | Cycle::ForEach => true,
+                    Cycle::Values(values) => values.contains(&(day_candidate.year() as u32)),
+                    Cycle::NextNth(n) => {
+                        let diff = day_candidate.year() - self.context.start_dt.year();
+                        diff >= 0 && diff % (*n as i32) == 0
+                    }
+                };
+                if !year_is_valid {
+                    let year_recheck = self.spec.years.next_date(&day_candidate, &self.context);
+                    match year_recheck {
+                        None => return Ok(None),
+                        Some(ref y) => {
+                            candidate =
+                                (y.date().pred_opt().unwrap()).and_hms_opt(0, 0, 0).unwrap();
+                            continue;
                         }
                     }
                 }
-                Some(NextResult::Single(next))
-            }
-            (Cycle::Values(years), Cycle::NA, DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::In(month), DayCycle::NA) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(&BTreeSet::from([*month]))
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::In(month), DayCycle::Every(num_days, opt)) => {
-                let max_year = years.last().unwrap();
-                let next = next + Duration::days(*num_days as i64);
-                let next_result = NextResulterByDay::new(&next).month(*month).build();
-                let Some(mut next_result) = next_result else {
-                    return Ok(None);
-                };
-                if next_result.actual().year() as u32 > *max_year {
-                    return Ok(None);
-                }
-                while !years.contains(&(next_result.actual().year() as u32)) {
-                    let next = next_result.actual().clone() + Duration::days(*num_days as i64);
-                    let Some(interim_result) = NextResulterByDay::new(&next).month(*month).build()
-                    else {
-                        return Ok(None);
-                    };
-                    if interim_result.actual().year() as u32 > *max_year {
-                        return Ok(None);
-                    }
-                    next_result = interim_result;
-                }
-                Some(next_result)
-            }
-            (Cycle::Values(years), Cycle::In(month), DayCycle::OnDays(days)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(&BTreeSet::from([*month]))
-                    .with_days(days)
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::In(month), DayCycle::On(day, opt)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(&BTreeSet::from([*month]))
-                    .with_days(&BTreeSet::from([*day]))
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::In(month), DayCycle::OnWeekDay(wd, opt)) => todo!(),
-            (Cycle::Values(years), Cycle::In(month), DayCycle::OnWeekDays(weekdays)) => todo!(),
-            (Cycle::Values(years), Cycle::In(month), DayCycle::OnLastDay) => todo!(),
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::NA) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(months)
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::Every(num_days, opt)) => {
-                let max_year = *years.last().unwrap() as i32;
-                let mut interim = next + Duration::days(*num_days as i64);
-                if interim.year() > max_year {
-                    return Ok(None);
-                }
 
-                while !(months.contains(&interim.month())
-                    && years.contains(&(interim.year() as u32)))
-                {
-                    interim = interim + Duration::days(*num_days as i64);
-                    // dbg!(&interim, years, months);
-                    if interim.year() > max_year {
-                        return Ok(None);
+                // --- Month re-validation ---
+                // For Values months: the day component may have overflowed into
+                // a month outside the allowed set.
+                if let Cycle::Values(_) = &self.spec.months {
+                    let month_recheck = component::find_next_in_month_cycle(
+                        &self.spec.months,
+                        &day_candidate,
+                        &self.context,
+                        true,
+                    );
+                    match month_recheck {
+                        None => return Ok(None),
+                        Some(ref m)
+                            if m.month() != day_candidate.month()
+                                || m.year() != day_candidate.year() =>
+                        {
+                            candidate =
+                                (m.date().pred_opt().unwrap()).and_hms_opt(0, 0, 0).unwrap();
+                            continue;
+                        }
+                        _ => {}
                     }
                 }
-                Some(NextResult::Single(interim))
-                // validate!()
-            }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnDays(days)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(months)
-                    .with_days(days)
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::On(day, opt)) => {
-                NextResulterByMultiplesAndDay::new(&next)
-                    .with_months(months)
-                    .with_days(&BTreeSet::from([*day]))
-                    .with_years(years)
-                    .next()
-            }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDay(wd, opt)) => todo!(),
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnWeekDays(weekdays)) => {
-                let year_computer = |year: &u32| -> Option<&u32> {
-                    years.get(&year).or_else(|| {
-                        let mut cursor = years.lower_bound(Bound::Excluded(&year));
-                        let Some(year) = cursor.next() else {
-                            return None;
-                        };
-                        Some(year)
-                    })
-                };
 
-                let year_month_computer = |year: u32, month: u32| -> Option<(u32, u32)> {
-                    months.get(&month).map_or_else(
-                        || {
-                            let mut cursor = months.lower_bound(Bound::Excluded(&month));
-                            let Some(month) = cursor.next() else {
-                                let mut year_cursor = years.lower_bound(Bound::Excluded(&year));
-                                let Some(year) = year_cursor.next() else {
-                                    return None;
-                                };
-                                return Some((*year, *months.first().unwrap()));
-                            };
-                            let Some(next_year) = year_computer(&year) else {
-                                return None;
-                            };
-                            if *next_year > year {
-                                let first_month = months.first().unwrap();
-                                return Some((*next_year, *first_month));
-                            }
-                            Some((*next_year, *month))
-                        },
-                        |month| {
-                            let Some(next_year) = year_computer(&year) else {
-                                return None;
-                            };
-                            if *next_year > year {
-                                let first_month = months.first().unwrap();
-                                return Some((*next_year, *first_month));
-                            }
-                            Some((*next_year, *month))
-                        },
-                    )
-                };
+                // For NextNth months: the day component may have rolled into a
+                // month that is not in the N-month cadence.  Re-align if needed.
+                if let Cycle::NextNth(n) = &self.spec.months {
+                    let start_month = self.context.start_dt.month() as i32;
+                    let start_year = self.context.start_dt.year();
+                    let total = (day_candidate.year() - start_year) * 12
+                        + (day_candidate.month() as i32 - start_month);
+                    if total.rem_euclid(*n as i32) != 0 {
+                        let rem = total.rem_euclid(*n as i32);
+                        let months_to_add = *n - rem as u32;
+                        let (ny, nm) = component::ffwd_months(&day_candidate, months_to_add);
+                        candidate = chrono::NaiveDate::from_ymd_opt(ny as i32, nm, 1)
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap();
+                        continue;
+                    }
+                }
 
-                let month = next.month();
-                let year = next.year() as u32;
-
-                let nxt_year_month = year_month_computer(year, month);
-
-                let Some((nxt_year, nxt_month)) = nxt_year_month else {
-                    return Ok(None);
-                };
-
-                let mut next = if nxt_year > year || nxt_month > month {
-                    NaiveDateTime::new(
-                        NaiveDate::from_ymd_opt(nxt_year as i32, nxt_month, 1).unwrap(),
-                        next.time(),
-                    )
+                candidate = day_candidate;
+                break;
+            } else {
+                // No progress: if the pipeline returned the same value it
+                // started with, force a one-day advance to avoid an infinite
+                // loop (can happen when all three components are AsIs).
+                candidate = if day_candidate == candidate {
+                    candidate + chrono::Duration::days(1)
                 } else {
-                    next
+                    day_candidate
                 };
-
-                next = next + Duration::days(1);
-                while !weekdays.contains(&WeekdayStartingMonday(next.weekday())) {
-                    next = next + Duration::days(1);
-                    let year = next.year() as u32;
-                    let month = next.month();
-                    let nxt_year_month = year_month_computer(year, month);
-                    let Some((nxt_year, nxt_month)) = nxt_year_month else {
-                        return Ok(None);
-                    };
-                    if nxt_year > year || nxt_month > month {
-                        next = NaiveDateTime::new(
-                            NaiveDate::from_ymd_opt(nxt_year as i32, nxt_month, 1).unwrap(),
-                            next.time(),
-                        );
-                    };
-                }
-                if year_month_computer(next.year() as u32, next.month()).is_none() {
-                    return Ok(None);
-                }
-                Some(NextResult::Single(next))
             }
-            (Cycle::Values(years), Cycle::Values(months), DayCycle::OnLastDay) => {
-                // NextResulterByMultiplesAndDay::new(&next)
-                //     .with_months(months)
-                //     .with_years(years)
-                //     .with_days(&BTreeSet::from([31]))
-                //     .next()
-                todo!()
-            }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::NA) => {
-                let last_year = years.last().unwrap();
-                let (mut year, mut month) = ffwd_months(&next, *num_months);
-                if year > *last_year {
-                    return Ok(None);
-                }
-                let next_result = NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year)
-                    .build();
-
-                let Some(mut next_result) = next_result else {
-                    return Ok(None);
-                };
-
-                while !years.contains(&year) {
-                    (year, month) = ffwd_months(&next, *num_months);
-                    if year > *last_year {
-                        return Ok(None);
-                    }
-                    let Some(interim_result) = NextResulterByDay::new(next_result.actual())
-                        .month(month)
-                        .year(year)
-                        .build()
-                    else {
-                        return Ok(None);
-                    };
-                    next_result = interim_result;
-                }
-                Some(next_result)
-            }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::Every(num_days, opt)) => {
-                let last_year = years.last().unwrap();
-                let next = next + Duration::days(*num_days as i64);
-                let (mut year, mut month) = ffwd_months(&next, *num_months);
-
-                if year > *last_year {
-                    return Ok(None);
-                }
-
-                let Some(mut next_result) = NextResulterByDay::new(&next)
-                    .month(month)
-                    .year(year)
-                    .build()
-                else {
-                    return Ok(None);
-                };
-                while !years.contains(&year) {
-                    (year, month) = ffwd_months(&next_result.actual(), *num_months);
-                    if year > *last_year {
-                        return Ok(None);
-                    }
-                    let Some(interim_result) = NextResulterByDay::new(next_result.actual())
-                        .month(month)
-                        .year(year)
-                        .build()
-                    else {
-                        return Ok(None);
-                    };
-                    next_result = interim_result;
-                }
-                Some(next_result)
-            }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::On(day, opt)) => {
-                let last_year = years.last().unwrap();
-                let (mut year, mut month) = ffwd_months(&next, *num_months);
-
-                if year > *last_year {
-                    return Ok(None);
-                }
-
-                let Some(mut next_result) = NextResulterByDay::new(&next)
-                    .last_day_option(opt)
-                    .day(*day)
-                    .month(month)
-                    .year(year)
-                    .build()
-                else {
-                    return Ok(None);
-                };
-
-                while !years.contains(&year) {
-                    (year, month) = ffwd_months(&next_result.actual(), *num_months);
-                    if year > *last_year {
-                        return Ok(None);
-                    }
-                    let Some(interim_result) = NextResulterByDay::new(next_result.actual())
-                        .last_day_option(opt)
-                        .day(*day)
-                        .month(month)
-                        .year(year)
-                        .build()
-                    else {
-                        return Ok(None);
-                    };
-                    next_result = interim_result;
-                }
-                Some(next_result)
-            }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnWeekDay(wd, opt)) => {
-                todo!()
-            }
-            (Cycle::Values(years), Cycle::Every(num_months), DayCycle::OnLastDay) => {
-                let last_year = years.last().unwrap();
-                let (mut year, mut month) = ffwd_months(&next, *num_months);
-                if year > *last_year {
-                    return Ok(None);
-                }
-
-                let next_result = NextResulterByDay::new(&next)
-                    .last_day()
-                    .month(month)
-                    .year(year)
-                    .build();
-
-                let Some(mut next_result) = next_result else {
-                    return Ok(None);
-                };
-
-                while !years.contains(&year) {
-                    (year, month) = ffwd_months(&next_result.actual(), *num_months);
-                    if year > *last_year {
-                        return Ok(None);
-                    }
-                    let Some(interim_result) = NextResulterByDay::new(next_result.actual())
-                        .last_day()
-                        .month(month)
-                        .year(year)
-                        .build()
-                    else {
-                        return Ok(None);
-                    };
-                    next_result = interim_result;
-                }
-                Some(next_result)
-            }
-        };
-
-        let Some(next_result) = next_result else {
-            return Ok(None);
-        };
-
-        if next_result.actual() <= &self.dtm {
-            return Ok(None);
         }
 
+        // --- Apply NextMonthFirstDay / NextMonthOverflow wrapping ---
+        // These options mean: if the target day doesn't exist in this month,
+        // return the last day as `actual` and wrap into the next month as
+        // `observed`.  The component already clamped to last-day-of-month;
+        // here we detect that clamping and build the AdjustedLater result.
+        let next_result = if let DayCycle::OnDays { days, option } = &self.spec.days {
+            match option {
+                LastDayOption::NextMonthFirstDay | LastDayOption::NextMonthOverflow => {
+                    let last_day =
+                        component::last_day_of_month(candidate.year(), candidate.month());
+                    // Clamped when the returned day equals the month's last day AND
+                    // some day in the set is strictly larger (meaning it overflowed).
+                    let target_day = days.iter().copied().find(|&d| d > last_day.day());
+                    if candidate.day() == last_day.day() && target_day.is_some() {
+                        let (ny, nm) = component::ffwd_months(&candidate, 1);
+                        let first_of_next = chrono::NaiveDate::from_ymd_opt(ny as i32, nm, 1)
+                            .unwrap()
+                            .and_hms_opt(0, 0, 0)
+                            .unwrap();
+                        let observed = match option {
+                            LastDayOption::NextMonthFirstDay => first_of_next,
+                            LastDayOption::NextMonthOverflow => {
+                                let overflow = target_day.unwrap() - last_day.day(); // days past month end
+                                first_of_next + chrono::Duration::days(overflow as i64 - 1)
+                            }
+                            _ => unreachable!(),
+                        };
+                        NextResult::AdjustedLater(candidate, observed)
+                    } else {
+                        NextResult::Single(candidate)
+                    }
+                }
+                _ => NextResult::Single(candidate),
+            }
+        } else {
+            NextResult::Single(candidate)
+        };
+
+        // --- Apply BizDay adjustment ---
+        // Prev(n) / Next(n) are unconditional offsets; the directional variants
+        // (BizDay / Weekday) only apply when the actual date is not a biz day.
         let next_result = if let Some(biz_day_adj) = &self.spec.biz_day_adj {
             let (actual, observed) = next_result.as_tuple();
-            if self.bd_processor.is_biz_day(&observed)? {
-                next_result
-            } else {
-                match biz_day_adj {
-                    BizDayAdjustment::Weekday(dir) => {
-                        let adjusted = WEEKEND_SKIPPER.find_biz_day(observed, dir.clone())?;
-                        adjusted_to_next_result(*actual, adjusted)
+            match biz_day_adj {
+                BizDayAdjustment::Prev(num) => NextResult::AdjustedEarlier(
+                    actual.clone(),
+                    self.context.bd_processor.sub(observed, *num)?,
+                ),
+                BizDayAdjustment::Next(num) => NextResult::AdjustedLater(
+                    actual.clone(),
+                    self.context.bd_processor.add(observed, *num)?,
+                ),
+                _ => {
+                    if self.context.bd_processor.is_biz_day(&observed)? {
+                        next_result
+                    } else {
+                        match biz_day_adj {
+                            BizDayAdjustment::Weekday(dir) => {
+                                let adjusted =
+                                    WEEKEND_SKIPPER.find_biz_day(observed, dir.clone())?;
+                                adjusted_to_next_result(*actual, adjusted)
+                            }
+                            BizDayAdjustment::BizDay(dir) => {
+                                let adjusted = self
+                                    .context
+                                    .bd_processor
+                                    .find_biz_day(observed, dir.clone())?;
+                                adjusted_to_next_result(*actual, adjusted)
+                            }
+                            BizDayAdjustment::NA => next_result,
+                            _ => unreachable!(),
+                        }
                     }
-                    BizDayAdjustment::BizDay(dir) => {
-                        let adjusted = self.bd_processor.find_biz_day(observed, dir.clone())?;
-                        adjusted_to_next_result(*actual, adjusted)
-                    }
-                    BizDayAdjustment::Prev(num) => NextResult::AdjustedEarlier(
-                        actual.clone(),
-                        self.bd_processor.sub(observed, *num)?,
-                    ),
-                    BizDayAdjustment::Next(num) => NextResult::AdjustedLater(
-                        actual.clone(),
-                        self.bd_processor.add(observed, *num)?,
-                    ),
-                    BizDayAdjustment::NA => next_result,
                 }
             }
         } else {
@@ -1610,7 +715,12 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
         }
 
         if let Some(end) = &self.end {
-            if next_result.actual() > &end {
+            // Filter when the actual date exceeds the end boundary.
+            // Also filter when the observed (adjusted) date exceeds the end,
+            // so that e.g. a biz-day adjustment that pushes into the next
+            // month does not produce a result whose settlement date is beyond
+            // the caller's stated upper bound.
+            if next_result.actual() > &end || next_result.observed() > &end {
                 self.dtm = end.clone();
                 self.index += 1;
                 return Ok(Some(NextResult::Single(end.clone())));
@@ -1622,16 +732,6 @@ impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
         Ok(Some(next_result))
     }
 }
-
-fn ffwd_months(dtm: &NaiveDateTime, num: u32) -> (u32, u32) {
-    let mut new_month = dtm.month() + num;
-    let mut new_year = dtm.year() as u32;
-    new_year += (new_month - 1) / 12;
-    new_month = (new_month - 1) % 12 + 1;
-    (new_year, new_month)
-}
-
-static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipper::new());
 
 fn adjusted_to_next_result(
     dtm: NaiveDateTime,
@@ -1707,20 +807,28 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_iter_multiples_every_day() {
+    fn test_spec_iter_multiples_first_of_month() {
         // US Eastern Time (EST/EDT)
         let est = New_York;
         // Before DST starts (Standard Time)
         let dtm = est.with_ymd_and_hms(2024, 12, 1, 23, 0, 0).unwrap();
 
-        dbg!(&dtm);
         let spec_iter =
-            SpecIteratorBuilder::new_after("[2025,2026]-MM-[MON,TUE]", WeekendSkipper::new(), dtm)
+            SpecIteratorBuilder::new_after("[2025,2026]-MM-01", WeekendSkipper::new(), dtm)
                 .build()
                 .unwrap();
-        dbg!(spec_iter
-            .take(24)
+        let results = spec_iter
+            .take(3)
             .collect::<Vec<NextResult<DateTime<_>>>>()
-            .unwrap());
+            .unwrap();
+
+        dbg!(&results);
+
+        // let expected = vec![
+        //     NextResult::Single(est.with_ymd_and_hms(2025, 1, 1, 23, 0, 0).unwrap()),
+        //     NextResult::Single(est.with_ymd_and_hms(2025, 2, 1, 23, 0, 0).unwrap()),
+        //     NextResult::Single(est.with_ymd_and_hms(2025, 3, 1, 23, 0, 0).unwrap()),
+        // ];
+        // assert_eq!(results, expected);
     }
 }

@@ -2,27 +2,22 @@ use regex::Regex;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-use crate::date::SPEC_EXPR as DATE_SPEC_EXPR;
 use crate::prelude::*;
-use crate::time::SPEC_EXPR as TIME_SPEC_EXPR;
 
-/// # SPEC_EXPR
-/// This regular expression combines the date and time spec recurrence expressions.
-/// (DATE_SPEC_EXPR)T(TIME_SPEC_EXPR)
+/// Matches the `T` separator between a date spec and a time spec.
+/// The time spec always starts with: `HH:`, `<n>H:`, or a two-digit hour `<dd>:`.
+/// This deliberately does NOT match `T` inside weekday names like `TUE` or `THU`.
+static DATE_TIME_SEP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"T(?:HH|[0-9]{1,2}H|[0-2]?[0-9]):").unwrap());
+
+/// Combined date + time recurrence specification.
+///
+/// Format: `<date_spec>T<time_spec>`
 ///
 /// ## Examples
-/// - "YY-1M-01~PT12:00:00" Recurrence on the first day of every month at 12:00:00
-/// - "YY-MM-FL~PT12:00:00" Recurrence on the last Friday of every month at 12:00:00
-pub static SPEC_EXPR: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "(?:(?<date>{})?T(?<time>{}))",
-        DATE_SPEC_EXPR.as_str(),
-        TIME_SPEC_EXPR
-    )
-    .to_string()
-});
-pub static SPEC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(&SPEC_EXPR).unwrap());
-
+/// - `"YY-1M-31L~WT11:00:00"` — last business day of each month at 11:00
+/// - `"YY-MM-MONT1H:00:00"` — every Monday, every hour
+/// - `"YY-MM-FRI#LT16:30:00"` — last Friday of each month at 16:30
 #[derive(Debug, Clone)]
 pub struct Spec {
     pub date_spec: String,
@@ -33,19 +28,15 @@ impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let caps = &SPEC_RE
-            .captures(s)
-            .ok_or(Error::ParseError("Invalid spec"))?;
-        let Some(date_spec) = caps.name("date") else {
-            return Err(Error::ParseError("missing date spec"));
-        };
-        let Some(time_spec) = caps.name("time") else {
-            return Err(Error::ParseError("missing time spec"));
-        };
-
-        Ok(Self {
-            date_spec: date_spec.as_str().to_string(),
-            time_spec: time_spec.as_str().to_string(),
+        let sep = DATE_TIME_SEP
+            .find(s)
+            .ok_or(Error::ParseError("missing T separator in datetime spec"))?;
+        let date_spec = s[..sep.start()].to_string();
+        // +1 to skip the 'T' itself; the rest is the time spec
+        let time_spec = s[sep.start() + 1..].to_string();
+        Ok(Spec {
+            date_spec,
+            time_spec,
         })
     }
 }
@@ -55,8 +46,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_one() {
-        let spec = SPEC_RE.captures("YY-1M-DD~PT12:00:00").unwrap();
-        dbg!(&spec);
+    fn test_compact_at_time() {
+        let spec = "YY-1M-31L~WT11:00:00".parse::<Spec>().unwrap();
+        assert_eq!(spec.date_spec, "YY-1M-31L~W");
+        assert_eq!(spec.time_spec, "11:00:00");
+    }
+
+    #[test]
+    fn test_every_hour() {
+        let spec = "YY-MM-DDT1H:00:00".parse::<Spec>().unwrap();
+        assert_eq!(spec.date_spec, "YY-MM-DD");
+        assert_eq!(spec.time_spec, "1H:00:00");
+    }
+
+    #[test]
+    fn test_weekday_not_confused_with_separator() {
+        // THU in day spec should not be confused with the T separator
+        let spec = "YY-MM-THUT11:00:00".parse::<Spec>().unwrap();
+        assert_eq!(spec.date_spec, "YY-MM-THU");
+        assert_eq!(spec.time_spec, "11:00:00");
+
+        let spec = "YY-MM-TUET11:00:00".parse::<Spec>().unwrap();
+        assert_eq!(spec.date_spec, "YY-MM-TUE");
+        assert_eq!(spec.time_spec, "11:00:00");
+    }
+
+    #[test]
+    fn test_hh_time_spec() {
+        let spec = "YY-MM-DDTHH:30M:00".parse::<Spec>().unwrap();
+        assert_eq!(spec.date_spec, "YY-MM-DD");
+        assert_eq!(spec.time_spec, "HH:30M:00");
     }
 }

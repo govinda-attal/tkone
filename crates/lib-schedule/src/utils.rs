@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Weekday};
 
 use crate::{prelude::*, NextResult};
@@ -41,9 +39,7 @@ impl<Tz: TimeZone> From<W<(Tz, NextResult<NaiveDateTime>)>> for NextResult<DateT
 pub trait DateLikeUtils: Datelike {
     fn to_last_day_of_month(&self) -> Self;
     fn to_first_day_of_month(&self) -> Self;
-    fn to_first_day_of_next_month(&self) -> Self;
     fn to_weekday(&self, weekday: &Weekday) -> Self;
-    fn to_weekday_ocurring(&self, weekday: &Weekday, occurence: u8) -> Self;
     fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self>;
     fn to_prev_weekday(&self, weekday: &Weekday) -> Self;
     fn to_months_last_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self>;
@@ -61,22 +57,12 @@ impl DateLikeUtils for NaiveDate {
         NaiveDate::from_ymd_opt(self.year(), self.month(), 1).unwrap()
     }
 
-    fn to_first_day_of_next_month(&self) -> Self {
-        NaiveDate::from_ymd_opt(self.year(), self.month() + 1, 1)
-            .unwrap_or(NaiveDate::from_ymd_opt(self.year() + 1, 1, 1).unwrap())
-    }
-
     fn to_weekday(&self, weekday: &Weekday) -> Self {
         let mut date = self.clone();
         while date.weekday() != *weekday {
             date = date.succ_opt().unwrap();
         }
         date
-    }
-
-    fn to_weekday_ocurring(&self, weekday: &Weekday, occurence: u8) -> Self {
-        let date = self.succ_opt().unwrap().to_weekday(weekday);
-        date + Duration::days(7 * (occurence - 1) as i64)
     }
 
     fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
@@ -121,19 +107,8 @@ impl DateLikeUtils for NaiveDateTime {
         NaiveDateTime::new(self.date().to_first_day_of_month(), self.time())
     }
 
-    fn to_first_day_of_next_month(&self) -> Self {
-        NaiveDateTime::new(self.date().to_first_day_of_next_month(), self.time())
-    }
-
     fn to_weekday(&self, weekday: &Weekday) -> Self {
         NaiveDateTime::new(self.date().to_weekday(weekday), self.time())
-    }
-
-    fn to_weekday_ocurring(&self, weekday: &Weekday, occurence: u8) -> Self {
-        NaiveDateTime::new(
-            self.date().to_weekday_ocurring(weekday, occurence),
-            self.time(),
-        )
     }
 
     fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
@@ -168,22 +143,8 @@ impl<Tz: TimeZone> DateLikeUtils for DateTime<Tz> {
         )))
     }
 
-    fn to_first_day_of_next_month(&self) -> Self {
-        DateTime::<Tz>::from(W((
-            self.timezone(),
-            self.naive_local().to_first_day_of_next_month(),
-        )))
-    }
-
     fn to_weekday(&self, weekday: &Weekday) -> Self {
         DateTime::<Tz>::from(W((self.timezone(), self.naive_local().to_weekday(weekday))))
-    }
-
-    fn to_weekday_ocurring(&self, weekday: &Weekday, occurence: u8) -> Self {
-        DateTime::<Tz>::from(W((
-            self.timezone(),
-            self.naive_local().to_weekday_ocurring(weekday, occurence),
-        )))
     }
 
     fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
@@ -206,23 +167,8 @@ impl<Tz: TimeZone> DateLikeUtils for DateTime<Tz> {
     }
 }
 
-pub fn naive_date_with_last_day_of_month_in_year(year: i32, month: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(year, month + 1, 1)
-        .unwrap_or(NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap())
-        .pred_opt()
-        .unwrap()
-}
-
 #[derive(Debug, Clone, Copy, Eq, Hash)]
 pub struct WeekdayStartingMonday(pub Weekday);
-
-impl PartialOrd for WeekdayStartingMonday {
-    fn partial_cmp(&self, Self(other): &Self) -> Option<std::cmp::Ordering> {
-        self.0
-            .num_days_from_monday()
-            .partial_cmp(&other.num_days_from_monday())
-    }
-}
 
 impl PartialEq for WeekdayStartingMonday {
     fn eq(&self, Self(other): &Self) -> bool {
@@ -231,9 +177,16 @@ impl PartialEq for WeekdayStartingMonday {
 }
 
 impl Ord for WeekdayStartingMonday {
-    fn cmp(&self, Self(other): &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare based on 0 (Mon) to 6 (Sun)
         self.0
             .num_days_from_monday()
-            .cmp(&other.num_days_from_monday())
+            .cmp(&other.0.num_days_from_monday())
+    }
+}
+
+impl PartialOrd for WeekdayStartingMonday {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }

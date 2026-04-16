@@ -180,6 +180,7 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
         self.naive_spec_iter.update_cursor(dtm.naive_local());
     }
@@ -258,6 +259,7 @@ impl NaiveSpecIterator {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
         self.dtm = dtm;
     }

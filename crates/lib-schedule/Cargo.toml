@@ -6,6 +6,7 @@ edition = "2021"
 [lib]
 
 [dependencies]
+nom = { version = "7.0.0"}
 regex ={ version = "1.11.1" }
 chrono ={ version = "0.4.38"}
 fallible-iterator = "0.3.0"

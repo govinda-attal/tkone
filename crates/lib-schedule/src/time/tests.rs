@@ -527,6 +527,48 @@ fn test_asis_parsing() {
 }
 
 // ---------------------------------------------------------------------------
+// Group 9b: No-progress guard — all-At and all-AsIs specs terminate safely
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_no_progress_terminates() {
+    let tz = Utc;
+
+    // All-At spec via new_with_start: passthrough returns start once, then the
+    // next computed value equals dtm → no-progress guard fires → terminates.
+    {
+        let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 30, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start("09:30:00", start)
+            .build()
+            .unwrap();
+        let results: Vec<DateTime<_>> = iter.take(5).collect().unwrap();
+        assert_eq!(results, vec![start], "all-At new_with_start: yields start once then terminates");
+    }
+
+    // All-At spec via new_after from the exact spec time: first computed value
+    // equals dtm → no-progress guard fires immediately → zero results.
+    {
+        let dtm = tz.with_ymd_and_hms(2025, 1, 1, 9, 30, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_after("09:30:00", dtm)
+            .build()
+            .unwrap();
+        let results: Vec<DateTime<_>> = iter.take(5).collect().unwrap();
+        assert!(results.is_empty(), "all-At new_after (at spec time): yields nothing");
+    }
+
+    // All-AsIs spec via new_with_start: passthrough returns start once, then
+    // AsIs produces next == dtm → no-progress guard fires → terminates.
+    {
+        let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start("_:_:_", start)
+            .build()
+            .unwrap();
+        let results: Vec<DateTime<_>> = iter.take(5).collect().unwrap();
+        assert_eq!(results, vec![start], "all-AsIs new_with_start: yields start once then terminates");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Group 10: AsIs recurrence — _ carries vs ForEach drives
 //
 // Key difference from ForEach:

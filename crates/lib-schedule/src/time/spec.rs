@@ -6,7 +6,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1},
-    combinator::{all_consuming, map_res, value},
+    combinator::{all_consuming, map_res, value, verify},
     error::Error as NomError,
     sequence::{preceded, tuple},
     IResult,
@@ -66,7 +66,7 @@ fn parse_u8(input: &str) -> Res<u8> {
 }
 
 fn parse_hours_every(input: &str) -> Res<Cycle> {
-    let (input, n) = parse_u8(input)?;
+    let (input, n) = verify(parse_u8, |&n| n > 0)(input)?;
     let (input, _) = char('H')(input)?;
     Ok((input, Cycle::Every(n)))
 }
@@ -86,7 +86,7 @@ fn parse_hours_cycle(input: &str) -> Res<Cycle> {
 }
 
 fn parse_minutes_every(input: &str) -> Res<Cycle> {
-    let (input, n) = parse_u8(input)?;
+    let (input, n) = verify(parse_u8, |&n| n > 0)(input)?;
     let (input, _) = char('M')(input)?;
     Ok((input, Cycle::Every(n)))
 }
@@ -106,7 +106,7 @@ fn parse_minutes_cycle(input: &str) -> Res<Cycle> {
 }
 
 fn parse_seconds_every(input: &str) -> Res<Cycle> {
-    let (input, n) = parse_u8(input)?;
+    let (input, n) = verify(parse_u8, |&n| n > 0)(input)?;
     let (input, _) = char('S')(input)?;
     Ok((input, Cycle::Every(n)))
 }
@@ -217,6 +217,13 @@ mod tests {
         assert_eq!(spec.minutes, Cycle::At(30));
         assert_eq!(spec.seconds, Cycle::ForEach);
         assert_eq!(spec.to_string(), "1H:30:SS");
+    }
+
+    #[test]
+    fn test_every_zero_is_parse_error() {
+        assert!("0H:00:00".parse::<Spec>().is_err(), "0H should be a parse error");
+        assert!("HH:0M:00".parse::<Spec>().is_err(), "0M should be a parse error");
+        assert!("HH:MM:0S".parse::<Spec>().is_err(), "0S should be a parse error");
     }
 
     #[test]

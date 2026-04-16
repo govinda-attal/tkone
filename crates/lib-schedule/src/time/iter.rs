@@ -354,6 +354,12 @@ impl FallibleIterator for NaiveSpecIterator {
             Cycle::ForEach | Cycle::AsIs => next,
         };
 
+        // No-progress guard: all-At and all-AsIs specs produce next == self.dtm,
+        // which would loop forever without this check.
+        if next <= self.dtm {
+            return Ok(None);
+        }
+
         if let Some(end) = &self.end {
             if &next > end {
                 self.dtm = end.clone();

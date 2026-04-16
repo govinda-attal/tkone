@@ -8,7 +8,7 @@ use crate::prelude::*;
 /// The time spec always starts with: `HH:`, `<n>H:`, or a two-digit hour `<dd>:`.
 /// This deliberately does NOT match `T` inside weekday names like `TUE` or `THU`.
 static DATE_TIME_SEP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"T(?:HH|[0-9]{1,2}H|[0-2]?[0-9]):").unwrap());
+    LazyLock::new(|| Regex::new(r"T(?:HH|_|[0-9]{1,2}H|[0-2]?[0-9]):").unwrap());
 
 /// Combined date + time recurrence specification.
 ///

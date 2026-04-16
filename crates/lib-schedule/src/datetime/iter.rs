@@ -353,13 +353,25 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
             let is_initial_day =
                 self.current_date_end.is_none() && observed_date == self.initial_dtm.date();
 
-            let time_cursor = if is_initial_day {
-                self.initial_dtm
+            // On the initial day use the caller's cursor so only times *after*
+            // the start are emitted.  On any subsequent date, step back by the
+            // spec's natural driving period from midnight and apply once: this
+            // lands exactly at midnight when midnight is a natural boundary
+            // (e.g. `1H:00:00` → back 1 h → 23:00 → +1 h → 00:00).  If the
+            // candidate falls before midnight (e.g. an `At`-only spec such as
+            // `11:00:00` gives `11:00` of the previous day), fall back to
+            // applying the spec from midnight itself.
+            let first_time = if is_initial_day {
+                apply_time_spec(&self.time_spec, self.initial_dtm)
             } else {
-                date_midnight
+                let delta = spec_delta(&self.time_spec);
+                let candidate = apply_time_spec(&self.time_spec, date_midnight - delta);
+                if candidate >= date_midnight {
+                    candidate
+                } else {
+                    apply_time_spec(&self.time_spec, date_midnight)
+                }
             };
-
-            let first_time = apply_time_spec(&self.time_spec, time_cursor);
 
             let is_valid = if is_initial_day {
                 // Must be strictly after the initial cursor and within today
@@ -412,22 +424,70 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
 
 /// Apply a time spec to a cursor datetime, mirroring the time iterator logic:
 /// seconds → minutes → hours, each either `At(n)` (set absolute) or `Every(n)` (add delta).
+/// `ForEach` on the finest non-At component acts as `Every(1)` when no explicit `Every` exists.
+/// `AsIs` is a true no-op — it always carries the current value.
 fn apply_time_spec(spec: &TimeSpec, cursor: NaiveDateTime) -> NaiveDateTime {
+    let has_any_every = matches!(spec.seconds, TimeCycle::Every(_))
+        || matches!(spec.minutes, TimeCycle::Every(_))
+        || matches!(spec.hours, TimeCycle::Every(_));
+    let seconds_is_foreach = matches!(spec.seconds, TimeCycle::ForEach);
+    let minutes_is_foreach = matches!(spec.minutes, TimeCycle::ForEach);
+
     let next = cursor;
     let next = match &spec.seconds {
         TimeCycle::At(s) => next.with_second(*s as u32).unwrap(),
         TimeCycle::Every(s) => next + Duration::seconds(*s as i64),
-        TimeCycle::AsIs => next,
+        TimeCycle::ForEach if !has_any_every => next + Duration::seconds(1),
+        TimeCycle::ForEach | TimeCycle::AsIs => next,
     };
     let next = match &spec.minutes {
         TimeCycle::At(m) => next.with_minute(*m as u32).unwrap(),
         TimeCycle::Every(m) => next + Duration::minutes(*m as i64),
-        TimeCycle::AsIs => next,
+        TimeCycle::ForEach if !has_any_every && !seconds_is_foreach => next + Duration::minutes(1),
+        TimeCycle::ForEach | TimeCycle::AsIs => next,
     };
     match &spec.hours {
         TimeCycle::At(h) => next.with_hour(*h as u32).unwrap(),
         TimeCycle::Every(h) => next + Duration::hours(*h as i64),
-        TimeCycle::AsIs => next,
+        TimeCycle::ForEach if !has_any_every && !seconds_is_foreach && !minutes_is_foreach => {
+            next + Duration::hours(1)
+        }
+        TimeCycle::ForEach | TimeCycle::AsIs => next,
+    }
+}
+
+/// Return the natural step size of the driving component of a time spec.
+///
+/// Used by the new-day first-tick calculation: stepping back one period from
+/// midnight and applying the spec once produces midnight itself whenever
+/// midnight is a natural boundary of the cycle.
+///
+/// Rules (coarsest-to-finest, first match wins):
+/// - `Every(n)` on seconds  → `n` seconds
+/// - `ForEach` on seconds (and no `Every` anywhere) → 1 second
+/// - `Every(n)` on minutes  → `n` minutes
+/// - `ForEach` on minutes (and no `Every` anywhere) → 1 minute
+/// - `Every(n)` on hours    → `n` hours
+/// - `ForEach` on hours (and no `Every` anywhere) → 1 hour
+/// - All `At` / `AsIs`      → 1 second (safe fallback; result will be < midnight,
+///                             triggering the `apply_time_spec(midnight)` fallback)
+fn spec_delta(spec: &TimeSpec) -> Duration {
+    let has_any_every = matches!(spec.seconds, TimeCycle::Every(_))
+        || matches!(spec.minutes, TimeCycle::Every(_))
+        || matches!(spec.hours, TimeCycle::Every(_));
+
+    match &spec.seconds {
+        TimeCycle::Every(n) => Duration::seconds(*n as i64),
+        TimeCycle::ForEach if !has_any_every => Duration::seconds(1),
+        _ => match &spec.minutes {
+            TimeCycle::Every(n) => Duration::minutes(*n as i64),
+            TimeCycle::ForEach if !has_any_every => Duration::minutes(1),
+            _ => match &spec.hours {
+                TimeCycle::Every(n) => Duration::hours(*n as i64),
+                TimeCycle::ForEach if !has_any_every => Duration::hours(1),
+                _ => Duration::seconds(1),
+            },
+        },
     }
 }
 
@@ -602,6 +662,73 @@ mod tests {
             6,
             "occurrence after AdjustedLater(May 31→Jun 2) should be in June, not July"
         );
+    }
+
+    // ── regression: midnight included on non-initial dates ─────────────────
+
+    #[test]
+    fn test_every_hour_includes_midnight_on_new_days() {
+        // Bug: apply_time_spec(midnight) for `1H:00:00` gives 01:00, skipping 00:00.
+        // Fix: step back by 1h from midnight first → 23:00 → +1h → 00:00 ✓
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-MM-DDT1H:00:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .with_end(end)
+        .build()
+        .unwrap();
+        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
+        dbg!(&results);
+
+        let jan1: Vec<_> = results
+            .iter()
+            .filter(|r| r.observed().date_naive().day() == 1)
+            .collect();
+        let jan2: Vec<_> = results
+            .iter()
+            .filter(|r| r.observed().date_naive().day() == 2)
+            .collect();
+
+        // Jan 1 starts at the passthrough 09:00 → last tick 23:00 = 15 ticks
+        assert_eq!(jan1.len(), 15);
+        assert_eq!(jan1[0].observed().hour(), 9);
+
+        // Jan 2 must start at 00:00, not 01:00
+        assert_eq!(jan2.len(), 24, "Jan 2 should have all 24 hourly ticks");
+        assert_eq!(jan2[0].observed().hour(), 0, "first tick on Jan 2 must be midnight");
+    }
+
+    #[test]
+    fn test_every_30min_includes_midnight_on_new_days() {
+        // `HH:30M:00`: last tick of day N is 23:30 → next natural tick is midnight.
+        // Fix: step back 30 min from midnight → 23:30 → +30 min → 00:00 ✓
+        let start = Utc.with_ymd_and_hms(2025, 1, 1, 23, 0, 0).unwrap();
+        // Use 00:31 so that 01:00 > end triggers the guard and we get exactly 4 ticks.
+        let end = Utc.with_ymd_and_hms(2025, 1, 2, 0, 31, 0).unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(
+            "YY-MM-DDTHH:30M:00",
+            WeekendSkipper::new(),
+            start,
+        )
+        .with_end(end)
+        .build()
+        .unwrap();
+        let results = iter.collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
+        dbg!(&results);
+
+        // Expected: 23:00 (start passthrough), 23:30, 00:00, 00:30
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0].observed().hour(), 23);
+        assert_eq!(results[0].observed().minute(), 0);
+        assert_eq!(results[1].observed().hour(), 23);
+        assert_eq!(results[1].observed().minute(), 30);
+        assert_eq!(results[2].observed().hour(), 0);
+        assert_eq!(results[2].observed().minute(), 0);
+        assert_eq!(results[3].observed().hour(), 0);
+        assert_eq!(results[3].observed().minute(), 30);
     }
 
     // ── timezone-aware ──────────────────────────────────────────────────────

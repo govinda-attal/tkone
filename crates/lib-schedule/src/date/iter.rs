@@ -8,6 +8,10 @@ use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
 use std::{marker::PhantomData, sync::LazyLock};
 
+// --- Builder type-state markers ---
+// These zero-sized types encode the builder's configuration at compile time so
+// that only valid combinations (e.g. you must supply a start before you can
+// supply an end) are callable.
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
 pub struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
@@ -16,6 +20,44 @@ pub struct NoEnd;
 pub struct Sealed;
 pub struct NotSealed;
 
+/// Fluent, type-state builder for [`SpecIterator`] and [`NaiveSpecIterator`].
+///
+/// The builder uses phantom type parameters to enforce at *compile time* that
+/// you call methods in a valid order:
+///
+/// - Every builder can be `.build()`-ed immediately.
+/// - `with_end` / `with_end_spec` are only available after `new_with_start`.
+///
+/// # Construction variants
+///
+/// | Constructor | First result | Use when… |
+/// |-------------|-------------|-----------|
+/// | `new(spec, bdp, tz)` | Next occurrence after `Utc::now()` | open-ended schedule from now |
+/// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` | schedule from a known cursor |
+/// | `new_with_start(spec, bdp, start)` | `start` itself is the first item | anchor to a fixed start date |
+///
+/// # Examples
+///
+/// ```rust
+/// use lib_schedule::biz_day::WeekendSkipper;
+/// use lib_schedule::date::SpecIteratorBuilder;
+/// use lib_schedule::NextResult;
+/// use chrono::{TimeZone, Utc, Duration};
+/// use fallible_iterator::FallibleIterator;
+///
+/// let bdp   = WeekendSkipper::new();
+/// let start = Utc.with_ymd_and_hms(2024, 1, 31, 0, 0, 0).unwrap();
+/// let end   = Utc.with_ymd_and_hms(2024, 6, 30, 0, 0, 0).unwrap();
+///
+/// // Last day of every month, starting on 2024-01-31, bounded until end of June
+/// let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
+///     .with_end(end)
+///     .build()
+///     .unwrap();
+///
+/// let dates: Vec<_> = iter.collect().unwrap();
+/// // → 2024-01-31, 2024-02-29, 2024-03-31, 2024-04-30, 2024-05-31
+/// ```
 pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> {
     dtm: DateTime<Tz>,
     start: START,
@@ -27,6 +69,9 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    /// Create an iterator that produces occurrences starting **from `Utc::now()`**
+    /// in timezone `tz`. The current instant is excluded; the first result is the
+    /// earliest occurrence strictly after now.
     pub fn new(
         spec: &str,
         bdp: BDP,
@@ -35,6 +80,10 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
         SpecIteratorBuilder::new_after(spec, bdp, Utc::now().with_timezone(&tz))
     }
 
+    /// Create an iterator that produces occurrences strictly **after `dtm`**.
+    ///
+    /// `dtm` itself is excluded. Use [`new_with_start`](SpecIteratorBuilder::new_with_start)
+    /// if you want `dtm` to be the first yielded item.
     pub fn new_after(
         spec: &str,
         bdp: BDP,
@@ -100,6 +149,46 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
 impl<Tz: TimeZone, BDP: BizDayProcessor>
     SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
 {
+    /// Create an iterator that includes `start` as its **first yielded item**.
+    ///
+    /// This is the right choice when you have already resolved a concrete start
+    /// date (e.g. by calling `new_after(...).build()?.next()?`) and want the
+    /// series to begin exactly there.
+    ///
+    /// The iterator alignment (for `NextNth` cycles) is anchored to `start`,
+    /// so "every 3 months from `start`" always lands on the same day-of-month
+    /// as `start`.
+    ///
+    /// # Example — derive start from spec, then iterate
+    ///
+    /// ```rust
+    /// use lib_schedule::biz_day::WeekendSkipper;
+    /// use lib_schedule::date::SpecIteratorBuilder;
+    /// use lib_schedule::NextResult;
+    /// use chrono::{TimeZone, Utc};
+    /// use fallible_iterator::FallibleIterator;
+    ///
+    /// let bdp = WeekendSkipper::new();
+    /// let now = Utc::now();
+    ///
+    /// // 1. Find the next occurrence to use as the start date
+    /// let start = SpecIteratorBuilder::new_after("YY-1M-L", bdp.clone(), now)
+    ///     .build()
+    ///     .unwrap()
+    ///     .next()
+    ///     .unwrap()           // Result<Option<…>>
+    ///     .unwrap()           // Option<…>
+    ///     .observed()         // settlement date (post biz-day adjustment)
+    ///     .clone();
+    ///
+    /// // 2. Build the recurring series anchored to that start date
+    /// let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let dates: Vec<_> = iter.take(3).collect().unwrap();
+    /// assert_eq!(dates[0].observed(), &start);
+    /// ```
     pub fn new_with_start(
         spec: &str,
         bdp: BDP,
@@ -116,6 +205,14 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         }
     }
 
+    /// Bound the iterator by another spec string.
+    ///
+    /// The end datetime is resolved by running `end_spec` as its own single-shot
+    /// iterator starting from `start`. The first occurrence of `end_spec` becomes
+    /// the exclusive upper bound.
+    ///
+    /// This is useful when the end boundary is itself expressed as a recurrence
+    /// rule (e.g. "stop at the end of the current quarter").
     pub fn with_end_spec(
         self,
         end_spec: impl Into<String>,
@@ -131,6 +228,11 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         }
     }
 
+    /// Bound the iterator by an explicit end datetime.
+    ///
+    /// Occurrences whose *actual* (unadjusted) date or *observed* (adjusted)
+    /// date exceeds `end` are suppressed. When the boundary is hit the iterator
+    /// emits `end` itself as a terminal `Single` result, then stops.
     pub fn with_end(
         self,
         end: DateTime<Tz>,
@@ -160,35 +262,46 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
 
 static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipper::new());
 
-/// # SpecIterator
-/// datetime::SpecIterator is an iterator that combines a date and time specification to generate a sequence of date-times.
-/// This iterator is created using the SpecIteratorBuilder.
+/// Timezone-aware calendar-day recurrence iterator.
 ///
-/// ## Example
+/// Yields [`NextResult<DateTime<Tz>>`](crate::NextResult) values so that
+/// business-day adjustments are visible to the caller (see
+/// [`NextResult::actual`] vs [`NextResult::observed`]).
+///
+/// Construct via [`SpecIteratorBuilder`]. Implements
+/// [`fallible_iterator::FallibleIterator`].
+///
+/// # Example
+///
 /// ```rust
 /// use lib_schedule::biz_day::WeekendSkipper;
 /// use lib_schedule::date::SpecIteratorBuilder;
+/// use lib_schedule::NextResult;
+/// use chrono::{offset::TimeZone, DateTime};
 /// use chrono_tz::America::New_York;
 /// use fallible_iterator::FallibleIterator;
-/// use chrono::{offset::TimeZone, DateTime};
-/// use lib_schedule::NextResult;
-/// use chrono::Duration;
 ///
-/// let start = New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap();
-/// let iter = SpecIteratorBuilder::new_with_start("YY-1M-31L", WeekendSkipper::new(), start).build().unwrap();
-/// let occurrences = iter.take(4).collect::<Vec<NextResult<DateTime<_>>>>().unwrap();
-/// assert_eq!(occurrences, vec![
-///     NextResult::Single(start.clone()), // 2024-11-30
-///     NextResult::Single(start + Duration::days(31)), // 2024-12-31
-///     NextResult::Single(start + Duration::days(62)), // 2025-01-31
-///     NextResult::Single(start + Duration::days(90)), // 2025-02-28
-/// ]);
+/// // Last day of every month, starting 2024-01-31 (EST)
+/// let start = New_York.with_ymd_and_hms(2024, 1, 31, 0, 0, 0).unwrap();
+/// let iter  = SpecIteratorBuilder::new_with_start(
+///     "YY-1M-L", WeekendSkipper::new(), start,
+/// )
+/// .build()
+/// .unwrap();
+///
+/// let dates: Vec<_> = iter.take(3).collect().unwrap();
+/// // → 2024-01-31, 2024-02-29, 2024-03-31
+/// for r in &dates {
+///     // r.observed() is the settlement date
+///     // r.actual()   is the raw calendar date (differs when biz-day adj fires)
+///     println!("{}", r.observed());
+/// }
 /// ```
 ///
-/// ## See Also
-/// - [SpecIteratorBuilder](crate::date::SpecIteratorBuilder)
-/// - [SPEC_EXPR](crate::date::SPEC_EXPR)
-/// - [NaiveSpecIterator](crate::date::NaiveSpecIterator)
+/// # See Also
+///
+/// - [`SpecIteratorBuilder`]
+/// - [`NaiveSpecIterator`]
 #[derive(Debug)]
 pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     tz: Tz,
@@ -215,6 +328,24 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
     }
 }
 
+/// Non-timezone-aware calendar-day recurrence iterator.
+///
+/// The timezone-aware [`SpecIterator`] delegates all date arithmetic to this
+/// type. You can use `NaiveSpecIterator` directly when you do not need
+/// timezone conversion, or when you are composing it with other naive
+/// iterators (as [`crate::datetime::NaiveSpecIterator`] does internally).
+///
+/// # Construction
+///
+/// `NaiveSpecIterator` is not constructed through the builder; use its
+/// inherent constructors:
+///
+/// | Method | First result |
+/// |--------|-------------|
+/// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` |
+/// | `new_with_start(spec, bdp, start)` | `start` itself is the first item |
+/// | `new_with_end(spec, bdp, start, end)` | As above, bounded by `end` |
+/// | `new_with_end_spec(spec, start, bdp, end_spec)` | As above; end resolved from `end_spec` |
 #[derive(Debug, Clone)]
 pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     spec: Spec,

@@ -15,6 +15,20 @@ pub struct NoEnd;
 pub struct Sealed;
 pub struct NotSealed;
 
+/// Fluent, type-state builder for the time-only [`SpecIterator`] and
+/// [`NaiveSpecIterator`].
+///
+/// # Construction variants
+///
+/// | Constructor | First result |
+/// |-------------|-------------|
+/// | `new(spec, tz)` | First occurrence after `Utc::now()` |
+/// | `new_after(spec, dtm)` | First occurrence strictly **after** `dtm` |
+/// | `new_with_start(spec, start)` | `start` itself is the first item |
+///
+/// After `new_with_start` you may optionally call:
+/// - `.with_end(end)` — bound by an explicit datetime
+/// - `.with_end_spec(end_spec)` — bound by another time spec
 pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     timezone: Tz,
     dtm: DateTime<Tz>,
@@ -25,10 +39,12 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+    /// Create an iterator from `Utc::now()` in timezone `tz`.
     pub fn new(spec: &str, tz: Tz) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
         SpecIteratorBuilder::new_after(spec, Utc::now().with_timezone(&tz))
     }
 
+    /// Create an iterator that produces occurrences strictly **after `dtm`**.
     pub fn new_after(
         spec: &str,
         dtm: DateTime<Tz>,
@@ -49,6 +65,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
+    /// Create an iterator where `start` is the **first yielded item**.
     pub fn new_with_start(
         spec: &str,
         start: DateTime<Tz>,
@@ -66,6 +83,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
+    /// Bound the iterator by an explicit end datetime.
     pub fn with_end(
         self,
         end: DateTime<Tz>,
@@ -80,6 +98,10 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
         }
     }
 
+    /// Bound the iterator by a second time spec.
+    ///
+    /// The end time is resolved as the first occurrence of `end_spec` starting
+    /// from the iterator's start datetime.
     pub fn with_end_spec(
         self,
         end_spec: impl Into<String>,

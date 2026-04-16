@@ -2,60 +2,269 @@
 
 //! # lib-schedule
 //!
-//! `lib-schedule` is a crate for handling scheduling, date and time calculations, and business day processing.
-//! It provides various utilities and structures to work with dates, times, and business days in different time zones.
+//! A scheduling and recurrence library built on flexible mini-language specs for dates,
+//! times, and combined datetimes. Supports business day processing, timezone awareness,
+//! and fallible iteration.
 //!
-//! ## Modules
+//! ## Core Concepts
 //!
-//! - [`biz_day`]: Contains utilities and structures for business day processing.
-//! - [`date`]: Provides date-related utilities and structures.
-//! - [`time`]: Contains time-related utilities and structures.
-//! - [`datetime`]: Contains date and time-related utilities and structures.
+//! The library is organised around three independent spec types, each with a
+//! corresponding recurrence iterator:
+//!
+//! | Module | Spec type | Iterator item | Use when… |
+//! |--------|-----------|---------------|-----------|
+//! | [`date`] | `"YY-1M-31L"` | `NextResult<DateTime<Tz>>` | calendar-day recurrence |
+//! | [`time`] | `"1H:00:00"` | `DateTime<Tz>` | intra-day time recurrence |
+//! | [`datetime`] | `"YY-1M-31L~WT11:00:00"` | `NextResult<DateTime<Tz>>` | combined date + time |
+//!
+//! ## Quick Start
+//!
+//! ### 1 — Find the first matching date, then iterate from it
+//!
+//! The most common pattern is to derive a concrete *start datetime* from the spec
+//! itself — i.e. "what is the very next occurrence?" — and then hand that datetime
+//! back to the iterator so it becomes the first item of the series.
+//!
+//! ```rust
+//! # use lib_schedule::biz_day::WeekendSkipper;
+//! # use lib_schedule::date::SpecIteratorBuilder;
+//! # use chrono::{SubsecRound, Utc};
+//! # use chrono_tz::America::New_York;
+//! # use fallible_iterator::FallibleIterator;
+//! # let bdp = WeekendSkipper::new();
+//! # let now = Utc::now().with_timezone(&New_York).trunc_subsecs(0);
+//! // Step 1: find the first occurrence strictly after now
+//! let start = SpecIteratorBuilder::new_after("YY-1M-L", bdp.clone(), now)
+//!     .build().unwrap().next().unwrap().unwrap()
+//!     .observed().clone();
+//!
+//! // Step 2: iterate from that start date (inclusive)
+//! let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
+//!     .build().unwrap();
+//!
+//! # let dates: Vec<_> = iter.take(3).collect().unwrap();
+//! // r.observed() → settlement date   r.actual() → raw calendar date
+//! ```
+//! *Run `cargo run -p lib-schedule --example date_recurrence` for the full program.*
+//!
+//! ### 2 — Combined date + time recurrence
+//!
+//! Append `T<time_spec>` to a date spec to create a [`datetime`] schedule.
+//! The iterator visits each valid calendar date in order and emits every
+//! matching time within that day before advancing.
+//!
+//! ```rust
+//! # use lib_schedule::biz_day::WeekendSkipper;
+//! # use lib_schedule::datetime::SpecIteratorBuilder;
+//! # use chrono::{SubsecRound, Utc};
+//! # use chrono_tz::Europe::London;
+//! # use fallible_iterator::FallibleIterator;
+//! # let bdp = WeekendSkipper::new();
+//! # let now = Utc::now().with_timezone(&London).trunc_subsecs(0);
+//! // "~W" adjusts Saturdays/Sundays to the nearest weekday (Mon or Fri)
+//! let start = SpecIteratorBuilder::new_after("YY-1M-L~WT11:00:00", bdp.clone(), now)
+//!     .build().unwrap().next().unwrap().unwrap()
+//!     .observed().clone();
+//!
+//! let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, start)
+//!     .build().unwrap();
+//!
+//! # let _: Vec<_> = iter.take(4).collect().unwrap();
+//! ```
+//! *Run `cargo run -p lib-schedule --example datetime_recurrence` for the full program.*
+//!
+//! ### 3 — Time-only recurrence
+//!
+//! ```rust
+//! # use lib_schedule::time::SpecIteratorBuilder;
+//! # use chrono::{TimeZone, Utc};
+//! # use fallible_iterator::FallibleIterator;
+//! # let start = Utc.with_ymd_and_hms(2024, 6, 1, 9, 0, 0).unwrap();
+//! // Every 30 minutes starting at 09:00
+//! let iter = SpecIteratorBuilder::new_with_start("HH:30M:00", start).build().unwrap();
+//! # let _: Vec<_> = iter.take(4).collect().unwrap();
+//! // → 09:00, 09:30, 10:00, 10:30
+//! ```
+//! *Run `cargo run -p lib-schedule --example time_recurrence` for the full program.*
+//!
+//! ## Running the Bundled Examples
+//!
+//! The crate ships runnable examples under `examples/`. Run any of them with:
+//!
+//! ```text
+//! cargo run -p lib-schedule --example date_recurrence
+//! cargo run -p lib-schedule --example datetime_recurrence
+//! cargo run -p lib-schedule --example time_recurrence
+//! ```
+//!
+//! ## Spec Syntax Reference
+//!
+//! ### Date Spec — `<years>-<months>-<days>[~<adj>]`
+//!
+//! #### Years
+//!
+//! | Token | Meaning |
+//! |-------|---------|
+//! | `YY`  | Every calendar year |
+//! | `_`   | Keep current year (no-op) |
+//! | `nY`  | Every *n* years, aligned to the iterator start date |
+//! | `2025` | Exactly year 2025 |
+//! | `[2024,2025]` | Years 2024 or 2025 |
+//!
+//! #### Months
+//!
+//! | Token | Meaning |
+//! |-------|---------|
+//! | `MM`  | Every calendar month |
+//! | `_`   | Keep current month (no-op) |
+//! | `nM`  | Every *n* months, aligned to the iterator start date |
+//! | `03`  | March only |
+//! | `[01,06,12]` | January, June, or December |
+//!
+//! #### Days
+//!
+//! | Token | Meaning |
+//! |-------|---------|
+//! | `DD` or `_` | Every calendar day |
+//! | `15`  | 15th of the month |
+//! | `[5,10,15]` | 5th, 10th, and 15th |
+//! | `L`   | Last day of the month |
+//! | `31L` | 31st, or last day if the month is shorter |
+//! | `31N` | 31st, or 1st of next month if the month is shorter |
+//! | `31O` | 31st, or overflow into next month (e.g. → Feb 3 for Mar 31 in Feb) |
+//! | `nD`  | Advance *n* calendar days |
+//! | `nBD` | Advance *n* business days |
+//! | `nWD` | Advance *n* weekdays (Mon–Fri) |
+//! | `MON` / `TUE` / … | Every occurrence of that weekday in the month |
+//! | `[MON,FRI]` | Every Monday and Friday |
+//! | `WED#2` | 2nd Wednesday of the month |
+//! | `FRI#L` | Last Friday of the month |
+//! | `THU#2L` | 2nd-to-last Thursday of the month |
+//!
+//! #### Business Day Adjustment (`~`)
+//!
+//! Applied after the raw calendar date is resolved. Directional variants
+//! (`~W`, `~B`, `~NB`, `~NW`, `~PW`) are **conditional** — they only shift
+//! when the raw date is not already a business/week day. Numeric variants
+//! (`~nP`, `~nN`) are **unconditional** offsets.
+//!
+//! | Token | Meaning |
+//! |-------|---------|
+//! | `~W`  | Next business day (uses [`WeekendSkipper`](biz_day::WeekendSkipper)) |
+//! | `~B`  | Previous business day |
+//! | `~NB` | Nearest business day |
+//! | `~NW` | Next weekday (Mon–Fri) |
+//! | `~PW` | Previous weekday |
+//! | `~3P` | 3 business days earlier (unconditional) |
+//! | `~2N` | 2 business days later (unconditional) |
+//!
+//! ### Time Spec — `<hours>:<minutes>:<seconds>`
+//!
+//! | Token | Meaning |
+//! |-------|---------|
+//! | `HH`  | ForEach — drives if no `Every` is present |
+//! | `_`   | AsIs — keep current hour |
+//! | `nH`  | Every *n* hours |
+//! | `09`  | At hour 9 (two-digit) |
+//! | `MM`  | ForEach minute |
+//! | `_`   | AsIs minute |
+//! | `nM`  | Every *n* minutes |
+//! | `30`  | At minute 30 |
+//! | `SS`  | ForEach second |
+//! | `_`   | AsIs second |
+//! | `nS`  | Every *n* seconds |
+//! | `00`  | At second 0 |
+//!
+//! **ForEach driving rule**: when no `Every` component exists, the finest
+//! `ForEach` field becomes `Every(1)` for its unit; coarser `ForEach` fields
+//! carry their current value unchanged.
+//!
+//! ### DateTime Spec — `<date_spec>T<time_spec>`
+//!
+//! The `T` separator is detected by the pattern that follows it (`HH:`, `nH:`,
+//! or a two-digit clock hour `dd:`), so weekday tokens like `TUE` and `THU`
+//! in the date spec are not confused with the separator.
+//!
+//! ```text
+//! "YY-1M-31L~WT11:00:00"   →  date="YY-1M-31L~W"    time="11:00:00"
+//! "YY-MM-DDT1H:00:00"      →  date="YY-MM-DD"         time="1H:00:00"
+//! "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
+//! ```
+//!
+//! ## `NextResult` and Business Day Adjustments
+//!
+//! Date and datetime iterators yield [`NextResult<T>`] rather than plain `T`.
+//! This distinguishes unadjusted occurrences from ones where the business day
+//! rule moved the settlement date:
+//!
+//! - [`NextResult::Single`] — no adjustment; `actual == observed`.
+//! - [`NextResult::AdjustedEarlier`] — rule moved the date *earlier*.
+//! - [`NextResult::AdjustedLater`] — rule moved the date *later*.
+//!
+//! Use `.observed()` for the settlement date and `.actual()` for the raw
+//! calendar date.
 
-/// The `biz_day` module contains utilities and structures for business day processing.
+/// The `biz_day` module contains the [`biz_day::BizDayProcessor`] trait and
+/// built-in implementations for business day calculations.
 pub mod biz_day;
-/// The `date` module provides date-related utilities and structures.
+/// The `date` module provides calendar-day recurrence via [`date::Spec`] and
+/// [`date::SpecIteratorBuilder`].
 pub mod date;
-/// The `datetime` module contains date and time-related utilities and structures.
+/// The `datetime` module combines a date spec and a time spec into a single
+/// recurrence schedule via [`datetime::Spec`] and [`datetime::SpecIteratorBuilder`].
 pub mod datetime;
-/// The `time` module contains time-related utilities and structures.
+/// The `time` module provides intra-day time recurrence via [`time::Spec`] and
+/// [`time::SpecIteratorBuilder`].
 pub mod time;
 
-/// The `error` module defines error types used throughout the crate.
 mod error;
 mod prelude;
 mod utils;
 
-/// Represents the result of a scheduling operation.
-///
-/// The `NextResult` enum is used to indicate the result of a scheduling operation. It can either be a single result
-/// or an adjusted result with two values.
+pub use error::{Error, Result};
+
+/// Outcome of a single scheduling step, distinguishing raw calendar dates from
+/// business-day-adjusted settlement dates.
 ///
 /// # Variants
 ///
-/// - `Single(T)`: Represents a single result.
-/// - `AdjustedEarlier(T, T)`: Represents an adjusted result where the first value is the earlier adjustment.
-/// - `AdjustedLater(T, T)`: Represents an adjusted result where the first value is the later adjustment.
+/// | Variant | Condition | `actual()` | `observed()` |
+/// |---------|-----------|------------|--------------|
+/// | `Single(t)` | No adjustment applied | `t` | `t` |
+/// | `AdjustedEarlier(a, o)` | Settlement moved earlier | `a` | `o` (`o < a`) |
+/// | `AdjustedLater(a, o)` | Settlement moved later | `a` | `o` (`o > a`) |
 ///
-/// # Methods
+/// # Examples
 ///
-/// - `final_value(&self) -> &T`: Returns the final value of the scheduling operation.
-/// - `actual(&self) -> &T`: Returns the actual value of the scheduling operation.
-/// - `as_tuple(&self) -> (&T, &T)`: Returns the result as a tuple of two values.
+/// ```rust
+/// use lib_schedule::NextResult;
+/// use chrono::{NaiveDate, NaiveDateTime};
+///
+/// let actual   = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap().and_hms_opt(0,0,0).unwrap();
+/// let observed = NaiveDate::from_ymd_opt(2024, 3, 29).unwrap().and_hms_opt(0,0,0).unwrap(); // Fri
+///
+/// let result = NextResult::AdjustedEarlier(actual, observed);
+/// assert_eq!(result.actual(),   &actual);
+/// assert_eq!(result.observed(), &observed);
+/// assert!(result.observed() < result.actual());
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum NextResult<T: Clone> {
-    /// A single result.
+    /// No business day adjustment was necessary; the raw calendar date is the
+    /// settlement date.
     Single(T),
-    /// An adjusted result with the earlier adjustment.
+    /// The business day rule shifted the settlement date *later* than the raw
+    /// calendar date. The first field is the raw date; the second is the
+    /// settlement date.
     AdjustedLater(T, T),
-    /// An adjusted result with the later adjustment.
+    /// The business day rule shifted the settlement date *earlier* than the raw
+    /// calendar date. The first field is the raw date; the second is the
+    /// settlement date.
     AdjustedEarlier(T, T),
 }
 
 impl<T: Clone> NextResult<T> {
-    /// Returns the single value if the result is `Single`.
-    ///
-    /// This method returns the single value if the result is `Single`. Otherwise, it returns `None`.
+    /// Returns the inner value if this is a [`NextResult::Single`], otherwise `None`.
     pub fn single(self) -> Option<T> {
         match self {
             NextResult::Single(t) => Some(t),
@@ -63,10 +272,11 @@ impl<T: Clone> NextResult<T> {
         }
     }
 
-    /// Returns the earlier value of the scheduling operation.
+    /// The chronologically earlier of the two dates.
     ///
-    /// This method returns the earlier value of the scheduling operation, which is the second value in the case of
-    /// `AdjustedEarlier`, and the first value in the case of `AdjustedLater` and `Single`.
+    /// - `Single(t)` → `t`
+    /// - `AdjustedEarlier(a, o)` → `o` (settlement is earlier than raw)
+    /// - `AdjustedLater(a, o)` → `a` (raw is earlier than settlement)
     pub fn earlier(&self) -> &T {
         match self {
             NextResult::Single(t)
@@ -75,10 +285,11 @@ impl<T: Clone> NextResult<T> {
         }
     }
 
-    /// Returns the later value of the scheduling operation.
+    /// The chronologically later of the two dates.
     ///
-    /// This method returns the later value of the scheduling operation, which is the first value in the case of
-    /// `AdjustedEarlier`, and the second value in the case of `AdjustedLater` and `Single`.
+    /// - `Single(t)` → `t`
+    /// - `AdjustedEarlier(a, o)` → `a` (raw is later than settlement)
+    /// - `AdjustedLater(a, o)` → `o` (settlement is later than raw)
     pub fn later(&self) -> &T {
         match self {
             NextResult::Single(t)
@@ -87,10 +298,11 @@ impl<T: Clone> NextResult<T> {
         }
     }
 
-    /// Returns the observed value of the scheduling operation.
+    /// The settlement (post-adjustment) date.
     ///
-    /// This method returns the observed value of the scheduling operation, which is the second value in the case of
-    /// `AdjustedEarlier` and `AdjustedLater`, and the single value in the case of `Single`.
+    /// This is the date on which the event is *observed* — i.e. the result of
+    /// applying any business day rule. Equal to `actual()` when no adjustment
+    /// was made ([`NextResult::Single`]).
     pub fn observed(&self) -> &T {
         match self {
             NextResult::Single(t)
@@ -99,10 +311,9 @@ impl<T: Clone> NextResult<T> {
         }
     }
 
-    /// Returns the actual value of the scheduling operation.
+    /// The raw calendar date before any business day adjustment.
     ///
-    /// This method returns the actual value of the scheduling operation, which is the first value in the case of
-    /// `AdjustedEarlier` and `AdjustedLater`, and the single value in the case of `Single`.
+    /// Equal to `observed()` when no adjustment was made ([`NextResult::Single`]).
     pub fn actual(&self) -> &T {
         match self {
             NextResult::Single(t)
@@ -111,10 +322,9 @@ impl<T: Clone> NextResult<T> {
         }
     }
 
-    /// Returns the result as a tuple of two values.
+    /// Returns `(actual, observed)` as a tuple.
     ///
-    /// This method returns the result as a tuple of two values. In the case of `Single`, both values in the tuple
-    /// are the same. In the case of `AdjustedEarlier` and `AdjustedLater`, the tuple contains both values.
+    /// For [`NextResult::Single`] both elements are the same reference.
     pub fn as_tuple(&self) -> (&T, &T) {
         match self {
             NextResult::Single(t) => (t, t),
@@ -123,29 +333,3 @@ impl<T: Clone> NextResult<T> {
         }
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use biz_day::WeekendSkipper;
-//     use chrono::{DateTime, TimeZone};
-//     use chrono_tz::America::New_York;
-//     use fallible_iterator::FallibleIterator;
-
-//     use super::*;
-//     #[test]
-//     fn test_works() {
-//         let tmp = datetime::SpecIteratorBuilder::new_with_start(
-//             "YY-1M-08~WT11:00:00",
-//             WeekendSkipper::new(),
-//             New_York.with_ymd_and_hms(2024, 11, 30, 11, 0, 0).unwrap(),
-//         )
-//         .with_end(New_York.with_ymd_and_hms(2025, 7, 8, 11, 00, 0).unwrap())
-//         .build()
-//         .unwrap();
-//         let tmp = tmp
-//             .take(10)
-//             .collect::<Vec<NextResult<DateTime<_>>>>()
-//             .unwrap();
-//         dbg!(&tmp);
-//     }
-// }

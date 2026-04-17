@@ -141,7 +141,7 @@ fn parse_spec(input: &str) -> Result<Spec> {
             minutes,
             seconds,
         }),
-        Err(_) => Err(Error::ParseError("Failed to parse time spec")),
+        Err(_) => Err(Error::InvalidTimeSpec(format!("failed to parse: {input}"))),
     }
 }
 

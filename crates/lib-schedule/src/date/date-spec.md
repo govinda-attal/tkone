@@ -56,13 +56,15 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 |--------|---------|
 | `~NW` | If result is a weekend, move to **next** weekday (WeekendSkipper) |
 | `~PW` | If result is a weekend, move to **previous** weekday (WeekendSkipper) |
-| `~W` / `~NB` | If result is not a biz day, move to **next** biz day (configured processor) |
-| `~B` / `~PB` | If result is not a biz day, move to **previous** biz day (configured processor) |
+| `~W`  | If result is a weekend, move to **nearest** weekday (Mon or Fri, WeekendSkipper) |
+| `~NB` | If result is not a biz day, move to **next** biz day (configured processor) |
+| `~PB` | If result is not a biz day, move to **previous** biz day (configured processor) |
+| `~B`  | If result is not a biz day, move to **nearest** biz day (configured processor) |
 | `~nN` | **Unconditional**: add *n* biz days (e.g. `~2N`) |
 | `~nP` | **Unconditional**: subtract *n* biz days (e.g. `~3P`) |
 
-`~NW`/`~PW` always use the built-in WeekendSkipper (Sat/Sun only).  
-`~W`/`~B` use the configured `BizDayProcessor` and can account for custom holidays.  
+`~NW`/`~PW`/`~W` always use the built-in WeekendSkipper (Sat/Sun only).  
+`~NB`/`~PB`/`~B` use the configured `BizDayProcessor` and can account for custom holidays.  
 `~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.
 
 ---

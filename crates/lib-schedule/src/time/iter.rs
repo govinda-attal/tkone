@@ -271,7 +271,7 @@ impl NaiveSpecIterator {
         let spec = spec.parse()?;
         let end = Self::new_after(end_spec, start.clone())?
             .next()?
-            .ok_or(Error::Custom("invalid end spec"))?;
+            .ok_or(Error::InvalidEndSpec)?;
         Ok(Self {
             end: Some(end),
             spec,

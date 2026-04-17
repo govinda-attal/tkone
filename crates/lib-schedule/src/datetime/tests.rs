@@ -11,7 +11,7 @@ type NR<Tz> = NextResult<DateTime<Tz>>;
 // Group 1: Fixed time — one tick per valid calendar date (specs 1–5)
 // ---------------------------------------------------------------------------
 
-/// Spec 1: `YY-1M-31L~WT11:00:00` — last business day of each month at 11:00
+/// Spec 1: `YY-1M-31L~NBT11:00:00` — last business day of each month at 11:00
 ///
 /// Apr 30 (Wed) → Single.
 /// May 31 (Sat) → AdjustedLater, observed = Jun 2 (Mon).
@@ -21,7 +21,7 @@ fn test_last_biz_day_monthly_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
     let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~WT11:00:00",
+        "YY-1M-31L~NBT11:00:00",
         WeekendSkipper::new(),
         start,
     )
@@ -307,7 +307,7 @@ fn test_monthly_15th_every_4h() {
 // Group 3: Every-N-minutes — many ticks per date (specs 9–10)
 // ---------------------------------------------------------------------------
 
-/// Spec 9: `YY-1M-31L~WTHH:30M:00` — last business day of each month, every 30 min
+/// Spec 9: `YY-1M-31L~NBTHH:30M:00` — last business day of each month, every 30 min
 ///
 /// Same-day consecutive ticks are exactly 30 min apart.
 /// All ticks fall on weekdays.
@@ -317,7 +317,7 @@ fn test_last_biz_day_every_30min() {
     let start = tz.with_ymd_and_hms(2025, 1, 31, 8, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 3, 31, 18, 0, 0).unwrap();
     let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~WTHH:30M:00",
+        "YY-1M-31L~NBTHH:30M:00",
         WeekendSkipper::new(),
         start,
     )
@@ -465,7 +465,7 @@ fn test_adjusted_later_only_on_first_intraday_tick() {
     let start = tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 6, 2, 2, 0, 0).unwrap();
     let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~WTHH:30M:00",
+        "YY-1M-31L~NBTHH:30M:00",
         WeekendSkipper::new(),
         start,
     )
@@ -766,7 +766,7 @@ fn test_biz_day_adjustment_does_not_skip_next_month() {
     let start = tz.with_ymd_and_hms(2025, 5, 1, 11, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 8, 1, 11, 0, 0).unwrap();
     let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~WT11:00:00",
+        "YY-1M-31L~NBT11:00:00",
         WeekendSkipper::new(),
         start,
     )
@@ -802,7 +802,7 @@ fn test_ny_timezone_last_biz_day_11am() {
     let start = ny.with_ymd_and_hms(2024, 11, 29, 11, 0, 0).unwrap();
     let end = ny.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
     let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~WT11:00:00",
+        "YY-1M-31L~NBT11:00:00",
         WeekendSkipper::new(),
         start,
     )

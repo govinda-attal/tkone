@@ -76,12 +76,12 @@ typically has fewer ticks than subsequent dates when started mid-day.
 
 ### 6. `AdjustedLater` / `AdjustedEarlier` propagation
 
-When the date spec applies a business-day adjustment (e.g. `~W`), the adjustment metadata is
+When the date spec applies a business-day adjustment (e.g. `~NB`), the adjustment metadata is
 carried forward to the **first tick only** on the adjusted (observed) date.  All subsequent
 intra-day ticks on the same date are emitted as `Single`.
 
 ```
-May 31 (Sat) ~W → Jun 2 (Mon), time spec HH:30M:00:
+May 31 (Sat) ~NB → Jun 2 (Mon), time spec HH:30M:00:
 
  first tick  → AdjustedLater(actual=2025-05-31 00:00, observed=2025-06-02 00:00)
  second tick → Single(2025-06-02 00:30)
@@ -118,12 +118,12 @@ The start datetime is always returned as the first result (passthrough).
 
 ---
 
-### 1. `YY-1M-31L~WT11:00:00` — Last business day of each month at 11:00
+### 1. `YY-1M-31L~NBT11:00:00` — Last business day of each month at 11:00
 
 **Start:** 2025-01-31 11:00:00
 
 The date spec visits the last calendar day of each month (`31L` = clamp to last day), then
-adjusts to the previous business day if it falls on a weekend (`~W` = next business day if not
+adjusts to the next business day if it falls on a weekend (`~NB` = next business day if not
 already one using the configured processor).  One tick per date at 11:00.
 
 ```
@@ -335,7 +335,7 @@ Jan 15 emits only 4 ticks (08:00–20:00).  Feb 15 onward emits 6 ticks (00:00�
 
 ---
 
-### 9. `YY-1M-31L~WTHH:30M:00` — Last business day of month, every 30 minutes
+### 9. `YY-1M-31L~NBTHH:30M:00` — Last business day of month, every 30 minutes
 
 **Start:** 2025-01-31 08:00:00
 
@@ -428,7 +428,7 @@ One tick per date at 11:00; result type carries the overflow metadata.
 
 ---
 
-### 12. `YY-1M-31L~WTH:30M:00` (sub-daily on adjusted date)
+### 12. `YY-1M-31L~NBTH:30M:00` (sub-daily on adjusted date)
 
 **Start:** 2025-01-31 08:00:00
 
@@ -630,7 +630,7 @@ Only the **first** tick of an adjusted date is wrapped in `AdjustedLater`.  All 
 ticks on the same observed date are returned as `Single`.
 
 ```
-YY-1M-31L~WTHH:30M:00  (last biz day monthly, every 30 min)
+YY-1M-31L~NBTHH:30M:00  (last biz day monthly, every 30 min)
 
 May 31 (Sat) → Jun 2 (Mon):
  tick  1: AdjustedLater(actual=May 31 00:00, observed=Jun 2 00:00)
@@ -654,7 +654,7 @@ the *observed* tick's time.  There is no "natural time for the actual date" conc
 time spec drives the observed date's window and the actual date simply inherits that time.
 
 ```
-YY-1M-31L~WT11:00:00
+YY-1M-31L~NBT11:00:00
 
 May 31 (Sat) → Jun 2 (Mon):
  AdjustedLater(

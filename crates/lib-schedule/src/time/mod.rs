@@ -48,6 +48,7 @@
 //! // → 09:00, 10:00, 11:00, 12:00, 13:00
 //! ```
 //! *Run `cargo run -p lib-schedule --example time_recurrence` for a complete program.*
+#![doc = include_str!("time-spec.md")]
 
 mod iter;
 mod spec;

@@ -159,11 +159,12 @@ pub enum NextNthDayOption {
 ///
 /// | Spec token | Variant | Condition | Effect |
 /// |------------|---------|-----------|--------|
-/// | `~W` | `BizDay(Next)` | non-biz day | roll to next business day |
-/// | `~B` | `BizDay(Prev)` | non-biz day | roll to previous business day |
-/// | `~NB` | `BizDay(Nearest)` | non-biz day | roll to nearest business day |
+/// | `~W` | `Weekday(Nearest)` | weekend | roll to nearest weekday (Mon or Fri) |
 /// | `~NW` | `Weekday(Next)` | weekend | roll to next weekday |
 /// | `~PW` | `Weekday(Prev)` | weekend | roll to previous weekday |
+/// | `~B` | `BizDay(Nearest)` | non-biz day | roll to nearest business day |
+/// | `~NB` | `BizDay(Next)` | non-biz day | roll to next business day |
+/// | `~PB` | `BizDay(Prev)` | non-biz day | roll to previous business day |
 /// | `~3P` | `Prev(3)` | always | 3 business days earlier |
 /// | `~2N` | `Next(2)` | always | 2 business days later |
 #[derive(Debug, PartialEq, Eq, Default, Clone)]

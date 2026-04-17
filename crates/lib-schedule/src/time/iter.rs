@@ -5,7 +5,8 @@ use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};
-use crate::prelude::*;
+use crate::utils::resolve_local;
+use crate::{prelude::*, DstPolicy};
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
@@ -35,7 +36,19 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     start: START,
     spec: String,
     end: END,
+    dst_policy: DstPolicy,
     marker_sealed: PhantomData<S>,
+}
+
+impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
+    /// Override the DST resolution policy for this iterator.
+    ///
+    /// Defaults to [`DstPolicy::Adjust`]. Set to [`DstPolicy::Strict`] to
+    /// receive [`Error::AmbiguousLocalTime`] instead of silent adjustment.
+    pub fn with_dst_policy(mut self, policy: DstPolicy) -> Self {
+        self.dst_policy = policy;
+        self
+    }
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
@@ -55,12 +68,13 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             start: NoStart,
             spec: spec.to_string(),
             end: NoEnd,
+            dst_policy: DstPolicy::default(),
             marker_sealed: PhantomData,
         }
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_after(&self.spec, self.dtm)
+        SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)
     }
 }
 
@@ -77,6 +91,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             start: StartDateTime(start),
             spec: spec.to_string(),
             end: NoEnd,
+            dst_policy: DstPolicy::default(),
             marker_sealed: PhantomData,
         }
     }
@@ -94,6 +109,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             start: self.start,
             spec: self.spec,
             end: EndDateTime(end),
+            dst_policy: self.dst_policy,
             marker_sealed: PhantomData,
         }
     }
@@ -112,24 +128,25 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             start: self.start,
             spec: self.spec,
             end: EndSpec(end_spec.into()),
+            dst_policy: self.dst_policy,
             marker_sealed: PhantomData,
         }
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_with_start(&self.spec, self.dtm)
+        SpecIterator::new_with_start(&self.spec, self.dtm, self.dst_policy)
     }
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_with_end(&self.spec, self.dtm, self.end.0)
+        SpecIterator::new_with_end(&self.spec, self.dtm, self.end.0, self.dst_policy)
     }
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_with_end_spec(&self.spec, self.dtm, &self.end.0)
+        SpecIterator::new_with_end_spec(&self.spec, self.dtm, &self.end.0, self.dst_policy)
     }
 }
 
@@ -162,27 +179,31 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
 #[derive(Debug, Clone)]
 pub struct SpecIterator<Tz: TimeZone> {
     tz: Tz,
+    dst_policy: DstPolicy,
     naive_spec_iter: NaiveSpecIterator,
 }
 
 impl<Tz: TimeZone> SpecIterator<Tz> {
-    fn new_after(spec: &str, dtm: DateTime<Tz>) -> Result<Self> {
+    fn new_after(spec: &str, dtm: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
         Ok(Self {
             tz: dtm.timezone(),
+            dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_after(spec, dtm.naive_local())?,
         })
     }
 
-    fn new_with_start(spec: &str, start: DateTime<Tz>) -> Result<Self> {
+    fn new_with_start(spec: &str, start: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
         Ok(Self {
             tz: start.timezone(),
+            dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_start(spec, start.naive_local())?,
         })
     }
 
-    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>) -> Result<Self> {
+    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
         Ok(Self {
             tz: start.timezone(),
+            dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_end(
                 spec,
                 start.naive_local(),
@@ -191,9 +212,10 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         })
     }
 
-    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str) -> Result<Self> {
+    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str, dst_policy: DstPolicy) -> Result<Self> {
         Ok(Self {
             tz: start.timezone(),
+            dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
                 spec,
                 start.naive_local(),
@@ -405,7 +427,7 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
         let Some(next) = item else {
             return Ok(None);
         };
-        Ok(Some(Self::Item::from(W((self.tz.clone(), next.clone())))))
+        Ok(Some(resolve_local(&self.tz, next, self.dst_policy)?))
     }
 }
 
@@ -425,7 +447,7 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
         dbg!(&dtm.to_rfc3339());
         let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
-        let spec_ter = SpecIterator::new_after("HH:30M:00", dt).unwrap();
+        let spec_ter = SpecIterator::new_after("HH:30M:00", dt, DstPolicy::default()).unwrap();
         dbg!(spec_ter.take(6).collect::<Vec<DateTime<_>>>().unwrap());
     }
 
@@ -437,7 +459,7 @@ mod tests {
         let dtm = london.with_ymd_and_hms(2021, 10, 31, 00, 30, 0).unwrap();
         dbg!(&dtm);
         // let dt = DateTime::parse_from_rfc3339("2023-03-11T23:00:00-05:00").unwrap();
-        let spec_ter = SpecIterator::new_after("1H:MM:00", dtm).unwrap();
+        let spec_ter = SpecIterator::new_after("1H:MM:00", dtm, DstPolicy::default()).unwrap();
         dbg!(spec_ter.take(5).collect::<Vec<DateTime<_>>>().unwrap());
     }
 
@@ -449,7 +471,7 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
         dbg!(&dtm);
 
-        let spec_iter = SpecIterator::new_with_end_spec("3H:00:00", dtm, "15H:00:00").unwrap();
+        let spec_iter = SpecIterator::new_with_end_spec("3H:00:00", dtm, "15H:00:00", DstPolicy::default()).unwrap();
 
         let tmp = spec_iter.collect::<Vec<DateTime<_>>>().unwrap();
         dbg!(tmp);
@@ -458,7 +480,7 @@ mod tests {
     #[test]
     fn test_time_spec_with_utc() {
         let start = Utc.with_ymd_and_hms(2024, 3, 31, 10, 0, 0).unwrap();
-        let iter = SpecIterator::new_with_start("1H:00:00", start).unwrap();
+        let iter = SpecIterator::new_with_start("1H:00:00", start, DstPolicy::default()).unwrap();
         let occurrences = iter.take(3).collect::<Vec<DateTime<_>>>().unwrap();
 
         assert_eq!(
@@ -475,7 +497,7 @@ mod tests {
     #[test]
     fn test_foreach_seconds_drives() {
         let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-        let iter = SpecIterator::new_with_start("HH:MM:SS", start).unwrap();
+        let iter = SpecIterator::new_with_start("HH:MM:SS", start, DstPolicy::default()).unwrap();
         let results = iter.take(4).collect::<Vec<DateTime<_>>>().unwrap();
         assert_eq!(
             results,
@@ -492,7 +514,7 @@ mod tests {
     #[test]
     fn test_foreach_minutes_drives() {
         let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-        let iter = SpecIterator::new_with_start("HH:MM:00", start).unwrap();
+        let iter = SpecIterator::new_with_start("HH:MM:00", start, DstPolicy::default()).unwrap();
         let results = iter.take(4).collect::<Vec<DateTime<_>>>().unwrap();
         assert_eq!(
             results,
@@ -509,7 +531,7 @@ mod tests {
     #[test]
     fn test_foreach_hours_drives() {
         let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-        let iter = SpecIterator::new_with_start("HH:00:00", start).unwrap();
+        let iter = SpecIterator::new_with_start("HH:00:00", start, DstPolicy::default()).unwrap();
         let results = iter.take(4).collect::<Vec<DateTime<_>>>().unwrap();
         assert_eq!(
             results,
@@ -526,7 +548,7 @@ mod tests {
     #[test]
     fn test_every_h_foreach_carry() {
         let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();
-        let iter = SpecIterator::new_with_start("1H:MM:SS", start).unwrap();
+        let iter = SpecIterator::new_with_start("1H:MM:SS", start, DstPolicy::default()).unwrap();
         let results = iter.take(3).collect::<Vec<DateTime<_>>>().unwrap();
         assert_eq!(
             results,

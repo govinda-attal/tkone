@@ -131,7 +131,7 @@
 //! | `L`   | Last day of the month |
 //! | `31L` | 31st, or last day if the month is shorter |
 //! | `31N` | 31st, or 1st of next month if the month is shorter |
-//! | `31O` | 31st, or overflow into next month (e.g. → Feb 3 for Mar 31 in Feb) |
+//! | `31O` | 31st, or overflow remainder days into next month (e.g. → Mar 3 when Feb has 28 days) |
 //! | `nD`  | Advance *n* calendar days |
 //! | `nBD` | Advance *n* business days |
 //! | `nWD` | Advance *n* weekdays (Mon–Fri) |
@@ -223,6 +223,28 @@ mod prelude;
 mod utils;
 
 pub use error::{Error, Result};
+
+/// Controls how timezone-aware iterators resolve local datetimes that fall in
+/// a DST transition window.
+///
+/// Applies to [`date::SpecIterator`], [`time::SpecIterator`], and
+/// [`datetime::SpecIterator`] whenever a naive datetime produced by the
+/// schedule spec must be mapped to an unambiguous `DateTime<Tz>`.
+///
+/// Configure via `.with_dst_policy(…)` on any [`SpecIteratorBuilder`](date::SpecIteratorBuilder).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DstPolicy {
+    /// Silently resolve DST edge cases — the default.
+    ///
+    /// - **Spring-forward gap** (e.g. `02:30` does not exist): advance one
+    ///   hour and take the latest UTC offset.
+    /// - **Fall-back overlap** (e.g. `01:30` is ambiguous): take the earliest
+    ///   UTC offset (still in summer time).
+    #[default]
+    Adjust,
+    /// Return [`Error::AmbiguousLocalTime`] instead of silently resolving.
+    Strict,
+}
 
 /// Outcome of a single scheduling step, distinguishing raw calendar dates from
 /// business-day-adjusted settlement dates.

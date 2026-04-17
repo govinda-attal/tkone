@@ -33,15 +33,17 @@
 //!
 //! // Every Friday
 //! let start = Utc.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap();
-//! # let _: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-FRI", bdp.clone(), start)
-//! #     .build().unwrap().take(4).collect().unwrap();
+//! let _: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-FRI", bdp.clone(), start)
+//!     .build().unwrap().take(4).collect().unwrap();
+//! // → 2025-01-03, 2025-01-10, 2025-01-17, 2025-01-24
 //!
-//! // Bounded: last biz-day of each month until end of year
+//! // Bounded: last nearest weekday of each month until end of year
 //! let end = Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap();
-//! # let _: Vec<_> = SpecIteratorBuilder::new_with_start("YY-1M-L~W", bdp, start)
-//! #     .with_end(end).build().unwrap().collect().unwrap();
+//! let _: Vec<_> = SpecIteratorBuilder::new_with_start("YY-1M-L~W", bdp, start)
+//!     .with_end(end).build().unwrap().collect().unwrap();
 //! ```
 //! *Run `cargo run -p lib-schedule --example date_recurrence` for a complete program.*
+#![doc = include_str!("date-spec.md")]
 
 mod component;
 mod iter;

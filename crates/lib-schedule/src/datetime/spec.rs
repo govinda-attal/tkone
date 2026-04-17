@@ -15,7 +15,7 @@ static DATE_TIME_SEP: LazyLock<Regex> =
 /// Format: `<date_spec>T<time_spec>`
 ///
 /// ## Examples
-/// - `"YY-1M-31L~WT11:00:00"` — last business day of each month at 11:00
+/// - `"YY-1M-31L~WT11:00:00"` — last day of each month adjusted to nearest weekday at 11:00
 /// - `"YY-MM-MONT1H:00:00"` — every Monday, every hour
 /// - `"YY-MM-FRI#LT16:30:00"` — last Friday of each month at 16:30
 #[derive(Debug, Clone)]

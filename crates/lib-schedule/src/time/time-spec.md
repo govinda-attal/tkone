@@ -2,7 +2,7 @@
 
 ## Format
 
-```
+```text
 HH:MM:SS
 ```
 
@@ -97,7 +97,7 @@ All examples use `new_with_start` semantics: the start datetime is always return
 
 Hours advance by 1; minutes and seconds are pinned to 00.
 
-```
+```text
  1.  10:00:00
  2.  11:00:00
  3.  12:00:00
@@ -116,7 +116,7 @@ Hours advance by 1; minutes and seconds are pinned to 00.
 
 **Start:** 08:00:00
 
-```
+```text
  1.  08:00:00
  2.  10:00:00
  3.  12:00:00
@@ -137,7 +137,7 @@ Hours advance by 1; minutes and seconds are pinned to 00.
 
 Six ticks per day; day boundary crossed transparently.
 
-```
+```text
  1.  2025-01-01 00:00:00
  2.  2025-01-01 04:00:00
  3.  2025-01-01 08:00:00
@@ -158,7 +158,7 @@ Six ticks per day; day boundary crossed transparently.
 
 Four ticks per day.
 
-```
+```text
  1.  2025-01-01 06:00:00
  2.  2025-01-01 12:00:00
  3.  2025-01-01 18:00:00
@@ -177,7 +177,7 @@ Four ticks per day.
 
 `Every(30)` drives; `HH` (ForEach) carries; `00` pins seconds.
 
-```
+```text
  1.  09:00:00
  2.  09:30:00
  3.  10:00:00
@@ -196,7 +196,7 @@ Four ticks per day.
 
 **Start:** 09:00:00
 
-```
+```text
  1.  09:00:00
  2.  09:15:00
  3.  09:30:00
@@ -215,7 +215,7 @@ Four ticks per day.
 
 **Start:** 09:00:00
 
-```
+```text
  1.  09:00:00
  2.  09:10:00
  3.  09:20:00
@@ -234,7 +234,7 @@ Four ticks per day.
 
 **Start:** 09:00:00
 
-```
+```text
  1.  09:00:00
  2.  09:05:00
  3.  09:10:00
@@ -255,7 +255,7 @@ Four ticks per day.
 
 `Every(30)` drives; `HH` and `MM` (ForEach) carry.
 
-```
+```text
  1.  09:00:00
  2.  09:00:30
  3.  09:01:00
@@ -274,7 +274,7 @@ Four ticks per day.
 
 **Start:** 09:00:00
 
-```
+```text
  1.  09:00:00
  2.  09:00:15
  3.  09:00:30
@@ -295,7 +295,7 @@ Four ticks per day.
 
 No `Every` component; `SS` (ForEach) is the finest component → drives by 1 second. `MM` and `HH` carry.
 
-```
+```text
  1.  09:00:00
  2.  09:00:01
  3.  09:00:02
@@ -318,7 +318,7 @@ Seconds overflow into minutes naturally: …09:00:59, 09:01:00, 09:01:01, …
 
 No `Every` component; `SS` is `At(0)` (not a driver); `MM` (ForEach) is the finest wildcard → drives by 1 minute. `HH` carries.
 
-```
+```text
  1.  09:00:00
  2.  09:01:00
  3.  09:02:00
@@ -341,7 +341,7 @@ Minutes overflow into hours: …09:59:00, 10:00:00, 10:01:00, …
 
 No `Every` component; both `SS` and `MM` are `At(0)`; `HH` (ForEach) is the only wildcard → drives by 1 hour. Equivalent to `1H:00:00`.
 
-```
+```text
  1.  09:00:00
  2.  10:00:00
  3.  11:00:00
@@ -360,7 +360,7 @@ No `Every` component; both `SS` and `MM` are `At(0)`; `HH` (ForEach) is the only
 
 Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
-```
+```text
 1.  09:30:00
 2.  10:30:00
 3.  11:30:00
@@ -377,7 +377,7 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
 **Start:** 08:15:00
 
-```
+```text
  1.  08:15:00
  2.  10:15:00
  3.  12:15:00
@@ -396,7 +396,7 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
 **Start:** 09:45:00
 
-```
+```text
 1.  09:45:00
 2.  12:45:00
 3.  15:45:00
@@ -415,7 +415,7 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
 `Every(1)` drives hours; `MM` (ForEach) carries the start minute unchanged; seconds pinned to 00.
 
-```
+```text
 1.  09:15:00
 2.  10:15:00
 3.  11:15:00
@@ -434,7 +434,7 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
 `Every(1)` drives hours; both `MM` and `SS` (ForEach) carry. Pure 1-hour rolling advance from any start time.
 
-```
+```text
 1.  09:22:45
 2.  10:22:45
 3.  11:22:45
@@ -453,7 +453,7 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
 `Every(30)` drives minutes; `HH` (ForEach) carries; `15` pins seconds.
 
-```
+```text
 1.  09:00:15
 2.  09:30:15
 3.  10:00:15
@@ -473,7 +473,7 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 The end is computed by applying the end spec once from the start via `new_after`:
 `At(0)` seconds, `At(0)` minutes, `At(13)` hours → **13:00:00**.
 
-```
+```text
 1.  09:00:00
 2.  10:00:00
 3.  11:00:00
@@ -490,7 +490,7 @@ The end is computed by applying the end spec once from the start via `new_after`
 
 End computed: from 09:00:00, apply `Every(3)H` + `Every(30)M` + `ForEach S` (carry) → **12:30:00**.
 
-```
+```text
 1.  09:00:00
 2.  09:30:00
 3.  10:00:00
@@ -522,7 +522,7 @@ No `Every` component; `SS` is `AsIs` (never a driver); `MM` (ForEach) is the fin
 
 Contrast with `HH:MM:00`: that spec pins seconds to `00` on every tick; this one keeps whatever second the start had.
 
-```
+```text
 1.  09:00:45
 2.  09:01:45
 3.  09:02:45
@@ -541,7 +541,7 @@ No `Every` component; `SS` is `At(0)` and `MM` is `AsIs` (neither is a driver); 
 
 Contrast with `HH:00:00`: that spec pins minutes to `00`; this one preserves the original minute.
 
-```
+```text
 1.  09:22:00
 2.  10:22:00
 3.  11:22:00
@@ -558,7 +558,7 @@ Contrast with `HH:00:00`: that spec pins minutes to `00`; this one preserves the
 
 `Every(30)` drives; hours `AsIs` carries (identical observable behaviour to `HH:30M:00` — both variants carry when an `Every` is present).
 
-```
+```text
 1.  09:00:00
 2.  09:30:00
 3.  10:00:00
@@ -575,7 +575,7 @@ Contrast with `HH:00:00`: that spec pins minutes to `00`; this one preserves the
 
 `Every(1)` drives hours; minutes `AsIs` carries (identical observable behaviour to `1H:MM:00`).
 
-```
+```text
 1.  09:15:00
 2.  10:15:00
 3.  11:15:00

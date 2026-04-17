@@ -11,6 +11,8 @@ pub enum Error {
     InvalidEndSpec,
     #[error("schedule iterator did not converge")]
     IteratorNotConverged,
+    #[error("ambiguous or non-existent local time in target timezone: {0}")]
+    AmbiguousLocalTime(String),
     #[error("{0}")]
     Custom(String),
 }

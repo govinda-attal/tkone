@@ -19,7 +19,7 @@
 //!
 //! | Spec string | Meaning |
 //! |-------------|---------|
-//! | `"YY-1M-31L~WT11:00:00"` | Last business day of every month at 11:00 |
+//! | `"YY-1M-31L~WT11:00:00"` | Last day of every month adjusted to nearest weekday at 11:00 |
 //! | `"YY-MM-DDTHH:30M:00"` | Every day, every 30 minutes |
 //! | `"YY-MM-FRI#LT16:30:00"` | Last Friday of each month at 16:30 |
 //! | `"YY-MM-THUT09:30:00"` | Every Thursday at 09:30 |
@@ -43,9 +43,10 @@
 //! let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, start)
 //!     .build().unwrap();
 //!
-//! # let _: Vec<_> = iter.take(3).collect().unwrap();
+//! let _: Vec<_> = iter.take(3).collect().unwrap();
 //! ```
 //! *Run `cargo run -p lib-schedule --example datetime_recurrence` for a complete program.*
+#![doc = include_str!("date-time-spec.md")]
 
 mod iter;
 mod spec;

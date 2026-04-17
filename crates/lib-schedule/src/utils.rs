@@ -1,6 +1,6 @@
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone, Weekday};
+use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Weekday};
 
-use crate::{prelude::*, NextResult};
+use crate::{prelude::*, DstPolicy, NextResult};
 
 impl<Tz: TimeZone> From<W<(Tz, NaiveDateTime)>> for DateTime<Tz> {
     fn from(W((tz, dtm)): W<(Tz, NaiveDateTime)>) -> Self {
@@ -33,6 +33,56 @@ impl<Tz: TimeZone> From<W<(Tz, NextResult<NaiveDateTime>)>> for NextResult<DateT
                 DateTime::<Tz>::from(W((tz, adjusted))),
             ),
         }
+    }
+}
+
+/// Convert a `NaiveDateTime` to `DateTime<Tz>` according to `policy`.
+///
+/// - `Adjust` (default): silently resolves gaps (spring-forward) and overlaps
+///   (fall-back) using the same heuristics as the internal `From<W<…>>` impl.
+/// - `Strict`: returns [`Error::AmbiguousLocalTime`] for any non-unique mapping.
+pub(crate) fn resolve_local<Tz: TimeZone>(
+    tz: &Tz,
+    dtm: NaiveDateTime,
+    policy: DstPolicy,
+) -> Result<DateTime<Tz>> {
+    match tz.from_local_datetime(&dtm) {
+        LocalResult::Single(dt) => Ok(dt),
+        LocalResult::None => match policy {
+            DstPolicy::Adjust => Ok(tz
+                .from_local_datetime(&(dtm + Duration::hours(1)))
+                .latest()
+                .unwrap()),
+            DstPolicy::Strict => Err(Error::AmbiguousLocalTime(format!(
+                "{dtm} does not exist in timezone (DST spring-forward gap)"
+            ))),
+        },
+        LocalResult::Ambiguous(_, _) => match policy {
+            DstPolicy::Adjust => Ok(tz.from_local_datetime(&dtm).earliest().unwrap()),
+            DstPolicy::Strict => Err(Error::AmbiguousLocalTime(format!(
+                "{dtm} is ambiguous in timezone (DST fall-back overlap)"
+            ))),
+        },
+    }
+}
+
+/// Convert a `NextResult<NaiveDateTime>` to `NextResult<DateTime<Tz>>`,
+/// applying `policy` to each embedded naive datetime.
+pub(crate) fn next_result_to_tz<Tz: TimeZone>(
+    tz: &Tz,
+    next: NextResult<NaiveDateTime>,
+    policy: DstPolicy,
+) -> Result<NextResult<DateTime<Tz>>> {
+    match next {
+        NextResult::Single(dtm) => Ok(NextResult::Single(resolve_local(tz, dtm, policy)?)),
+        NextResult::AdjustedEarlier(actual, adjusted) => Ok(NextResult::AdjustedEarlier(
+            resolve_local(tz, actual, policy)?,
+            resolve_local(tz, adjusted, policy)?,
+        )),
+        NextResult::AdjustedLater(actual, adjusted) => Ok(NextResult::AdjustedLater(
+            resolve_local(tz, actual, policy)?,
+            resolve_local(tz, adjusted, policy)?,
+        )),
     }
 }
 

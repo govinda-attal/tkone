@@ -3,7 +3,8 @@ use super::{
     spec::{BizDayAdjustment, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec},
 };
 use crate::biz_day::WeekendSkipper;
-use crate::{biz_day::BizDayProcessor, prelude::*, NextResult};
+use crate::utils::next_result_to_tz;
+use crate::{biz_day::BizDayProcessor, prelude::*, DstPolicy, NextResult};
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
 use std::{marker::PhantomData, sync::LazyLock};
@@ -65,7 +66,22 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
     bd_processor: BDP,
     end: END,
     timezone: Tz,
+    dst_policy: DstPolicy,
     marker_sealed: PhantomData<S>,
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
+    SpecIteratorBuilder<Tz, BDP, START, END, S>
+{
+    /// Override the DST resolution policy for this iterator.
+    ///
+    /// Defaults to [`DstPolicy::Adjust`]. Set to [`DstPolicy::Strict`] to
+    /// receive [`Error::AmbiguousLocalTime`] whenever a scheduled datetime
+    /// falls in a DST gap or overlap instead of being silently adjusted.
+    pub fn with_dst_policy(mut self, policy: DstPolicy) -> Self {
+        self.dst_policy = policy;
+        self
+    }
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
@@ -96,6 +112,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
             spec: spec.to_string(),
             bd_processor: bdp,
             end: NoEnd,
+            dst_policy: DstPolicy::default(),
             marker_sealed: PhantomData,
         }
     }
@@ -103,6 +120,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         Ok(SpecIterator {
             tz: self.dtm.timezone(),
+            dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_after(
                 &self.spec,
                 self.bd_processor,
@@ -119,6 +137,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         let start = self.start.0;
         Ok(SpecIterator {
             tz: start.timezone(),
+            dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_end(
                 &self.spec,
                 self.bd_processor,
@@ -136,6 +155,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         let start = self.start.0;
         Ok(SpecIterator {
             tz: start.timezone(),
+            dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
                 &self.spec,
                 start.naive_local(),
@@ -201,6 +221,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             spec: spec.to_string(),
             bd_processor: bdp,
             end: NoEnd,
+            dst_policy: DstPolicy::default(),
             marker_sealed: PhantomData,
         }
     }
@@ -223,6 +244,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             spec: self.spec,
             bd_processor: self.bd_processor,
             end: EndSpec(end_spec.into()),
+            dst_policy: self.dst_policy,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -243,6 +265,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             spec: self.spec,
             bd_processor: self.bd_processor,
             end: EndDateTime(end),
+            dst_policy: self.dst_policy,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -251,6 +274,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         Ok(SpecIterator::<Tz, BDP> {
             tz: self.start.0.timezone(),
+            dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_start(
                 &self.spec,
                 self.bd_processor,
@@ -305,6 +329,7 @@ static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipp
 #[derive(Debug)]
 pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     tz: Tz,
+    dst_policy: DstPolicy,
     naive_spec_iter: NaiveSpecIterator<BDP>,
 }
 
@@ -317,7 +342,7 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
         let Some(next) = next else {
             return Ok(None);
         };
-        Ok(Some(Self::Item::from(W((self.tz.clone(), next)))))
+        Ok(Some(next_result_to_tz(&self.tz, next, self.dst_policy)?))
     }
 }
 

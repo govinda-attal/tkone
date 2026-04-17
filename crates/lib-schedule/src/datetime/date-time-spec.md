@@ -2,7 +2,7 @@
 
 ## Format
 
-```
+```text
 <date_spec>T<time_spec>
 ```
 
@@ -15,7 +15,7 @@ The `T` character is only treated as the separator when it is immediately follow
 time-like token: `HH:`, `_:`, a bare `<n>H:`, or a two-digit leading hour `<0–2><0–9>:`.
 This prevents weekday names like `TUE` and `THU` from being confused with the separator.
 
-```
+```text
 YY-MM-THUT11:00:00  →  date="YY-MM-THU"  time="11:00:00"   ✓ THU not confused
 YY-MM-TUET11:00:00  →  date="YY-MM-TUE"  time="11:00:00"   ✓ TUE not confused
 YY-MM-DDTHH:30M:00  →  date="YY-MM-DD"   time="HH:30M:00"  ✓ HH: recognised
@@ -80,7 +80,7 @@ When the date spec applies a business-day adjustment (e.g. `~NB`), the adjustmen
 carried forward to the **first tick only** on the adjusted (observed) date.  All subsequent
 intra-day ticks on the same date are emitted as `Single`.
 
-```
+```text
 May 31 (Sat) ~NB → Jun 2 (Mon), time spec HH:30M:00:
 
  first tick  → AdjustedLater(actual=2025-05-31 00:00, observed=2025-06-02 00:00)
@@ -126,7 +126,7 @@ The date spec visits the last calendar day of each month (`31L` = clamp to last 
 adjusts to the next business day if it falls on a weekend (`~NB` = next business day if not
 already one using the configured processor).  One tick per date at 11:00.
 
-```
+```text
  1. Single        2025-01-31 11:00:00  (Fri)
  2. Single        2025-02-28 11:00:00  (Fri)
  3. Single        2025-03-31 11:00:00  (Mon)
@@ -152,7 +152,7 @@ already one using the configured processor).  One tick per date at 11:00.
 
 Three fixed-time ticks per week.  Typical for a market-open notification.
 
-```
+```text
  1. 2025-01-06 09:30:00  Mon
  2. 2025-01-08 09:30:00  Wed
  3. 2025-01-10 09:30:00  Fri
@@ -176,7 +176,7 @@ Three fixed-time ticks per week.  Typical for a market-open notification.
 
 **Start:** 2025-01-03 16:30:00 (Friday)
 
-```
+```text
  1. 2025-01-03 16:30:00
  2. 2025-01-10 16:30:00
  3. 2025-01-17 16:30:00
@@ -202,7 +202,7 @@ Three fixed-time ticks per week.  Typical for a market-open notification.
 
 One tick every three months.  Useful for quarterly reporting reminders.
 
-```
+```text
  1. 2025-01-15 09:00:00
  2. 2025-04-15 09:00:00
  3. 2025-07-15 09:00:00
@@ -221,7 +221,7 @@ One tick every three months.  Useful for quarterly reporting reminders.
 
 **Start:** 2025-01-06 09:30:00
 
-```
+```text
  1. 2025-01-06 09:30:00
  2. 2025-02-03 09:30:00
  3. 2025-03-03 09:30:00
@@ -252,7 +252,7 @@ One tick every three months.  Useful for quarterly reporting reminders.
 `spec_delta` = 6 h.  The initial date starts from 06:00 (passthrough) then advances by 6 h.
 From day 2 onwards all four of the 6-hourly boundaries — including midnight — are emitted.
 
-```
+```text
  1. 2025-01-01 06:00:00  ← start (passthrough)
  2. 2025-01-01 12:00:00
  3. 2025-01-01 18:00:00
@@ -282,7 +282,7 @@ All subsequent days produce 4 ticks (00:00, 06:00, 12:00, 18:00).
 The date spec visits only Mondays.  The time spec fills the day with 24 hourly ticks
 starting at midnight — except the initial Monday, which starts at the passthrough time.
 
-```
+```text
  1. 2025-01-06 09:00:00  ← Mon, passthrough
  2. 2025-01-06 10:00:00
  3. 2025-01-06 11:00:00
@@ -309,7 +309,7 @@ starting at midnight — except the initial Monday, which starts at the passthro
 
 `spec_delta` = 4 h.  Initial month starts at 08:00; all subsequent months start at midnight.
 
-```
+```text
  1. 2025-01-15 08:00:00  ← passthrough
  2. 2025-01-15 12:00:00
  3. 2025-01-15 16:00:00
@@ -345,7 +345,7 @@ The initial date (Jan 31) starts at 08:00, so it emits 32 ticks (08:00–23:30).
 Business-day adjustment: **only the first tick** of an adjusted date is `AdjustedLater`;
 all remaining same-day ticks are `Single`.
 
-```
+```text
  1. 2025-01-31 08:00:00  ← passthrough (Fri)
  2. 2025-01-31 08:30:00
  3. 2025-01-31 09:00:00
@@ -374,7 +374,7 @@ all remaining same-day ticks are `Single`.
 
 `1BD` visits every business day (Mon–Fri).  Weekends are skipped.
 
-```
+```text
  1. 2025-01-01 09:00:00  ← Wed, passthrough
  2. 2025-01-01 13:00:00
  3. 2025-01-01 17:00:00
@@ -408,7 +408,7 @@ all remaining same-day ticks are `Single`.
 `31N` overflows to 1st of next month when the month has fewer than 31 days.
 One tick per date at 11:00; result type carries the overflow metadata.
 
-```
+```text
  1. Single        2025-01-31 11:00:00
  2. AdjustedLater actual=2025-02-28 11:00:00  observed=2025-03-01 11:00:00
  3. Single        2025-03-31 11:00:00
@@ -438,7 +438,7 @@ All 47 remaining 30-minute ticks on Jun 2 are `Single`.
 Illustrative slice around the May/June boundary (Jan–Apr and Jun–Dec are analogous to
 example 9):
 
-```
+```text
   (... Jan 31, Feb 28, Mar 31, Apr 30 as in example 9 ...)
 
   May 31 (Sat) → observed Jun 2 (Mon):
@@ -466,7 +466,7 @@ example 9):
 The 11:00 slot for Jan 15 has already passed at 12:00.  `is_valid` fails for the initial date
 (`first_time = 11:00 ≤ initial_dtm = 12:00`), so Jan 15 is skipped entirely.
 
-```
+```text
  1. 2025-02-15 11:00:00  ← Jan 15 silently skipped
  2. 2025-03-15 11:00:00
  3. 2025-04-15 11:00:00
@@ -486,7 +486,7 @@ The 11:00 slot for Jan 15 has already passed at 12:00.  `is_valid` fails for the
 `09:30 → sec→0 → 09:30 → min→0 → 09:00 → hours+1 → 10:00`.
 The first result is 10:00, not 09:30.  Subsequent results are 11:00, 12:00 … (exact 1 h gaps).
 
-```
+```text
  1. 2025-01-15 10:00:00  ← first tick after 09:30 (not 10:30)
  2. 2025-01-15 11:00:00
  3. 2025-01-15 12:00:00
@@ -510,7 +510,7 @@ The first result is 10:00, not 09:30.  Subsequent results are 11:00, 12:00 … (
 candidate lands in the previous day, the fallback applies `AsIs` to midnight → **00:00:00**.
 The original time is **not** propagated forward.
 
-```
+```text
  1. 2025-01-31 14:30:00  ← passthrough (initial time preserved)
  2. 2025-02-28 00:00:00  ← ⚠ 14:30 lost; midnight carried forward
  3. 2025-03-31 00:00:00
@@ -539,7 +539,7 @@ start's `:22:45`.  On subsequent months `spec_delta = 1 h`, so the synthetic cur
 `date_midnight − 1h = 23:00:00` (minutes=0, seconds=0).  The carry context of `:22:45` is
 **not** preserved across the date gap.
 
-```
+```text
  1. 2025-01-15 09:22:45  ← passthrough
  2. 2025-01-15 10:22:45  ← carry :22:45 preserved on initial date
  3. 2025-01-15 11:22:45
@@ -584,7 +584,7 @@ are understood before use.
 **Behaviour:** when using `new_with_start` at a non-midnight start time, the initial date
 emits fewer ticks than subsequent dates.
 
-```
+```text
 YY-MM-DDT1H:00:00  start=2025-01-01 09:00:00
 
 Jan 1:  09:00, 10:00, ..., 23:00         (15 ticks — from start time)
@@ -606,7 +606,7 @@ date.
 specs (monthly, weekly, etc.) there is no way to carry the previous tick's exact time to the
 new date.
 
-```
+```text
 YY-1M-15T_:30M:00  (AsIs hours, Every(30) minutes, At(0) seconds)
   start=2025-01-15 09:00:00
 
@@ -629,7 +629,7 @@ literal `09`).
 Only the **first** tick of an adjusted date is wrapped in `AdjustedLater`.  All subsequent
 ticks on the same observed date are returned as `Single`.
 
-```
+```text
 YY-1M-31L~NBTHH:30M:00  (last biz day monthly, every 30 min)
 
 May 31 (Sat) → Jun 2 (Mon):
@@ -653,7 +653,7 @@ The `actual` field's *date* is the pre-adjustment calendar date; its *time* is i
 the *observed* tick's time.  There is no "natural time for the actual date" concept — the
 time spec drives the observed date's window and the actual date simply inherits that time.
 
-```
+```text
 YY-1M-31L~NBT11:00:00
 
 May 31 (Sat) → Jun 2 (Mon):
@@ -675,7 +675,7 @@ May 31 time).
 If the time spec's only (or first) tick on the initial date falls at or before `dtm`, the
 iterator skips the initial date entirely and the first result is from the next valid date.
 
-```
+```text
 YY-1M-15T11:00:00  via new_after from 2025-01-15 12:00:00
 
 → Jan 15 skipped; first result = 2025-02-15 11:00:00
@@ -694,7 +694,7 @@ Carry-component values (minutes, seconds in `1H:MM:SS`) are derived from the syn
 `date_midnight − spec_delta`, which has fixed, predictable values (not the actual
 minutes/seconds of the previous tick).  On a monthly date spec the carry resets each month.
 
-```
+```text
 YY-1M-15T1H:MM:SS  start=2025-01-15 09:22:45
 
 Jan 15:  09:22:45, 10:22:45, 11:22:45, ...  ← :22:45 preserved
@@ -711,7 +711,7 @@ occur.  For any date spec that skips days, carry context is reset on each new da
 
 **Spec:** sub-minute time specs (`HH:MM:SS`, `HH:MM:00`) on daily or more-frequent date specs
 
-```
+```text
 YY-MM-DDTHH:MM:SS  →  86 400 results per day  (every second)
 YY-MM-DDTHH:MM:00  →   1 440 results per day  (every minute)
 YY-MM-DDTHH:30M:00 →      48 results per day  (every 30 minutes)

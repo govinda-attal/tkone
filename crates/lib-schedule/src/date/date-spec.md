@@ -2,7 +2,7 @@
 
 ## Format
 
-```
+```text
 YEAR-MONTH-DAY[~ADJUSTMENT]
 ```
 
@@ -83,7 +83,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 **Start:** 2025-01-01
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-02
  3. 2025-01-03
@@ -107,7 +107,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 **Start:** 2025-01-01
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-08
  3. 2025-01-15
@@ -131,7 +131,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 **Start:** 2025-01-01
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-15
  3. 2025-01-29
@@ -155,7 +155,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 **Start:** 2025-01-01 (Wednesday)
 
-```
+```text
  1. 2025-01-01  Wed
  2. 2025-01-02  Thu
  3. 2025-01-03  Fri
@@ -179,7 +179,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 **Start:** 2025-01-01 (Wednesday)
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-08
  3. 2025-01-15
@@ -205,7 +205,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 Identical to `1BD` when no custom holidays are configured.
 
-```
+```text
  1. 2025-01-01  Wed
  2. 2025-01-02  Thu
  3. 2025-01-03  Fri
@@ -229,7 +229,7 @@ Identical to `1BD` when no custom holidays are configured.
 
 **Start:** 2025-01-15
 
-```
+```text
  1. 2025-01-15
  2. 2025-02-15
  3. 2025-03-15
@@ -253,7 +253,7 @@ Identical to `1BD` when no custom holidays are configured.
 
 **Start:** 2025-01-31
 
-```
+```text
  1. 2025-01-31
  2. 2025-02-28
  3. 2025-03-31
@@ -280,7 +280,7 @@ Identical to `1BD` when no custom holidays are configured.
 Produces identical output to `YY-1M-L` when started on the last day.
 The `L` suffix means: if day 31 does not exist this month, use the last day instead.
 
-```
+```text
  1. 2025-01-31
  2. 2025-02-28  ← clamped (Feb has 28 days)
  3. 2025-03-31
@@ -306,7 +306,7 @@ The `L` suffix means: if day 31 does not exist this month, use the last day inst
 
 The `N` suffix means: when day 31 overflows, `actual` = last day of month, `observed` = 1st of the following month.
 
-```
+```text
  1. Single        2025-01-31
  2. AdjustedLater actual=2025-02-28  observed=2025-03-01
  3. Single        2025-03-31
@@ -334,7 +334,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 - February (28 days): overflow = 3 → observed = Mar 1 + 2 = **Mar 3**
 - 30-day months: overflow = 1 → observed = 1st of next month + 0 = **1st of next month**
 
-```
+```text
  1. Single        2025-01-31
  2. AdjustedLater actual=2025-02-28  observed=2025-03-03
  3. Single        2025-03-31
@@ -358,7 +358,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-06 (Monday)
 
-```
+```text
  1. 2025-01-06
  2. 2025-01-13
  3. 2025-01-20
@@ -382,7 +382,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-06
 
-```
+```text
  1. 2025-01-06
  2. 2025-02-03
  3. 2025-03-03
@@ -406,7 +406,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-31 (Friday)
 
-```
+```text
  1. 2025-01-31
  2. 2025-02-28
  3. 2025-03-28
@@ -430,7 +430,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-22
 
-```
+```text
  1. 2025-01-22  (last Wed=Jan 29, 2nd-to-last=Jan 22)
  2. 2025-02-19  (last Wed=Feb 26, 2nd-to-last=Feb 19)
  3. 2025-03-19  (last Wed=Mar 26, 2nd-to-last=Mar 19)
@@ -454,7 +454,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-01
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-15
  3. 2025-02-01
@@ -478,7 +478,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-06 (Monday)
 
-```
+```text
  1. 2025-01-06  Mon
  2. 2025-01-08  Wed
  3. 2025-01-10  Fri
@@ -502,7 +502,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-15
 
-```
+```text
  1. 2025-01-15
  2. 2025-04-15
  3. 2025-07-15
@@ -526,7 +526,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-31
 
-```
+```text
  1. 2025-01-31
  2. 2025-04-30
  3. 2025-07-31
@@ -550,7 +550,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-01-01
 
-```
+```text
  1. 2025-01-01
  2. 2025-07-01
  3. 2026-01-01
@@ -574,7 +574,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-06-15
 
-```
+```text
  1. 2025-06-15
  2. 2026-06-15
  3. 2027-06-15
@@ -598,7 +598,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 **Start:** 2025-06-15
 
-```
+```text
  1. 2025-06-15
  2. 2027-06-15
  3. 2029-06-15
@@ -624,7 +624,7 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 
 The two clocks compose: each tick adds 1 year AND 3 months to the calendar position, so the month drifts forward each year.
 
-```
+```text
  1. 2025-06-15
  2. 2026-09-15
  3. 2027-12-15
@@ -650,7 +650,7 @@ The two clocks compose: each tick adds 1 year AND 3 months to the calendar posit
 
 Year cycle = every 2 years from start; within each valid year, both months are visited.
 
-```
+```text
  1. 2025-03-01
  2. 2025-09-01
  3. 2027-03-01
@@ -676,7 +676,7 @@ Year cycle = every 2 years from start; within each valid year, both months are v
 
 The iterator exhausts after December 2025 (12 results total).
 
-```
+```text
  1. 2025-01-01
  2. 2025-02-01
  3. 2025-03-01
@@ -700,7 +700,7 @@ The iterator exhausts after December 2025 (12 results total).
 
 Iterator exhausts after 2026-12-15 (48 results total). First 15 shown:
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-15
  3. 2025-02-01
@@ -726,7 +726,7 @@ Iterator exhausts after 2026-12-15 (48 results total). First 15 shown:
 
 After Jan 29 the remaining step (Jan 33) is outside January, so the sequence resets to Jan 1 of the next year.
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-05
  3. 2025-01-09
@@ -752,7 +752,7 @@ After Jan 29 the remaining step (Jan 33) is outside January, so the sequence res
 
 Within each constrained month the 7-day sequence starts fresh from the 1st. After the month is exhausted the iterator moves to the next valid month (or Jan of the next valid year).
 
-```
+```text
  1. 2025-01-01
  2. 2025-01-08
  3. 2025-01-15
@@ -778,7 +778,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 `~NW` is conditional: only adjusts when the target date falls on Saturday or Sunday.
 
-```
+```text
  1. Single        2025-01-15  Wed
  2. AdjustedLater actual=2025-02-15 Sat  observed=2025-02-17 Mon
  3. AdjustedLater actual=2025-03-15 Sat  observed=2025-03-17 Mon
@@ -802,7 +802,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 **Start:** 2025-01-15
 
-```
+```text
  1. Single          2025-01-15  Wed
  2. AdjustedEarlier actual=2025-02-15 Sat  observed=2025-02-14 Fri
  3. AdjustedEarlier actual=2025-03-15 Sat  observed=2025-03-14 Fri
@@ -828,7 +828,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 `~3P` is **unconditional** — every result is shifted back 3 business days (WeekendSkipper), regardless of what day the 15th falls on.
 
-```
+```text
  1. AdjustedEarlier actual=2025-01-15 Wed  observed=2025-01-10 Fri
  2. AdjustedEarlier actual=2025-02-15 Sat  observed=2025-02-12 Wed
  3. AdjustedEarlier actual=2025-03-15 Sat  observed=2025-03-12 Wed
@@ -854,7 +854,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 `~2N` is **unconditional** — every result is pushed forward 2 business days.
 
-```
+```text
  1. AdjustedLater actual=2025-01-31 Fri  observed=2025-02-04 Tue
  2. AdjustedLater actual=2025-02-28 Fri  observed=2025-03-04 Tue
  3. AdjustedLater actual=2025-03-31 Mon  observed=2025-04-02 Wed
@@ -916,7 +916,7 @@ The following combinations are either silently broken, produce no results, or lo
 
 **Problem:** The `MM` (every-month) component relies on the month iterator to self-advance. However, `find_next_in_month_cycle` for `ForEach` always returns the current date unchanged — it never independently steps the month forward. As a result, **only the start month is ever visited** after the first year-tick. The spec silently degenerates to `nY-{start_month}-DD`.
 
-```
+```text
 Intended:  2Y-MM-15  starting 2025-03-15  →  2025-03-15, 2025-04-15, 2025-05-15 … 2027-03-15 …
 Actual:    2Y-MM-15  starting 2025-03-15  →  2025-03-15  (only March, every 2 years)
 ```
@@ -931,7 +931,7 @@ Actual:    2Y-MM-15  starting 2025-03-15  →  2025-03-15  (only March, every 2 
 
 **Problem:** This is the same root issue as above but with `n=1`. The month wildcard does not self-advance — the iteration stays pinned to the start month. For monthly-in-every-year behaviour, the correct spec is `YY-1M-DD` (which sets the year to `AsIs` and the month to `NextNth(1)`).
 
-```
+```text
 Intended:  1Y-MM-15  →  every 15th of every month
 Actual:    1Y-MM-15  →  every 15th of the start month only, annually
 ```
@@ -946,7 +946,7 @@ Actual:    1Y-MM-15  →  every 15th of the start month only, annually
 
 **Problem:** Without an overflow suffix (`L`, `N`, or `O`), day 30 or 31 in February (`02`) simply does not exist. The iterator will find no valid date in any February and will either skip February silently or, in pathological cases, loop without progress.
 
-```
+```text
 YY-02-30  →  no February result (day 30 never exists)
 YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb)
 ```

@@ -1,0 +1,20 @@
+[package]
+name = "lib-trigger"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+
+[lib]
+
+[package.metadata.rdme]
+readme-path = "README.md"
+
+[dependencies]
+lib-schedule = { path = "../lib-schedule" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
+tokio-util = { version = "0.7" }
+chrono = { version = "0.4" }
+fallible-iterator = "0.3"
+
+[dev-dependencies]
+thiserror = "2.0"

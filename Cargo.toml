@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/lib-schedule","crates/lib-utils"
+    "crates/lib-schedule","crates/lib-utils","crates/lib-trigger"
 ]
 

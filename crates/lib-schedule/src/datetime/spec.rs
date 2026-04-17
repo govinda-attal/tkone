@@ -30,7 +30,7 @@ impl FromStr for Spec {
     fn from_str(s: &str) -> Result<Self> {
         let sep = DATE_TIME_SEP
             .find(s)
-            .ok_or(Error::ParseError("missing T separator in datetime spec"))?;
+            .ok_or_else(|| Error::InvalidDateTimeSpec(format!("missing T separator: {s}")))?;
         let date_spec = s[..sep.start()].to_string();
         // +1 to skip the 'T' itself; the rest is the time spec
         let time_spec = s[sep.start() + 1..].to_string();

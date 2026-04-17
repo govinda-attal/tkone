@@ -15,7 +15,7 @@
 //! |--------|-----------|---------------|-----------|
 //! | [`date`] | `"YY-1M-31L"` | `NextResult<DateTime<Tz>>` | calendar-day recurrence |
 //! | [`time`] | `"1H:00:00"` | `DateTime<Tz>` | intra-day time recurrence |
-//! | [`datetime`] | `"YY-1M-31L~WT11:00:00"` | `NextResult<DateTime<Tz>>` | combined date + time |
+//! | [`datetime`] | `"YY-1M-31L~NBT11:00:00"` | `NextResult<DateTime<Tz>>` | combined date + time |
 //!
 //! ## Quick Start
 //!
@@ -61,12 +61,12 @@
 //! # use fallible_iterator::FallibleIterator;
 //! # let bdp = WeekendSkipper::new();
 //! # let now = Utc::now().with_timezone(&London).trunc_subsecs(0);
-//! // "~W" adjusts Saturdays/Sundays to the nearest weekday (Mon or Fri)
-//! let start = SpecIteratorBuilder::new_after("YY-1M-L~WT11:00:00", bdp.clone(), now)
+//! // "~NB" = shift to next business day if the date falls on a weekend
+//! let start = SpecIteratorBuilder::new_after("YY-1M-L~NBT11:00:00", bdp.clone(), now)
 //!     .build().unwrap().next().unwrap().unwrap()
 //!     .observed().clone();
 //!
-//! let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, start)
+//! let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~NBT11:00:00", bdp, start)
 //!     .build().unwrap();
 //!
 //! # let _: Vec<_> = iter.take(4).collect().unwrap();
@@ -144,17 +144,18 @@
 //! #### Business Day Adjustment (`~`)
 //!
 //! Applied after the raw calendar date is resolved. Directional variants
-//! (`~W`, `~B`, `~NB`, `~NW`, `~PW`) are **conditional** — they only shift
+//! (`~NB`, `~PB`, `~B`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
 //! when the raw date is not already a business/week day. Numeric variants
 //! (`~nP`, `~nN`) are **unconditional** offsets.
 //!
 //! | Token | Meaning |
 //! |-------|---------|
-//! | `~W`  | Next business day (uses [`WeekendSkipper`](biz_day::WeekendSkipper)) |
-//! | `~B`  | Previous business day |
-//! | `~NB` | Nearest business day |
-//! | `~NW` | Next weekday (Mon–Fri) |
-//! | `~PW` | Previous weekday |
+//! | `~NB` | Next business day (shift forward if not already a business day) |
+//! | `~PB` | Previous business day (shift back if not already a business day) |
+//! | `~B`  | Nearest business day (shift to whichever direction is closer) |
+//! | `~NW` | Next weekday — Mon–Fri (shift forward if not already a weekday) |
+//! | `~PW` | Previous weekday — Mon–Fri (shift back if not already a weekday) |
+//! | `~W`  | Nearest weekday — Mon–Fri (shift to whichever direction is closer) |
 //! | `~3P` | 3 business days earlier (unconditional) |
 //! | `~2N` | 2 business days later (unconditional) |
 //!
@@ -186,7 +187,7 @@
 //! in the date spec are not confused with the separator.
 //!
 //! ```text
-//! "YY-1M-31L~WT11:00:00"   →  date="YY-1M-31L~W"    time="11:00:00"
+//! "YY-1M-31L~NBT11:00:00"  →  date="YY-1M-31L~NB"   time="11:00:00"
 //! "YY-MM-DDT1H:00:00"      →  date="YY-MM-DD"         time="1H:00:00"
 //! "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 //! ```

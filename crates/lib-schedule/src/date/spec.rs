@@ -361,12 +361,12 @@ impl fmt::Display for BizDayAdjustment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BizDayAdjustment::NA => Ok(()),
-            BizDayAdjustment::BizDay(Direction::Next) => write!(f, "~W"), // Standard spec often uses W for BizDay Next
-            BizDayAdjustment::BizDay(Direction::Prev) => write!(f, "~B"),
-            BizDayAdjustment::BizDay(Direction::Nearest) => write!(f, "~NB"),
+            BizDayAdjustment::BizDay(Direction::Next) => write!(f, "~NB"),
+            BizDayAdjustment::BizDay(Direction::Prev) => write!(f, "~PB"),
+            BizDayAdjustment::BizDay(Direction::Nearest) => write!(f, "~B"),
             BizDayAdjustment::Weekday(Direction::Next) => write!(f, "~NW"),
             BizDayAdjustment::Weekday(Direction::Prev) => write!(f, "~PW"),
-            BizDayAdjustment::Weekday(Direction::Nearest) => write!(f, "~NW"),
+            BizDayAdjustment::Weekday(Direction::Nearest) => write!(f, "~W"),
             BizDayAdjustment::Next(n) => write!(f, "~{}N", n),
             BizDayAdjustment::Prev(n) => write!(f, "~{}P", n),
         }
@@ -436,7 +436,7 @@ pub fn parse_spec(input: &str) -> Result<Spec> {
             days,
             biz_day_adj,
         }),
-        Err(_) => Err(Error::ParseError("Failed to parse Spec")),
+        Err(_) => Err(Error::InvalidDateSpec(format!("failed to parse: {input}"))),
     }
 }
 
@@ -661,8 +661,11 @@ fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
     let adj = match code {
         "PW" => BizDayAdjustment::Weekday(Direction::Prev),
         "NW" => BizDayAdjustment::Weekday(Direction::Next),
-        "PB" | "B" => BizDayAdjustment::BizDay(Direction::Prev),
-        "NB" | "W" => BizDayAdjustment::BizDay(Direction::Next),
+        "PB" => BizDayAdjustment::BizDay(Direction::Prev),
+        "NB" => BizDayAdjustment::BizDay(Direction::Next),
+        "W" => BizDayAdjustment::Weekday(Direction::Nearest),
+        "B" => BizDayAdjustment::BizDay(Direction::Nearest),
+        
         s if s.ends_with("P") => {
             let n = s.trim_end_matches("P").parse().unwrap_or(1);
             BizDayAdjustment::Prev(n)
@@ -749,8 +752,7 @@ mod table_tests {
                         days: set(vec![29]),
                         option: LastDayOption::LastDay,
                     },
-                    // Mapped to BizDay(Next) based on parser implementation
-                    biz_day_adj: Some(BizDayAdjustment::BizDay(Direction::Next)),
+                    biz_day_adj: Some(BizDayAdjustment::Weekday(Direction::Nearest)),
                 },
             },
             // Case 2: "YY-1M-1WD"

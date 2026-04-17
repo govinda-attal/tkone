@@ -416,7 +416,7 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         let spec = spec.parse()?;
         let end = Self::new_with_start(end_spec, bdp.clone(), start.clone())?
             .next()?
-            .ok_or(Error::Custom("invalid end spec"))?;
+            .ok_or(Error::InvalidEndSpec)?;
         Ok(Self {
             spec,
             dtm: start.clone(),
@@ -463,7 +463,7 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
         loop {
             iterations += 1;
             if iterations > 10_000 {
-                return Err(Error::Custom("schedule iterator did not converge"));
+                return Err(Error::IteratorNotConverged);
             }
 
             // ── NextNth year + Values months: intra-year month enumeration ──

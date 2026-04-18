@@ -137,7 +137,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | `L`   | Last day of the month |
 | `31L` | 31st, or last day if the month is shorter |
 | `31N` | 31st, or 1st of next month if the month is shorter |
-| `31O` | 31st, or overflow into next month (e.g. → Feb 3 for Mar 31 in Feb) |
+| `31O` | 31st, or overflow remainder days into next month (e.g. → Mar 3 when Feb has 28 days) |
 | `nD`  | Advance *n* calendar days |
 | `nBD` | Advance *n* business days |
 | `nWD` | Advance *n* weekdays (Mon–Fri) |

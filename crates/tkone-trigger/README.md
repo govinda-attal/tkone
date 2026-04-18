@@ -3,16 +3,12 @@
 In-memory schedule triggering built on top of [`tkone_schedule`].
 
 [`Scheduler<I, E>`] owns a single [`ScheduleIter`] that fans out each tick
-to N async callbacks. Callbacks return `Result<(), E>`; any error is routed
-to the async `on_error` handler supplied at construction. Both `I` and `E`
-are fully generic and inferred from the arguments to [`Scheduler::new`].
-
-**Only [`tkone_schedule::time::SpecIterator`] is supported.** `tkone-trigger`
-is an **in-memory, intra-day** trigger and does not persist state across
-process restarts. `date` and `datetime` specs (daily, weekly, monthly) are
-intentionally excluded — a missed tick on restart is silently lost, which is
-unacceptable for those schedules. Use the `tempo` crate for persistent,
-date-and-datetime-aware scheduling.
+to N async callbacks. Each callback receives a [`FireContext`] carrying the
+[`tkone_schedule::Occurrence`] for that tick, so handlers can inspect the
+scheduled occurrence (actual vs. observed date, UTC fire time). Callbacks
+return `Result<(), E>`; any error is routed to the async `on_error` handler,
+which also receives the [`FireContext`]. Both `I` and `E` are fully generic
+and inferred from the arguments to [`Scheduler::new`].
 
 | Spec example | Meaning |
 |---|---|
@@ -20,6 +16,11 @@ date-and-datetime-aware scheduling.
 | `"HH:30M:00"` | Every 30 minutes |
 | `"HH:MM:10S"` | Every 10 seconds |
 | `"09:30:00"` | Daily at 09:30 |
+
+**Only [`tkone_schedule::time`] specs are supported.** `date` and `datetime`
+specs (daily, weekly, monthly) require persistent state to survive process
+restarts — a missed tick on restart is silently lost. Use the `tempo` crate
+for those schedules.
 
 ## Example
 

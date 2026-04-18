@@ -7,7 +7,7 @@
 //! - External shutdown via [`Scheduler::shutdown_token`]
 
 use tkone_schedule::time::SpecIteratorBuilder as TimeBuilder;
-use tkone_trigger::Scheduler;
+use tkone_trigger::{FireContext, TickContext, Scheduler};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -16,17 +16,18 @@ enum PaymentError {
     Downstream(String),
 }
 
-async fn process_payments() -> Result<(), PaymentError> {
+async fn process_payments(ctx: FireContext) -> Result<(), PaymentError> {
+    println!("[imperative] process_payments fired at {:?}", ctx.occurrence().observed());
     Err(PaymentError::Downstream("payment service is down".to_string()))
 }
 
-async fn reconcile_accounts() -> Result<(), PaymentError> {
-    println!("[imperative] reconciling accounts");
+async fn reconcile_accounts(ctx: FireContext) -> Result<(), PaymentError> {
+    println!("[imperative] reconciling accounts, fired at {:?}", ctx.occurrence().observed());
     Ok(())
 }
 
-async fn on_error(e: PaymentError) {
-    eprintln!("[imperative] job failed: {e}");
+async fn on_error(ctx: FireContext, e: PaymentError) {
+    eprintln!("[imperative] job failed at {:?}: {e}", ctx.occurrence().observed());
 }
 
 #[tokio::main]

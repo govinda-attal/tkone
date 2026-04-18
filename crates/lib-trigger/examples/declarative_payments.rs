@@ -1,5 +1,4 @@
-use lib_schedule::time::SpecIteratorBuilder as TimeBuilder;
-use lib_trigger::Scheduler;
+use lib_trigger_macros::{job, schedule};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -8,26 +7,32 @@ enum JobError {
     Downstream(String),
 }
 
+struct PaymentSchedule;
+
+#[schedule(spec = "HH:MM:10S", fire_on_start)]
+impl PaymentSchedule {
+    #[on_error]
+    async fn on_error(e: JobError) {
+        eprintln!("scheduled job failed: {e}");
+    }
+}
+
+#[job(PaymentSchedule)]
 async fn process_payments() -> Result<(), JobError> {
     Err(JobError::Downstream("payment service is down".to_string()))
 }
 
-async fn on_error(e: JobError) {
-    eprintln!("scheduled job failed: {e}");
+#[job(PaymentSchedule)]
+async fn reconcile_accounts() -> Result<(), JobError> {
+    println!("reconciling accounts");
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() {
-    let mut scheduler = Scheduler::new(
-        TimeBuilder::new("HH:MM:10S", chrono::Utc).build().unwrap(),
-        on_error,
-    ).fire_on_start();
-
-    scheduler.add(process_payments);
-
-    let shutdown = scheduler.shutdown_token();
+    let shutdown = PaymentSchedule::shutdown_token();
     tokio::select! {
-        _ = scheduler.run() => {}
+        _ = PaymentSchedule::run() => {}
         _ = tokio::time::sleep(std::time::Duration::from_secs(25)) => {
             println!("25s elapsed — shutting down");
             shutdown.cancel();

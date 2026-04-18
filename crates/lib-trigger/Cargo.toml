@@ -11,10 +11,12 @@ readme-path = "README.md"
 
 [dependencies]
 lib-schedule = { path = "../lib-schedule" }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }
+inventory = "0.3"
 tokio-util = { version = "0.7" }
 chrono = { version = "0.4" }
 fallible-iterator = "0.3"
 
 [dev-dependencies]
+lib-trigger-macros = { path = "../lib-trigger-macros" }
 thiserror = "2.0"

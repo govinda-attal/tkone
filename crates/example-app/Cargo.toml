@@ -1,0 +1,20 @@
+[package]
+name = "example-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "imperative"
+path = "src/bin/imperative.rs"
+
+[[bin]]
+name = "declarative"
+path = "src/bin/declarative.rs"
+
+[dependencies]
+lib-schedule = { path = "../lib-schedule" }
+lib-trigger = { path = "../lib-trigger" }
+lib-trigger-macros = { path = "../lib-trigger-macros" }
+chrono = { version = "0.4" }
+thiserror = "2.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }

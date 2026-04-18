@@ -15,6 +15,7 @@ A growing Rust toolkit of libraries and applications across multiple domains. Cu
 ## Documentation
 
 - [Scheduling in Rust](docs/scheduling-in-rust.md) — patterns and design rationale
+- [Outbox / Inbox crate design](docs/outbox-inbox-design.md) — `tkone-outbox` and `tkone-inbox` design (in-progress)
 - [Date spec](crates/tkone-schedule/src/date/date-spec.md) · [Time spec](crates/tkone-schedule/src/time/time-spec.md) · [Datetime spec](crates/tkone-schedule/src/datetime/date-time-spec.md) — mini-language references
 - [Tempo architecture](crates/tempo/docs/components.md) · [ERD](crates/tempo/docs/erd.md) · [Sequences](crates/tempo/docs/sequences.md)
 - [Kubernetes deployment](crates/tempo/docs/kubernetes.md) · [Docker Compose](crates/tempo/docs/docker-compose.md)

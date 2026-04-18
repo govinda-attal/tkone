@@ -127,23 +127,23 @@ erDiagram
         ts      occurred_at
     }
 
-    SCHEDULE_OUTBOX {
+    OUTBOX {
         uuid    id              PK
         ts      created_at
         varchar topic
         varchar partition_key
         jsonb   payload
         jsonb   headers
-        enum    status
+        varchar status          "PENDING | SENT | FAILED"
         int     attempts
         ts      last_attempt_at
         ts      sent_at
-        varchar aggregate_type  "defn_run | instance_run"
-        uuid    aggregate_id
+        varchar aggregate_type  "informational: domain aggregate kind"
+        uuid    aggregate_id    "informational: domain aggregate id"
         uuid    correlation_id  UK
     }
 
-    SCHEDULE_INBOX {
+    INBOX {
         uuid    id              PK
         ts      received_at
         varchar topic
@@ -151,8 +151,7 @@ erDiagram
         jsonb   payload
         jsonb   headers
         uuid    correlation_id  UK
-        enum    status
-        uuid    instance_run_id FK
+        varchar status          "PENDING | PROCESSED | DUPLICATE | FAILED"
         ts      processed_at
         text    error_message
     }
@@ -181,7 +180,7 @@ erDiagram
     SCHEDULE_DEFN_RUN   ||--o{ SCHEDULE_INSTANCE_RUN    : "contains"
     SCHEDULE_DEFN_RUN   ||--o{ SCHEDULE_DEFN_RUN_EVENT  : "logged in"
     SCHEDULE_INSTANCE_RUN ||--o{ SCHEDULE_DEFN_RUN_EVENT : "emits"
-    SCHEDULE_INSTANCE_RUN ||--o| SCHEDULE_INBOX         : "completed via"
+    SCHEDULE_INSTANCE_RUN ||--o| INBOX                   : "completed via (correlation_id)"
 ```
 
 ---
@@ -217,6 +216,52 @@ Rather than incrementing `completed_count` on `SCHEDULE_DEFN_RUN` synchronously 
 
 See [kubernetes.md](kubernetes.md) for the full hosting design.
 
-### `SCHEDULE_OUTBOX` + `SCHEDULE_INBOX` — exactly-once semantics
+### `OUTBOX` + `INBOX` — domain-owned tables, crate-owned logic
 
-`correlation_id` on the outbox is generated at write time and echoed in the Kafka / Iggy message payload. The inbox carries the same value. A unique index on `schedule_inbox.correlation_id` ensures that even if the broker re-delivers a message (outbox relay crash after publish but before `SENT` mark), the second insertion fails on the unique constraint and the processor treats it as `DUPLICATE`.
+`OUTBOX` and `INBOX` are not hardwired to the schedule domain. Their DDL is a SQL template shipped by the `tkone-outbox` and `tkone-inbox` crates. Tempo owns the table DDL (runs the migration, chooses the schema — e.g. `schedule.outbox`) and provides an `InboxMessageProcessor` implementation that updates `SCHEDULE_INSTANCE_RUN` and appends `SCHEDULE_DEFN_RUN_EVENT`. The relay and idempotency machinery live in the crates, not in tempo.
+
+`correlation_id` on the outbox is generated at write time and echoed in the Kafka / Iggy message payload. The inbox carries the same value. A unique index on `inbox.correlation_id` ensures that even if the broker re-delivers a message (relay crash after publish but before `SENT` mark), the second insertion sets status to `DUPLICATE` and the processor skips domain logic.
+
+Note: `INBOX` carries no foreign key into `SCHEDULE_INSTANCE_RUN`. The relationship is logical — the processor resolves the domain entity via `correlation_id` at processing time.
+
+See [outbox-inbox-design.md](../../docs/outbox-inbox-design.md) for the full crate design.
+
+---
+
+### Scale notes — 1M+ runs / day
+
+The schema above is designed to support 1M+ occurrence fires per day. Key considerations at that volume:
+
+**`SCHEDULE_OCCURRENCE` — range partition by month**
+
+At 1M definitions firing daily, this table accumulates hundreds of millions of rows per year. Range partition on `occurrence_dtm` by month. The claimer query already filters on `occurrence_dtm ≤ now()` and `shard_key`; partition pruning eliminates historical months from the scan automatically. Drop or archive partitions older than the retention window.
+
+Critical index for the `SKIP LOCKED` poll path (must exist — not shown in ERD above):
+```sql
+CREATE INDEX occ_pending_shard_dtm_idx
+    ON schedule_occurrence (shard_key, occurrence_dtm)
+    WHERE status = 'PENDING';
+```
+
+**`SCHEDULE_DEFN_RUN_EVENT` — bounded retention**
+
+This table is append-only and grows at `N_instances × N_fires_per_day`. The Run Aggregator processes events in batches; once a `defn_run` reaches terminal state (`COMPLETED` / `FAILED`), its events serve no operational purpose. Archive or delete processed event rows on a rolling TTL (e.g. 7 days). A partial index on unprocessed events keeps the aggregator poll fast:
+```sql
+CREATE INDEX run_event_unprocessed_idx
+    ON schedule_defn_run_event (defn_run_id)
+    WHERE processed_at IS NULL;
+```
+
+**`OUTBOX` / `INBOX` — high-throughput cleanup**
+
+At 1M fires/day with N instances each, outbox and inbox tables accumulate millions of rows. `SENT` outbox rows and `PROCESSED`/`DUPLICATE` inbox rows are safe to delete after a short retention window (e.g. 24 hours for operational replay window). Schedule a background sweep or use PostgreSQL `pg_partman` range partitioning on `created_at` / `received_at`.
+
+**Connection pool sizing**
+
+| Worker role | Recommended pool |
+|---|---|
+| Occurrence Claimer (8 pods) | 10–20 per pod |
+| Outbox Relay (4 pods) | 5–10 per pod |
+| Inbox Processor (4 pods) | 5–10 per pod |
+| Run Aggregator (2 pods) | 3–5 per pod |
+| Total @ modest scale | ~150–300 connections → use PgBouncer transaction-mode pooling |

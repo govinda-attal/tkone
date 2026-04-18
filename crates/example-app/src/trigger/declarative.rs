@@ -18,8 +18,9 @@ enum PaymentError {
 
 struct PaymentSchedule;
 
-/// Fires every 10 seconds; all registered jobs are called immediately on start.
-#[schedule(spec = "HH:MM:10S", fire_on_start)]
+/// Fires every 10 seconds starting from the next top-of-minute; also fires once on start.
+/// start_spec = "HH:MM:00" resolves to the next occurrence of :00 seconds after now.
+#[schedule(spec = "HH:MM:10S", start_spec = "HH:MM:00", fire_on_start)]
 impl PaymentSchedule {
     #[on_error]
     async fn on_error(ctx: FireContext, e: PaymentError) {

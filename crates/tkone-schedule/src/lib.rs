@@ -13,9 +13,9 @@
 //!
 //! | Module | Spec type | Iterator item | Use when… |
 //! |--------|-----------|---------------|-----------|
-//! | [`date`] | `"YY-1M-31L"` | `NextResult<DateTime<Tz>>` | calendar-day recurrence |
+//! | [`date`] | `"YY-1M-31L"` | `Occurrence<DateTime<Tz>>` | calendar-day recurrence |
 //! | [`time`] | `"1H:00:00"` | `DateTime<Tz>` | intra-day time recurrence |
-//! | [`datetime`] | `"YY-1M-31L~NBT11:00:00"` | `NextResult<DateTime<Tz>>` | combined date + time |
+//! | [`datetime`] | `"YY-1M-31L~NBT11:00:00"` | `Occurrence<DateTime<Tz>>` | combined date + time |
 //!
 //! ## Quick Start
 //!
@@ -192,15 +192,15 @@
 //! "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 //! ```
 //!
-//! ## `NextResult` and Business Day Adjustments
+//! ## `Occurrence` and Business Day Adjustments
 //!
-//! Date and datetime iterators yield [`NextResult<T>`] rather than plain `T`.
+//! Date and datetime iterators yield [`Occurrence<T>`] rather than plain `T`.
 //! This distinguishes unadjusted occurrences from ones where the business day
 //! rule moved the settlement date:
 //!
-//! - [`NextResult::Single`] — no adjustment; `actual == observed`.
-//! - [`NextResult::AdjustedEarlier`] — rule moved the date *earlier*.
-//! - [`NextResult::AdjustedLater`] — rule moved the date *later*.
+//! - [`Occurrence::Exact`] — no adjustment; `actual == observed`.
+//! - [`Occurrence::AdjustedEarlier`] — rule moved the date *earlier*.
+//! - [`Occurrence::AdjustedLater`] — rule moved the date *later*.
 //!
 //! Use `.observed()` for the settlement date and `.actual()` for the raw
 //! calendar date.
@@ -260,22 +260,22 @@ pub enum DstPolicy {
 /// # Examples
 ///
 /// ```rust
-/// use tkone_schedule::NextResult;
+/// use tkone_schedule::Occurrence;
 /// use chrono::{NaiveDate, NaiveDateTime};
 ///
 /// let actual   = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap().and_hms_opt(0,0,0).unwrap();
 /// let observed = NaiveDate::from_ymd_opt(2024, 3, 29).unwrap().and_hms_opt(0,0,0).unwrap(); // Fri
 ///
-/// let result = NextResult::AdjustedEarlier(actual, observed);
+/// let result = Occurrence::AdjustedEarlier(actual, observed);
 /// assert_eq!(result.actual(),   &actual);
 /// assert_eq!(result.observed(), &observed);
 /// assert!(result.observed() < result.actual());
 /// ```
 #[derive(Debug, Clone, PartialEq)]
-pub enum NextResult<T: Clone> {
+pub enum Occurrence<T: Clone> {
     /// No business day adjustment was necessary; the raw calendar date is the
     /// settlement date.
-    Single(T),
+    Exact(T),
     /// The business day rule shifted the settlement date *later* than the raw
     /// calendar date. The first field is the raw date; the second is the
     /// settlement date.
@@ -286,25 +286,25 @@ pub enum NextResult<T: Clone> {
     AdjustedEarlier(T, T),
 }
 
-impl<T: Clone> NextResult<T> {
-    /// Returns the inner value if this is a [`NextResult::Single`], otherwise `None`.
-    pub fn single(self) -> Option<T> {
+impl<T: Clone> Occurrence<T> {
+    /// Returns the inner value if this is a [`Occurrence::Exact`], otherwise `None`.
+    pub fn exact(self) -> Option<T> {
         match self {
-            NextResult::Single(t) => Some(t),
+            Occurrence::Exact(t) => Some(t),
             _ => None,
         }
     }
 
     /// The chronologically earlier of the two dates.
     ///
-    /// - `Single(t)` → `t`
+    /// - `Exact(t)` → `t`
     /// - `AdjustedEarlier(a, o)` → `o` (settlement is earlier than raw)
     /// - `AdjustedLater(a, o)` → `a` (raw is earlier than settlement)
     pub fn earlier(&self) -> &T {
         match self {
-            NextResult::Single(t)
-            | NextResult::AdjustedEarlier(_, t)
-            | NextResult::AdjustedLater(t, _) => t,
+            Occurrence::Exact(t)
+            | Occurrence::AdjustedEarlier(_, t)
+            | Occurrence::AdjustedLater(t, _) => t,
         }
     }
 
@@ -315,9 +315,9 @@ impl<T: Clone> NextResult<T> {
     /// - `AdjustedLater(a, o)` → `o` (settlement is later than raw)
     pub fn later(&self) -> &T {
         match self {
-            NextResult::Single(t)
-            | NextResult::AdjustedEarlier(t, _)
-            | NextResult::AdjustedLater(_, t) => t,
+            Occurrence::Exact(t)
+            | Occurrence::AdjustedEarlier(t, _)
+            | Occurrence::AdjustedLater(_, t) => t,
         }
     }
 
@@ -325,34 +325,34 @@ impl<T: Clone> NextResult<T> {
     ///
     /// This is the date on which the event is *observed* — i.e. the result of
     /// applying any business day rule. Equal to `actual()` when no adjustment
-    /// was made ([`NextResult::Single`]).
+    /// was made ([`Occurrence::Exact`]).
     pub fn observed(&self) -> &T {
         match self {
-            NextResult::Single(t)
-            | NextResult::AdjustedEarlier(_, t)
-            | NextResult::AdjustedLater(_, t) => t,
+            Occurrence::Exact(t)
+            | Occurrence::AdjustedEarlier(_, t)
+            | Occurrence::AdjustedLater(_, t) => t,
         }
     }
 
     /// The raw calendar date before any business day adjustment.
     ///
-    /// Equal to `observed()` when no adjustment was made ([`NextResult::Single`]).
+    /// Equal to `observed()` when no adjustment was made ([`Occurrence::Exact`]).
     pub fn actual(&self) -> &T {
         match self {
-            NextResult::Single(t)
-            | NextResult::AdjustedEarlier(t, _)
-            | NextResult::AdjustedLater(t, _) => t,
+            Occurrence::Exact(t)
+            | Occurrence::AdjustedEarlier(t, _)
+            | Occurrence::AdjustedLater(t, _) => t,
         }
     }
 
     /// Returns `(actual, observed)` as a tuple.
     ///
-    /// For [`NextResult::Single`] both elements are the same reference.
+    /// For [`Occurrence::Exact`] both elements are the same reference.
     pub fn as_tuple(&self) -> (&T, &T) {
         match self {
-            NextResult::Single(t) => (t, t),
-            NextResult::AdjustedEarlier(actual, adjusted)
-            | NextResult::AdjustedLater(actual, adjusted) => (actual, adjusted),
+            Occurrence::Exact(t) => (t, t),
+            Occurrence::AdjustedEarlier(actual, adjusted)
+            | Occurrence::AdjustedLater(actual, adjusted) => (actual, adjusted),
         }
     }
 }

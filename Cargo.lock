@@ -387,6 +387,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempo"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "thiserror",
+ "tkone-schedule",
+ "tkone-trigger",
+ "tokio",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

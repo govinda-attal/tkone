@@ -6,6 +6,7 @@ members = [
     "crates/tkone-trigger-macros",
     "crates/lib-utils",
     "crates/example-app",
+    "crates/tempo",
 ]
 
 [workspace.package]

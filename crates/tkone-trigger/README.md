@@ -7,19 +7,19 @@ to N async callbacks. Callbacks return `Result<(), E>`; any error is routed
 to the async `on_error` handler supplied at construction. Both `I` and `E`
 are fully generic and inferred from the arguments to [`Scheduler::new`].
 
-| Iterator type | Spec example |
-|---------------|--------------|
-| [`tkone_schedule::time::SpecIterator`] | `"1H:00:00"` |
-| [`tkone_schedule::datetime::SpecIterator`] | `"YY-1M-L~WT11:00:00"` |
-| [`tkone_schedule::date::SpecIterator`] | `"YY-MM-FRI#L"` |
+**Only [`tkone_schedule::time::SpecIterator`] is supported.** `tkone-trigger`
+is an **in-memory, intra-day** trigger and does not persist state across
+process restarts. `date` and `datetime` specs (daily, weekly, monthly) are
+intentionally excluded — a missed tick on restart is silently lost, which is
+unacceptable for those schedules. Use the `tempo` crate for persistent,
+date-and-datetime-aware scheduling.
 
-> **Note:** Although `datetime` and `date` iterators are supported, this
-> crate is an **in-memory** trigger — state is not persisted across process
-> restarts. Long-distance recurrences (daily, weekly, monthly) will be
-> missed if the process is restarted between ticks. For those schedules
-> consider pairing this crate with an external state store or using a
-> persistent job queue. `time`-based intra-day recurrences (every N
-> seconds/minutes/hours within a single day) are the primary intended use.
+| Spec example | Meaning |
+|---|---|
+| `"1H:00:00"` | Every hour on the hour |
+| `"HH:30M:00"` | Every 30 minutes |
+| `"HH:MM:10S"` | Every 10 seconds |
+| `"09:30:00"` | Daily at 09:30 |
 
 ## Example
 

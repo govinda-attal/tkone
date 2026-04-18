@@ -1,7 +1,7 @@
 use crate::biz_day::WeekendSkipper;
 use crate::date::SpecIteratorBuilder;
 use crate::prelude::*;
-use crate::NextResult;
+use crate::Occurrence;
 use chrono::DateTime;
 use chrono::TimeZone;
 use fallible_iterator::FallibleIterator;
@@ -10,7 +10,7 @@ struct TestCase<Tz: TimeZone> {
     spec: &'static str,
     start: DateTime<Tz>,
     take: usize,
-    expected: Result<Vec<NextResult<DateTime<Tz>>>>,
+    expected: Result<Vec<Occurrence<DateTime<Tz>>>>,
 }
 
 fn run_cases<Tz: TimeZone + Clone>(cases: Vec<TestCase<Tz>>) {
@@ -19,7 +19,7 @@ fn run_cases<Tz: TimeZone + Clone>(cases: Vec<TestCase<Tz>>) {
         let iter = SpecIteratorBuilder::new_with_start(tc.spec, bdp.clone(), tc.start)
             .build()
             .unwrap();
-        let results: Vec<NextResult<DateTime<_>>> = iter.take(tc.take).collect().unwrap();
+        let results: Vec<Occurrence<DateTime<_>>> = iter.take(tc.take).collect().unwrap();
         assert_eq!(tc.expected, Ok(results), "spec: {}", tc.spec);
     }
 }
@@ -38,16 +38,16 @@ fn test_rolling_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 4, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 4, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
             ]),
         },
         // Every 4 calendar days – rolls across month boundaries
@@ -56,16 +56,16 @@ fn test_rolling_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 17, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 21, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 25, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 2, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 17, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 21, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 25, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 6, 0, 0, 0).unwrap()),
             ]),
         },
         // Every 7 calendar days – weekly, crosses month boundaries
@@ -74,16 +74,16 @@ fn test_rolling_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 5, 0, 0, 0).unwrap()),
             ]),
         },
         // Every 14 calendar days – bi-weekly
@@ -92,16 +92,16 @@ fn test_rolling_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 12, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 9, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 23, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 12, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 9, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 23, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 7, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -121,16 +121,16 @@ fn test_biz_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(), // Wednesday
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()), // Mon (skip Sat/Sun)
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 14, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()), // Mon (skip Sat/Sun)
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 14, 0, 0, 0).unwrap()),
             ]),
         },
         // Every 5 business days (~weekly)
@@ -139,16 +139,16 @@ fn test_biz_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 5, 0, 0, 0).unwrap()),
             ]),
         },
         // Every weekday – identical to 1BD when no custom holidays
@@ -157,16 +157,16 @@ fn test_biz_day_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 14, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 14, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -186,16 +186,16 @@ fn test_fixed_day_monthly() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // 14th of every month (non-trivial start time preserved)
@@ -204,11 +204,11 @@ fn test_fixed_day_monthly() {
             take: 5,
             start: tz.with_ymd_and_hms(2024, 12, 14, 23, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2024, 12, 14, 23, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 14, 23, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 14, 23, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 14, 23, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 14, 23, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 14, 23, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 14, 23, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 14, 23, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 14, 23, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 14, 23, 0, 0).unwrap()),
             ]),
         },
         // Last day of every month
@@ -217,16 +217,16 @@ fn test_fixed_day_monthly() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap()),
             ]),
         },
         // 31st clamped to last day of month (L suffix)
@@ -235,11 +235,11 @@ fn test_fixed_day_monthly() {
             take: 5,
             start: tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap()), // clamped
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()), // clamped
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap()), // clamped
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()), // clamped
             ]),
         },
         // 31st with roll-to-first-of-next-month on overflow (N suffix)
@@ -248,14 +248,14 @@ fn test_fixed_day_monthly() {
             take: 5,
             start: tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap(),
                     tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap(),
                 ),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap(),
                     tz.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap(),
                 ),
@@ -268,14 +268,14 @@ fn test_fixed_day_monthly() {
             take: 5,
             start: tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap(),
                     tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap(),
                 ),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap(),
                     tz.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap(),
                 ),
@@ -298,16 +298,16 @@ fn test_periodic_month_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 4, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 7, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 10, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 4, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 4, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 7, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 10, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 4, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // Last day of each quarter
@@ -316,14 +316,14 @@ fn test_periodic_month_cadences() {
             take: 8,
             start: tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 4, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 7, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 10, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 4, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 7, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 10, 31, 0, 0, 0).unwrap()),
             ]),
         },
         // 1st of every half-year
@@ -332,16 +332,16 @@ fn test_periodic_month_cadences() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2028, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2028, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2028, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2028, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 7, 1, 0, 0, 0).unwrap()),
             ]),
         },
         // Last day of each quarter in a specific year
@@ -350,11 +350,11 @@ fn test_periodic_month_cadences() {
             take: 5,
             start: tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 12, 31, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -374,16 +374,16 @@ fn test_weekday_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 27, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 17, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 24, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 27, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 17, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 24, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap()),
             ]),
         },
         // Every Monday (start exactly on a Monday)
@@ -392,16 +392,16 @@ fn test_weekday_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 27, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 17, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 24, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 27, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 17, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 24, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 10, 0, 0, 0).unwrap()),
             ]),
         },
         // Monday, Wednesday, and Friday every week
@@ -410,16 +410,16 @@ fn test_weekday_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap(), // Monday
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 17, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 24, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 27, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 17, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 24, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 27, 0, 0, 0).unwrap()),
             ]),
         },
         // First Monday of every month
@@ -428,16 +428,16 @@ fn test_weekday_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 7, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 2, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 7, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 4, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 3, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 4, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 6, 0, 0, 0).unwrap()),
             ]),
         },
         // First Wednesday of every month
@@ -446,11 +446,11 @@ fn test_weekday_specs() {
             take: 5,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 2, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 7, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 7, 0, 0, 0).unwrap()),
             ]),
         },
         // Last Friday of every month
@@ -459,16 +459,16 @@ fn test_weekday_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 28, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 25, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 27, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 25, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 28, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 25, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 27, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 25, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap()),
             ]),
         },
         // Last Wednesday of every month
@@ -477,11 +477,11 @@ fn test_weekday_specs() {
             take: 5,
             start: tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 26, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 28, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 28, 0, 0, 0).unwrap()),
             ]),
         },
         // 2nd-to-last Wednesday of every month
@@ -490,16 +490,16 @@ fn test_weekday_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 19, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 23, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 21, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 18, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 23, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 20, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 17, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 19, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 23, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 21, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 18, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 23, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 20, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 17, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 22, 0, 0, 0).unwrap()),
             ]),
         },
         // 2nd-to-last Wednesday every quarter (specific year)
@@ -508,10 +508,10 @@ fn test_weekday_specs() {
             take: 5,
             start: tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 23, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 23, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 23, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 23, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 22, 0, 0, 0).unwrap()),
             ]),
         },
         // Last Sunday of every December (annual)
@@ -520,9 +520,9 @@ fn test_weekday_specs() {
             take: 3,
             start: tz.with_ymd_and_hms(2025, 12, 28, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 12, 28, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 12, 27, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 12, 26, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 12, 28, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 12, 27, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 12, 26, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -542,16 +542,16 @@ fn test_enumerated_days() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // 1st, 10th, 20th and 25th of every month
@@ -560,16 +560,16 @@ fn test_enumerated_days() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 25, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 10, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 20, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 25, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 25, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 10, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 20, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 25, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 10, 0, 0, 0).unwrap()),
             ]),
         },
         // 1st and 15th of Jan, Apr, Jul and Oct (quarterly, two days per quarter)
@@ -578,16 +578,16 @@ fn test_enumerated_days() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -607,11 +607,11 @@ fn test_nth_year_specs() {
             take: 5,
             start: tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2028, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2028, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 6, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // June 15th every 2 years
@@ -620,14 +620,14 @@ fn test_nth_year_specs() {
             take: 8,
             start: tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2031, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2033, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2035, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2037, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2039, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2031, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2033, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2035, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2037, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2039, 6, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // Combined year+month clock: each tick = +1 year AND +3 months
@@ -637,11 +637,11 @@ fn test_nth_year_specs() {
             take: 5,
             start: tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 12, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 3, 15, 0, 0, 0).unwrap()), // Dec+3 → Mar, +1 extra year
-                NextResult::Single(tz.with_ymd_and_hms(2030, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 12, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 3, 15, 0, 0, 0).unwrap()), // Dec+3 → Mar, +1 extra year
+                Occurrence::Exact(tz.with_ymd_and_hms(2030, 6, 15, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -661,18 +661,18 @@ fn test_finite_specs() {
             take: 12,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 11, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 11, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap()),
             ]),
         },
         // 1st and 15th of Jan and Jul across 2025 and 2026 – terminates after 8 results
@@ -681,14 +681,14 @@ fn test_finite_specs() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 7, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 7, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // 1st and 15th of every month across 2025 and 2026 (start mid-year)
@@ -697,18 +697,18 @@ fn test_finite_specs() {
             take: 12,
             start: tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 11, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 11, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 12, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 2, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 3, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 11, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 11, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 12, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 2, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 3, 15, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -745,17 +745,17 @@ fn test_constrained_month_relative_day() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 17, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 21, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 25, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 17, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 21, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 25, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
                 // After exhausting January, sequence restarts from Jan 1 of the next year
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap()),
             ]),
         },
         // Every 7 days with 1M month cadence: combined clock – day carries across months
@@ -764,11 +764,11 @@ fn test_constrained_month_relative_day() {
             take: 5,
             start: tz.with_ymd_and_hms(2024, 12, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2024, 12, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 29, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -792,16 +792,16 @@ fn test_values_months_with_relative_days() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 8, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 22, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 8, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 22, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 29, 0, 0, 0).unwrap()),
             ]),
         },
         // Every year, January and June, on the 15th
@@ -810,12 +810,12 @@ fn test_values_months_with_relative_days() {
             take: 6,
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2026, 6, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 1, 15, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 6, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 6, 15, 0, 0, 0).unwrap()),
             ]),
         },
         // Every 2 years, March and September, on the 1st
@@ -824,12 +824,12 @@ fn test_values_months_with_relative_days() {
             take: 6,
             start: tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2027, 9, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 3, 1, 0, 0, 0).unwrap()),
-                NextResult::Single(tz.with_ymd_and_hms(2029, 9, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2027, 9, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 3, 1, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2029, 9, 1, 0, 0, 0).unwrap()),
             ]),
         },
     ]);
@@ -849,25 +849,25 @@ fn test_biz_day_adjustments() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // Wed
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // Wed
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 2, 17, 0, 0, 0).unwrap(), // Mon
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 3, 17, 0, 0, 0).unwrap(), // Mon
                 ),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()), // Tue
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()), // Thu
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()), // Tue
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()), // Thu
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(), // Sun
                     tz.with_ymd_and_hms(2025, 6, 16, 0, 0, 0).unwrap(), // Mon
                 ),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()), // Tue
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap()), // Fri
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap()), // Mon
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()), // Wed
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()), // Tue
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap()), // Fri
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap()), // Mon
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()), // Wed
             ]),
         },
         // 15th monthly; move back to previous weekday if weekend (~PW is conditional)
@@ -876,25 +876,25 @@ fn test_biz_day_adjustments() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // Wed
-                NextResult::AdjustedEarlier(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // Wed
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 2, 14, 0, 0, 0).unwrap(), // Fri
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 3, 14, 0, 0, 0).unwrap(), // Fri
                 ),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()), // Tue
-                NextResult::Single(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()), // Thu
-                NextResult::AdjustedEarlier(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap()), // Tue
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap()), // Thu
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(), // Sun
                     tz.with_ymd_and_hms(2025, 6, 13, 0, 0, 0).unwrap(), // Fri
                 ),
-                NextResult::Single(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()), // Tue
-                NextResult::Single(tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap()), // Fri
-                NextResult::Single(tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap()), // Mon
-                NextResult::Single(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()), // Wed
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap()), // Tue
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap()), // Fri
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap()), // Mon
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap()), // Wed
             ]),
         },
         // 15th monthly; unconditionally subtract 3 business days (~3P)
@@ -904,40 +904,40 @@ fn test_biz_day_adjustments() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // start: no adj
-                NextResult::AdjustedEarlier(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // start: no adj
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap(), // Wed (−3BD from Fri 14)
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 3, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 3, 12, 0, 0, 0).unwrap(), // Wed
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 4, 15, 0, 0, 0).unwrap(), // Tue
                     tz.with_ymd_and_hms(2025, 4, 10, 0, 0, 0).unwrap(), // Thu
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 5, 15, 0, 0, 0).unwrap(), // Thu
                     tz.with_ymd_and_hms(2025, 5, 12, 0, 0, 0).unwrap(), // Mon
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 6, 15, 0, 0, 0).unwrap(), // Sun
                     tz.with_ymd_and_hms(2025, 6, 11, 0, 0, 0).unwrap(), // Wed (−3BD from Fri 13)
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 7, 15, 0, 0, 0).unwrap(), // Tue
                     tz.with_ymd_and_hms(2025, 7, 10, 0, 0, 0).unwrap(), // Thu
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 8, 15, 0, 0, 0).unwrap(), // Fri
                     tz.with_ymd_and_hms(2025, 8, 12, 0, 0, 0).unwrap(), // Tue
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 9, 15, 0, 0, 0).unwrap(), // Mon
                     tz.with_ymd_and_hms(2025, 9, 10, 0, 0, 0).unwrap(), // Wed
                 ),
-                NextResult::AdjustedEarlier(
+                Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 10, 15, 0, 0, 0).unwrap(), // Wed
                     tz.with_ymd_and_hms(2025, 10, 10, 0, 0, 0).unwrap(), // Fri
                 ),
@@ -950,40 +950,40 @@ fn test_biz_day_adjustments() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()), // start: no adj
-                NextResult::AdjustedLater(
+                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()), // start: no adj
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap(), // Fri
                     tz.with_ymd_and_hms(2025, 3, 4, 0, 0, 0).unwrap(),  // Tue (+2BD)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap(), // Mon
                     tz.with_ymd_and_hms(2025, 4, 2, 0, 0, 0).unwrap(),  // Wed (+2BD)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 4, 30, 0, 0, 0).unwrap(), // Wed
                     tz.with_ymd_and_hms(2025, 5, 2, 0, 0, 0).unwrap(),  // Fri (+2BD)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 5, 31, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 6, 3, 0, 0, 0).unwrap(),  // Tue (+2BD from Mon 2)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap(), // Mon
                     tz.with_ymd_and_hms(2025, 7, 2, 0, 0, 0).unwrap(),  // Wed (+2BD)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 7, 31, 0, 0, 0).unwrap(), // Thu
                     tz.with_ymd_and_hms(2025, 8, 4, 0, 0, 0).unwrap(),  // Mon (+2BD)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 8, 31, 0, 0, 0).unwrap(), // Sun
                     tz.with_ymd_and_hms(2025, 9, 2, 0, 0, 0).unwrap(),  // Tue (+2BD from Mon 1)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 9, 30, 0, 0, 0).unwrap(), // Tue
                     tz.with_ymd_and_hms(2025, 10, 2, 0, 0, 0).unwrap(), // Thu (+2BD)
                 ),
-                NextResult::AdjustedLater(
+                Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 10, 31, 0, 0, 0).unwrap(), // Fri
                     tz.with_ymd_and_hms(2025, 11, 4, 0, 0, 0).unwrap(),  // Tue (+2BD)
                 ),

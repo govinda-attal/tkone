@@ -1,6 +1,6 @@
 use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Weekday};
 
-use crate::{prelude::*, DstPolicy, NextResult};
+use crate::{prelude::*, DstPolicy, Occurrence};
 
 impl<Tz: TimeZone> From<W<(Tz, NaiveDateTime)>> for DateTime<Tz> {
     fn from(W((tz, dtm)): W<(Tz, NaiveDateTime)>) -> Self {
@@ -20,15 +20,15 @@ impl<Tz: TimeZone> From<W<(Tz, NaiveDateTime)>> for DateTime<Tz> {
     }
 }
 
-impl<Tz: TimeZone> From<W<(Tz, NextResult<NaiveDateTime>)>> for NextResult<DateTime<Tz>> {
-    fn from(W((tz, next)): W<(Tz, NextResult<NaiveDateTime>)>) -> Self {
+impl<Tz: TimeZone> From<W<(Tz, Occurrence<NaiveDateTime>)>> for Occurrence<DateTime<Tz>> {
+    fn from(W((tz, next)): W<(Tz, Occurrence<NaiveDateTime>)>) -> Self {
         match next {
-            NextResult::Single(dtm) => NextResult::Single(DateTime::<Tz>::from(W((tz, dtm)))),
-            NextResult::AdjustedEarlier(actual, adjusted) => NextResult::AdjustedEarlier(
+            Occurrence::Exact(dtm) => Occurrence::Exact(DateTime::<Tz>::from(W((tz, dtm)))),
+            Occurrence::AdjustedEarlier(actual, adjusted) => Occurrence::AdjustedEarlier(
                 DateTime::<Tz>::from(W((tz.clone(), actual))),
                 DateTime::<Tz>::from(W((tz, adjusted))),
             ),
-            NextResult::AdjustedLater(actual, adjusted) => NextResult::AdjustedLater(
+            Occurrence::AdjustedLater(actual, adjusted) => Occurrence::AdjustedLater(
                 DateTime::<Tz>::from(W((tz.clone(), actual))),
                 DateTime::<Tz>::from(W((tz, adjusted))),
             ),
@@ -66,20 +66,20 @@ pub(crate) fn resolve_local<Tz: TimeZone>(
     }
 }
 
-/// Convert a `NextResult<NaiveDateTime>` to `NextResult<DateTime<Tz>>`,
+/// Convert a `Occurrence<NaiveDateTime>` to `Occurrence<DateTime<Tz>>`,
 /// applying `policy` to each embedded naive datetime.
 pub(crate) fn next_result_to_tz<Tz: TimeZone>(
     tz: &Tz,
-    next: NextResult<NaiveDateTime>,
+    next: Occurrence<NaiveDateTime>,
     policy: DstPolicy,
-) -> Result<NextResult<DateTime<Tz>>> {
+) -> Result<Occurrence<DateTime<Tz>>> {
     match next {
-        NextResult::Single(dtm) => Ok(NextResult::Single(resolve_local(tz, dtm, policy)?)),
-        NextResult::AdjustedEarlier(actual, adjusted) => Ok(NextResult::AdjustedEarlier(
+        Occurrence::Exact(dtm) => Ok(Occurrence::Exact(resolve_local(tz, dtm, policy)?)),
+        Occurrence::AdjustedEarlier(actual, adjusted) => Ok(Occurrence::AdjustedEarlier(
             resolve_local(tz, actual, policy)?,
             resolve_local(tz, adjusted, policy)?,
         )),
-        NextResult::AdjustedLater(actual, adjusted) => Ok(NextResult::AdjustedLater(
+        Occurrence::AdjustedLater(actual, adjusted) => Ok(Occurrence::AdjustedLater(
             resolve_local(tz, actual, policy)?,
             resolve_local(tz, adjusted, policy)?,
         )),

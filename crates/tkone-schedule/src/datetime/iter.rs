@@ -4,7 +4,7 @@ use crate::date::NaiveSpecIterator as DateNaiveSpecIterator;
 use crate::prelude::*;
 use crate::time::{Cycle as TimeCycle, Spec as TimeSpec};
 use crate::utils::next_result_to_tz;
-use crate::{DstPolicy, NextResult};
+use crate::{DstPolicy, Occurrence};
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
 use fallible_iterator::FallibleIterator;
 use std::marker::PhantomData;
@@ -35,7 +35,7 @@ pub struct NotSealed;
 /// ```rust
 /// use tkone_schedule::biz_day::WeekendSkipper;
 /// use tkone_schedule::datetime::SpecIteratorBuilder;
-/// use tkone_schedule::NextResult;
+/// use tkone_schedule::Occurrence;
 /// use chrono::{TimeZone, Utc};
 /// use fallible_iterator::FallibleIterator;
 ///
@@ -126,7 +126,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     /// ```rust
     /// use tkone_schedule::biz_day::WeekendSkipper;
     /// use tkone_schedule::datetime::SpecIteratorBuilder;
-    /// use tkone_schedule::NextResult;
+    /// use tkone_schedule::Occurrence;
     /// use chrono::Utc;
     /// use fallible_iterator::FallibleIterator;
     ///
@@ -228,7 +228,7 @@ pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor + Clone> FallibleIterator for SpecIterator<Tz, BDP> {
-    type Item = NextResult<DateTime<Tz>>;
+    type Item = Occurrence<DateTime<Tz>>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -347,7 +347,7 @@ impl<BDP: BizDayProcessor + Clone> NaiveSpecIterator<BDP> {
 }
 
 impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
-    type Item = NextResult<NaiveDateTime>;
+    type Item = Occurrence<NaiveDateTime>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -370,7 +370,7 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
                     // date rather than re-emitting it from midnight.
                     self.date_iter_started = true;
                     self.next_period_cursor = Some(start.date().and_hms_opt(23, 59, 59).unwrap());
-                    return Ok(Some(NextResult::Single(start)));
+                    return Ok(Some(Occurrence::Exact(start)));
                 }
             }
         }
@@ -386,7 +386,7 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
                 }
                 self.dtm = candidate;
                 self.index += 1;
-                return Ok(Some(NextResult::Single(candidate)));
+                return Ok(Some(Occurrence::Exact(candidate)));
             }
         }
 
@@ -484,13 +484,13 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
 
             // Propagate business-day adjustment info from the date result.
             let result = match next_date {
-                NextResult::Single(_) => NextResult::Single(first_time),
-                NextResult::AdjustedEarlier(actual, _) => NextResult::AdjustedEarlier(
+                Occurrence::Exact(_) => Occurrence::Exact(first_time),
+                Occurrence::AdjustedEarlier(actual, _) => Occurrence::AdjustedEarlier(
                     actual.date().and_time(first_time.time()),
                     first_time,
                 ),
-                NextResult::AdjustedLater(actual, _) => {
-                    NextResult::AdjustedLater(actual.date().and_time(first_time.time()), first_time)
+                Occurrence::AdjustedLater(actual, _) => {
+                    Occurrence::AdjustedLater(actual.date().and_time(first_time.time()), first_time)
                 }
             };
 

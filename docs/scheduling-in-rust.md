@@ -54,7 +54,7 @@ Combine the two with a `T` separator:
 
 ### Iterating
 
-All three families expose a `SpecIteratorBuilder` that produces a `FallibleIterator`. Date and datetime iterators yield `NextResult<DateTime<Tz>>`, which distinguishes the raw calendar date from the business-day-adjusted settlement date:
+All three families expose a `SpecIteratorBuilder` that produces a `FallibleIterator`. Date and datetime iterators yield `Occurrence<DateTime<Tz>>`, which distinguishes the raw calendar date from the business-day-adjusted settlement date:
 
 ```rust
 use tkone_schedule::biz_day::WeekendSkipper;
@@ -80,7 +80,7 @@ while let Some(nr) = iter.next().unwrap() {
 }
 ```
 
-`NextResult::observed()` gives the settlement date; `NextResult::actual()` gives the raw calendar date before any business-day rule was applied.
+`Occurrence::observed()` gives the settlement date; `Occurrence::actual()` gives the raw calendar date before any business-day rule was applied.
 
 ### Where it shines
 
@@ -95,25 +95,25 @@ while let Some(nr) = iter.next().unwrap() {
 
 `tkone-schedule` tells you *when* to fire. `tkone-trigger` does the firing.
 
-`Scheduler<I, E>` takes any iterator that implements `ScheduleIter` and fans each tick out to N registered async callbacks. Every callback and the `on_error` handler receive a `FireContext` carrying the `NextResult` for that tick, so handlers can inspect exactly which occurrence triggered the call — including whether a business-day rule shifted the settlement date. Callbacks return `Result<(), E>`; any error is forwarded to `on_error` and the scheduler continues to the next tick regardless.
+`Scheduler<I, E>` accepts a [`tkone_schedule::time::SpecIterator`] — the only iterator type supported — and fans each tick out to N registered async callbacks. Every callback and the `on_error` handler receive a `FireContext` carrying the `Occurrence` for that tick. Callbacks return `Result<(), E>`; any error is forwarded to `on_error` and the scheduler continues to the next tick regardless.
+
+> **Time specs only.** `tkone-trigger` is an **in-memory, intra-day** trigger. `date` and `datetime` specs are intentionally excluded: a missed tick on process restart is silently lost, which is unacceptable for daily/weekly/monthly schedules. Use the `tempo` crate for persistent, date-and-datetime-aware scheduling.
 
 ### FireContext and TickContext
 
 ```rust
 pub trait TickContext {
-    fn occurrence(&self) -> &NextResult<DateTime<Utc>>;
+    fn occurrence(&self) -> &Occurrence<DateTime<Utc>>;
 }
 ```
 
-`FireContext` is the concrete type passed at runtime. It implements `TickContext`, so handler signatures can be written against the trait for easier testing and mocking. The `NextResult` it carries has three variants:
+`FireContext` is the concrete type passed at runtime. It implements `TickContext`, so handler signatures can be written against the trait for easier testing and mocking. The `Occurrence` it carries is always `Exact` for time specs — no business-day adjustment is applied. The full enum has three variants (used by `date`/`datetime` iterators in `tkone-schedule` and `tempo`):
 
 | Variant | Meaning |
 |---------|---------|
-| `Single(t)` | No adjustment; `actual == observed == t` |
+| `Exact(t)` | No adjustment; `actual == observed == t` |
 | `AdjustedLater(a, o)` | Settlement moved later than the raw date |
 | `AdjustedEarlier(a, o)` | Settlement moved earlier than the raw date |
-
-For time-only specs (`"1H:00:00"`) the result is always `Single` since no business-day rule applies.
 
 ### Imperative API
 
@@ -165,7 +165,7 @@ async fn main() {
 Key design points:
 
 - **Generic error type** — `E` is inferred from the `on_error` handler; no `Box<dyn Error>` required.
-- **FireContext** — every callback and error handler receives the tick's `NextResult`, giving access to the scheduled occurrence and any business-day adjustment that was applied.
+- **FireContext** — every callback and error handler receives the tick's `Occurrence`; for time specs it is always `Occurrence::Exact`.
 - **Per-callback cancellation** — `add()` returns a `CancellationToken` that silences only that callback without stopping others or the iterator.
 - **Global shutdown** — `shutdown_token()` clones the internal token before `run()` consumes `self`, enabling the `tokio::select!` pattern.
 - **`fire_on_start`** — runs all callbacks once immediately before waiting for the first scheduled tick; avoids the "we just deployed, do we wait an hour?" problem.
@@ -177,7 +177,7 @@ Key design points:
 - Multiple logically related jobs sharing one schedule (process + reconcile)
 - Services that need clean shutdown on SIGTERM without a job-queue dependency
 
-> **In-memory caveat:** `tkone-trigger` does not persist state. If the process restarts between ticks, those ticks are missed. For intra-day `time`-based schedules this is usually acceptable. For weekly or monthly schedules, pair it with an external state store.
+> **In-memory caveat:** `tkone-trigger` does not persist state. If the process restarts between ticks, those ticks are missed. For intra-day recurrences this is usually acceptable; for daily/weekly/monthly schedules use `tempo`.
 
 ---
 

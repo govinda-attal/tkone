@@ -4,7 +4,7 @@ use super::{
 };
 use crate::biz_day::WeekendSkipper;
 use crate::utils::next_result_to_tz;
-use crate::{biz_day::BizDayProcessor, prelude::*, DstPolicy, NextResult};
+use crate::{biz_day::BizDayProcessor, prelude::*, DstPolicy, Occurrence};
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
 use std::{marker::PhantomData, sync::LazyLock};
@@ -42,7 +42,7 @@ pub struct NotSealed;
 /// ```rust
 /// use tkone_schedule::biz_day::WeekendSkipper;
 /// use tkone_schedule::date::SpecIteratorBuilder;
-/// use tkone_schedule::NextResult;
+/// use tkone_schedule::Occurrence;
 /// use chrono::{TimeZone, Utc, Duration};
 /// use fallible_iterator::FallibleIterator;
 ///
@@ -184,7 +184,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     /// ```rust
     /// use tkone_schedule::biz_day::WeekendSkipper;
     /// use tkone_schedule::date::SpecIteratorBuilder;
-    /// use tkone_schedule::NextResult;
+    /// use tkone_schedule::Occurrence;
     /// use chrono::{TimeZone, Utc};
     /// use fallible_iterator::FallibleIterator;
     ///
@@ -288,9 +288,9 @@ static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipp
 
 /// Timezone-aware calendar-day recurrence iterator.
 ///
-/// Yields [`NextResult<DateTime<Tz>>`](crate::NextResult) values so that
+/// Yields [`Occurrence<DateTime<Tz>>`](crate::Occurrence) values so that
 /// business-day adjustments are visible to the caller (see
-/// [`NextResult::actual`] vs [`NextResult::observed`]).
+/// [`Occurrence::actual`] vs [`Occurrence::observed`]).
 ///
 /// Construct via [`SpecIteratorBuilder`]. Implements
 /// [`fallible_iterator::FallibleIterator`].
@@ -300,7 +300,7 @@ static WEEKEND_SKIPPER: LazyLock<WeekendSkipper> = LazyLock::new(|| WeekendSkipp
 /// ```rust
 /// use tkone_schedule::biz_day::WeekendSkipper;
 /// use tkone_schedule::date::SpecIteratorBuilder;
-/// use tkone_schedule::NextResult;
+/// use tkone_schedule::Occurrence;
 /// use chrono::{offset::TimeZone, DateTime};
 /// use chrono_tz::America::New_York;
 /// use fallible_iterator::FallibleIterator;
@@ -334,7 +334,7 @@ pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
 }
 
 impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDM> {
-    type Item = NextResult<DateTime<Tz>>;
+    type Item = Occurrence<DateTime<Tz>>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -463,7 +463,7 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
 }
 
 impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
-    type Item = NextResult<NaiveDateTime>;
+    type Item = Occurrence<NaiveDateTime>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
@@ -478,7 +478,7 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
                 if &self.dtm <= start {
                     self.dtm = start.clone();
                     self.index += 1;
-                    return Ok(Some(NextResult::Single(start.clone())));
+                    return Ok(Some(Occurrence::Exact(start.clone())));
                 }
             }
         }
@@ -814,15 +814,15 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
                             }
                             _ => unreachable!(),
                         };
-                        NextResult::AdjustedLater(candidate, observed)
+                        Occurrence::AdjustedLater(candidate, observed)
                     } else {
-                        NextResult::Single(candidate)
+                        Occurrence::Exact(candidate)
                     }
                 }
-                _ => NextResult::Single(candidate),
+                _ => Occurrence::Exact(candidate),
             }
         } else {
-            NextResult::Single(candidate)
+            Occurrence::Exact(candidate)
         };
 
         // --- Apply BizDay adjustment ---
@@ -831,11 +831,11 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
         let next_result = if let Some(biz_day_adj) = &self.spec.biz_day_adj {
             let (actual, observed) = next_result.as_tuple();
             match biz_day_adj {
-                BizDayAdjustment::Prev(num) => NextResult::AdjustedEarlier(
+                BizDayAdjustment::Prev(num) => Occurrence::AdjustedEarlier(
                     actual.clone(),
                     self.context.bd_processor.sub(observed, *num)?,
                 ),
-                BizDayAdjustment::Next(num) => NextResult::AdjustedLater(
+                BizDayAdjustment::Next(num) => Occurrence::AdjustedLater(
                     actual.clone(),
                     self.context.bd_processor.add(observed, *num)?,
                 ),
@@ -879,7 +879,7 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
             if next_result.actual() > &end || next_result.observed() > &end {
                 self.dtm = end.clone();
                 self.index += 1;
-                return Ok(Some(NextResult::Single(end.clone())));
+                return Ok(Some(Occurrence::Exact(end.clone())));
             }
         };
 
@@ -892,13 +892,13 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
 fn adjusted_to_next_result(
     dtm: NaiveDateTime,
     adjusted: NaiveDateTime,
-) -> NextResult<NaiveDateTime> {
+) -> Occurrence<NaiveDateTime> {
     if adjusted == dtm {
-        NextResult::Single(adjusted)
+        Occurrence::Exact(adjusted)
     } else if adjusted > dtm {
-        NextResult::AdjustedLater(dtm, adjusted)
+        Occurrence::AdjustedLater(dtm, adjusted)
     } else {
-        NextResult::AdjustedEarlier(dtm, adjusted)
+        Occurrence::AdjustedEarlier(dtm, adjusted)
     }
 }
 
@@ -922,7 +922,7 @@ mod tests {
             .unwrap();
         dbg!(spec_iter
             .take(15)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .collect::<Vec<Occurrence<DateTime<_>>>>()
             .unwrap());
     }
 
@@ -940,7 +940,7 @@ mod tests {
                 .unwrap();
         dbg!(spec_iter
             .take(15)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .collect::<Vec<Occurrence<DateTime<_>>>>()
             .unwrap());
     }
 
@@ -958,7 +958,7 @@ mod tests {
                 .unwrap();
         dbg!(spec_iter
             .take(15)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .collect::<Vec<Occurrence<DateTime<_>>>>()
             .unwrap());
     }
 
@@ -975,15 +975,15 @@ mod tests {
                 .unwrap();
         let results = spec_iter
             .take(3)
-            .collect::<Vec<NextResult<DateTime<_>>>>()
+            .collect::<Vec<Occurrence<DateTime<_>>>>()
             .unwrap();
 
         dbg!(&results);
 
         // let expected = vec![
-        //     NextResult::Single(est.with_ymd_and_hms(2025, 1, 1, 23, 0, 0).unwrap()),
-        //     NextResult::Single(est.with_ymd_and_hms(2025, 2, 1, 23, 0, 0).unwrap()),
-        //     NextResult::Single(est.with_ymd_and_hms(2025, 3, 1, 23, 0, 0).unwrap()),
+        //     Occurrence::Exact(est.with_ymd_and_hms(2025, 1, 1, 23, 0, 0).unwrap()),
+        //     Occurrence::Exact(est.with_ymd_and_hms(2025, 2, 1, 23, 0, 0).unwrap()),
+        //     Occurrence::Exact(est.with_ymd_and_hms(2025, 3, 1, 23, 0, 0).unwrap()),
         // ];
         // assert_eq!(results, expected);
     }

@@ -2,25 +2,23 @@
 //!
 //! [`Scheduler<I, E>`] owns a single [`ScheduleIter`] that fans out each tick
 //! to N async callbacks. Each callback receives a [`FireContext`] carrying the
-//! [`tkone_schedule::NextResult`] for that tick, so handlers can inspect the
+//! [`tkone_schedule::Occurrence`] for that tick, so handlers can inspect the
 //! scheduled occurrence (actual vs. observed date, UTC fire time). Callbacks
 //! return `Result<(), E>`; any error is routed to the async `on_error` handler,
 //! which also receives the [`FireContext`]. Both `I` and `E` are fully generic
 //! and inferred from the arguments to [`Scheduler::new`].
 //!
-//! | Iterator type | Spec example |
-//! |---------------|--------------|
-//! | [`tkone_schedule::time::SpecIterator`] | `"1H:00:00"` |
-//! | [`tkone_schedule::datetime::SpecIterator`] | `"YY-1M-L~WT11:00:00"` |
-//! | [`tkone_schedule::date::SpecIterator`] | `"YY-MM-FRI#L"` |
+//! | Spec example | Meaning |
+//! |---|---|
+//! | `"1H:00:00"` | Every hour on the hour |
+//! | `"HH:30M:00"` | Every 30 minutes |
+//! | `"HH:MM:10S"` | Every 10 seconds |
+//! | `"09:30:00"` | Daily at 09:30 |
 //!
-//! > **Note:** Although `datetime` and `date` iterators are supported, this
-//! > crate is an **in-memory** trigger — state is not persisted across process
-//! > restarts. Long-distance recurrences (daily, weekly, monthly) will be
-//! > missed if the process is restarted between ticks. For those schedules
-//! > consider pairing this crate with an external state store or using a
-//! > persistent job queue. `time`-based intra-day recurrences (every N
-//! > seconds/minutes/hours within a single day) are the primary intended use.
+//! **Only [`tkone_schedule::time`] specs are supported.** `date` and `datetime`
+//! specs (daily, weekly, monthly) require persistent state to survive process
+//! restarts — a missed tick on restart is silently lost. Use the `tempo` crate
+//! for those schedules.
 //!
 //! ## Example
 //!
@@ -34,11 +32,54 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
-use tkone_schedule::biz_day::BizDayProcessor;
-use tkone_schedule::NextResult;
+use tkone_schedule::Occurrence;
 use tokio::task::JoinHandle;
 pub use tokio_util::sync::CancellationToken;
 pub use inventory;
+
+// ── Start-spec resolution ─────────────────────────────────────────────────────
+
+/// Resolves a `start_spec` string to a [`DateTime<Utc>`] for use as the
+/// scheduler's start point.
+///
+/// Resolution order:
+/// 1. **RFC 3339 / ISO 8601 datetime** — if `s` parses as a datetime, it is
+///    returned directly.  Use this to pin a scheduler to a known wall-clock
+///    moment: `"2026-06-01T09:00:00Z"`.
+/// 2. **tkone-schedule time spec** — if `s` does not parse as a datetime, it is
+///    treated as a time spec (e.g. `"09:00:00"` or `"1H:00:00"`).  The first
+///    occurrence of that spec strictly after `Utc::now()` is returned.  Use this
+///    to express relative starts such as "next 9 am" or "next top of the hour".
+/// 3. **Fallback** — `Utc::now()` if neither parse succeeds.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use tkone_trigger::resolve_start_spec;
+///
+/// // Pin to a fixed datetime
+/// let dt = resolve_start_spec("2026-06-01T09:00:00Z");
+///
+/// // Start from the next occurrence of 9 am
+/// let dt = resolve_start_spec("09:00:00");
+///
+/// // Start from the next top of the hour
+/// let dt = resolve_start_spec("1H:00:00");
+/// ```
+pub fn resolve_start_spec(s: &str) -> DateTime<Utc> {
+    // 1. Try RFC 3339 / ISO 8601
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return dt.with_timezone(&Utc);
+    }
+    // 2. Try as a tkone-schedule time spec — return the next occurrence after now
+    if let Ok(mut iter) = tkone_schedule::time::SpecIteratorBuilder::new_after(s, Utc::now()).build() {
+        if let Ok(Some(dt)) = iter.next() {
+            return dt.with_timezone(&Utc);
+        }
+    }
+    // 3. Fallback
+    Utc::now()
+}
 
 // ── Context ──────────────────────────────────────────────────────────────────
 
@@ -47,32 +88,32 @@ pub use inventory;
 /// Implemented by [`FireContext`], which is passed to every callback and error
 /// handler on each tick. Write handlers against this trait for easier testing.
 pub trait TickContext: Send + 'static {
-    /// The [`NextResult`] for this tick, carrying both the raw calendar date
+    /// The [`Occurrence`] for this tick, carrying both the raw calendar date
     /// (`actual`) and the business-day-adjusted settlement date (`observed`).
     ///
-    /// For `time`-based iterators the result is always [`NextResult::Single`]
-    /// since no adjustment is applied. For `date` / `datetime` iterators the
-    /// variant reflects any business-day rule that was applied.
-    fn occurrence(&self) -> &NextResult<DateTime<Utc>>;
+    /// For `time`-based iterators the result is always [`Occurrence::Exact`]
+    /// since no business-day adjustment is applied. `tkone-trigger` only
+    /// supports `time` specs; `date` and `datetime` iterators are excluded.
+    fn occurrence(&self) -> &Occurrence<DateTime<Utc>>;
 }
 
 /// Concrete tick context passed to every callback and error handler.
 ///
-/// Carries the [`NextResult<DateTime<Utc>>`] for the current tick.
+/// Carries the [`Occurrence<DateTime<Utc>>`] for the current tick.
 /// Clone is cheap — the inner `DateTime` values are `Copy`.
 #[derive(Clone)]
 pub struct FireContext {
-    occurrence: NextResult<DateTime<Utc>>,
+    occurrence: Occurrence<DateTime<Utc>>,
 }
 
 impl FireContext {
-    pub fn new(occurrence: NextResult<DateTime<Utc>>) -> Self {
+    pub fn new(occurrence: Occurrence<DateTime<Utc>>) -> Self {
         Self { occurrence }
     }
 }
 
 impl TickContext for FireContext {
-    fn occurrence(&self) -> &NextResult<DateTime<Utc>> {
+    fn occurrence(&self) -> &Occurrence<DateTime<Utc>> {
         &self.occurrence
     }
 }
@@ -125,57 +166,18 @@ type BoxedErrorHandler<E> = Arc<
 
 // ── ScheduleIter ─────────────────────────────────────────────────────────────
 
-/// Abstracts over the three [`tkone_schedule`] iterator families.
+/// Drives a [`Scheduler`] tick by tick.
 ///
-/// Returns a [`NextResult`] rather than a plain [`DateTime`] so that callers
-/// can distinguish raw calendar dates from business-day-adjusted ones.
-///
-/// Implemented for:
-/// - [`tkone_schedule::datetime::SpecIterator<Tz, Bdp>`]
-/// - [`tkone_schedule::date::SpecIterator<Tz, Bdp>`]
-/// - [`tkone_schedule::time::SpecIterator<Tz>`]
+/// Only [`tkone_schedule::time::SpecIterator`] implements this trait.
+/// `tkone-trigger` is an **in-memory, intra-day** trigger — it does not persist
+/// state across restarts. `date` and `datetime` specs (daily, weekly, monthly)
+/// are intentionally excluded: a missed tick on process restart is silently lost,
+/// which is unacceptable for those schedules. Use the `tempo` crate for
+/// persistent, date-and-datetime-aware scheduling.
 pub trait ScheduleIter: Send + 'static {
-    /// Returns the next fire time as a [`NextResult`] in UTC, or `None` when
+    /// Returns the next fire time as an [`Occurrence`] in UTC, or `None` when
     /// the iterator is exhausted or encounters an error.
-    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>>;
-}
-
-impl<Tz, Bdp> ScheduleIter for tkone_schedule::datetime::SpecIterator<Tz, Bdp>
-where
-    Tz: TimeZone + Send + Sync + 'static,
-    Tz::Offset: Send + Sync,
-    Bdp: BizDayProcessor + Send + 'static,
-{
-    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>> {
-        self.next().ok()?.map(|nr| match nr {
-            NextResult::Single(t) => NextResult::Single(t.with_timezone(&Utc)),
-            NextResult::AdjustedLater(a, o) => {
-                NextResult::AdjustedLater(a.with_timezone(&Utc), o.with_timezone(&Utc))
-            }
-            NextResult::AdjustedEarlier(a, o) => {
-                NextResult::AdjustedEarlier(a.with_timezone(&Utc), o.with_timezone(&Utc))
-            }
-        })
-    }
-}
-
-impl<Tz, Bdp> ScheduleIter for tkone_schedule::date::SpecIterator<Tz, Bdp>
-where
-    Tz: TimeZone + Send + Sync + 'static,
-    Tz::Offset: Send + Sync,
-    Bdp: BizDayProcessor + Send + 'static,
-{
-    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>> {
-        self.next().ok()?.map(|nr| match nr {
-            NextResult::Single(t) => NextResult::Single(t.with_timezone(&Utc)),
-            NextResult::AdjustedLater(a, o) => {
-                NextResult::AdjustedLater(a.with_timezone(&Utc), o.with_timezone(&Utc))
-            }
-            NextResult::AdjustedEarlier(a, o) => {
-                NextResult::AdjustedEarlier(a.with_timezone(&Utc), o.with_timezone(&Utc))
-            }
-        })
-    }
+    fn next_fire(&mut self) -> Option<Occurrence<DateTime<Utc>>>;
 }
 
 impl<Tz> ScheduleIter for tkone_schedule::time::SpecIterator<Tz>
@@ -183,9 +185,9 @@ where
     Tz: TimeZone + Send + Sync + 'static,
     Tz::Offset: Send + Sync,
 {
-    // Time iterators have no business-day adjustment, so always Single.
-    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>> {
-        self.next().ok()?.map(|dt| NextResult::Single(dt.with_timezone(&Utc)))
+    // Time specs have no business-day adjustment; result is always Exact.
+    fn next_fire(&mut self) -> Option<Occurrence<DateTime<Utc>>> {
+        self.next().ok()?.map(|dt| Occurrence::Exact(dt.with_timezone(&Utc)))
     }
 }
 
@@ -197,7 +199,7 @@ where
 /// - `E` — the error type returned by callbacks; inferred from the `on_error` handler.
 ///
 /// Each callback and the error handler receive a [`FireContext`] for the tick,
-/// giving access to the [`NextResult`] (actual vs. observed occurrence).
+/// giving access to the [`Occurrence`] (actual vs. observed occurrence).
 /// Errors are routed to `on_error`; the scheduler always continues to the next tick.
 pub struct Scheduler<I: ScheduleIter, E: Send + 'static> {
     iter: I,
@@ -248,7 +250,7 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
     /// Fire all registered callbacks once immediately when [`run`](Self::run) is called,
     /// before waiting for the first scheduled tick.
     ///
-    /// The [`FireContext`] for the startup fire carries `NextResult::Single(Utc::now())`.
+    /// The [`FireContext`] for the startup fire carries `Occurrence::Exact(Utc::now())`.
     pub fn fire_on_start(mut self) -> Self {
         self.fire_on_start = true;
         self
@@ -316,7 +318,7 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
     /// before waiting for the first scheduled tick.
     pub async fn run(mut self) {
         if self.fire_on_start {
-            let ctx = FireContext::new(NextResult::Single(Utc::now()));
+            let ctx = FireContext::new(Occurrence::Exact(Utc::now()));
             self.fire_callbacks(ctx).await;
         }
 

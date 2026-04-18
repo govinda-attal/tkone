@@ -21,9 +21,9 @@ recurrence iterator:
 
 | Module     | Spec string example          | Iterator item                    | Use when…                    |
 |------------|------------------------------|----------------------------------|------------------------------|
-| `date`     | `"YY-1M-31L"`                | `NextResult<DateTime<Tz>>`       | calendar-day recurrence      |
+| `date`     | `"YY-1M-31L"`                | `Occurrence<DateTime<Tz>>`       | calendar-day recurrence      |
 | `time`     | `"1H:00:00"`                 | `DateTime<Tz>`                   | intra-day time recurrence    |
-| `datetime` | `"YY-1M-31L~WT11:00:00"`    | `NextResult<DateTime<Tz>>`       | combined date + time         |
+| `datetime` | `"YY-1M-31L~WT11:00:00"`    | `Occurrence<DateTime<Tz>>`       | combined date + time         |
 
 <!-- cargo-rdme start -->
 
@@ -40,9 +40,9 @@ corresponding recurrence iterator:
 
 | Module | Spec type | Iterator item | Use when… |
 |--------|-----------|---------------|-----------|
-| [`date`] | `"YY-1M-31L"` | `NextResult<DateTime<Tz>>` | calendar-day recurrence |
+| [`date`] | `"YY-1M-31L"` | `Occurrence<DateTime<Tz>>` | calendar-day recurrence |
 | [`time`] | `"1H:00:00"` | `DateTime<Tz>` | intra-day time recurrence |
-| [`datetime`] | `"YY-1M-31L~NBT11:00:00"` | `NextResult<DateTime<Tz>>` | combined date + time |
+| [`datetime`] | `"YY-1M-31L~NBT11:00:00"` | `Occurrence<DateTime<Tz>>` | combined date + time |
 
 #### Quick Start
 
@@ -198,24 +198,24 @@ in the date spec are not confused with the separator.
 "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 ```
 
-#### `NextResult` and Business Day Adjustments
+#### `Occurrence` and Business Day Adjustments
 
-Date and datetime iterators yield [`NextResult<T>`] rather than plain `T`.
+Date and datetime iterators yield [`Occurrence<T>`] rather than plain `T`.
 This distinguishes unadjusted occurrences from ones where the business day
 rule moved the settlement date:
 
-- [`NextResult::Single`] — no adjustment; `actual == observed`.
-- [`NextResult::AdjustedEarlier`] — rule moved the date *earlier*.
-- [`NextResult::AdjustedLater`] — rule moved the date *later*.
+- [`Occurrence::Exact`] — no adjustment; `actual == observed`.
+- [`Occurrence::AdjustedEarlier`] — rule moved the date *earlier*.
+- [`Occurrence::AdjustedLater`] — rule moved the date *later*.
 
 Use `.observed()` for the settlement date and `.actual()` for the raw
 calendar date.
 
 <!-- cargo-rdme end -->
 
-## `NextResult` and business-day adjustments
+## `Occurrence` and business-day adjustments
 
-Date and datetime iterators yield `NextResult<T>` rather than plain `T`, distinguishing
+Date and datetime iterators yield `Occurrence<T>` rather than plain `T`, distinguishing
 unadjusted dates from adjusted ones:
 
 | Variant | Meaning |

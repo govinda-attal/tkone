@@ -1,0 +1,81 @@
+# =============================================================================
+# Tempo — Iggy broker overlay
+# =============================================================================
+# Use alongside docker-compose.yml to replace Redpanda with Iggy.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.iggy.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.iggy.yml \
+#     --profile workers up -d
+#
+# Iggy speaks its own binary TCP protocol (not Kafka-compatible).
+# Tempo selects the iggy::BrokerBackend implementation at startup via
+# TEMPO_BROKER_BACKEND=iggy.  All worker logic is identical — only the
+# concrete BrokerBackend impl differs.  See docs/components.md.
+# =============================================================================
+
+services:
+
+  # Disable Redpanda services by assigning an unused profile
+  redpanda:
+    profiles: ["_disabled"]
+
+  redpanda-init:
+    profiles: ["_disabled"]
+
+  redpanda-console:
+    profiles: ["_disabled"]
+
+  # ── Iggy broker ─────────────────────────────────────────────────────────────
+  iggy:
+    image: iggyrs/iggy:latest
+    restart: unless-stopped
+    ports:
+      - "8090:8090"    # binary TCP — application protocol
+      - "3000:3000"    # HTTP REST API
+      - "8080:8080"    # web UI  (replaces redpanda-console)
+    volumes:
+      - iggy_data:/var/lib/iggy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # ── Override broker env on worker services ──────────────────────────────────
+  # Iggy auto-creates streams/topics on first publish — no init job needed.
+
+  tempo-generator:
+    environment:
+      TEMPO_BROKER_BACKEND:    iggy
+      TEMPO_BROKER_BOOTSTRAP:  iggy:8090
+    depends_on:
+      iggy:
+        condition: service_healthy
+
+  tempo-claimer:
+    environment:
+      TEMPO_BROKER_BACKEND:    iggy
+      TEMPO_BROKER_BOOTSTRAP:  iggy:8090
+    depends_on:
+      iggy:
+        condition: service_healthy
+
+  tempo-outbox-relay:
+    environment:
+      TEMPO_BROKER_BACKEND:    iggy
+      TEMPO_BROKER_BOOTSTRAP:  iggy:8090
+    depends_on:
+      iggy:
+        condition: service_healthy
+
+  tempo-inbox-relay:
+    environment:
+      TEMPO_BROKER_BACKEND:    iggy
+      TEMPO_BROKER_BOOTSTRAP:  iggy:8090
+    depends_on:
+      iggy:
+        condition: service_healthy
+
+volumes:
+  iggy_data:

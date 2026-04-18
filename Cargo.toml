@@ -1,7 +1,37 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/lib-schedule","crates/lib-utils","crates/lib-trigger","crates/lib-trigger-macros",
-    "crates/example-app"
+    "crates/tkone-schedule",
+    "crates/tkone-trigger",
+    "crates/tkone-trigger-macros",
+    "crates/lib-utils",
+    "crates/example-app",
 ]
 
+[workspace.package]
+version     = "0.1.0"
+edition     = "2021"
+license     = "MIT OR Apache-2.0"
+authors     = ["Govinda Attal"]
+repository  = "https://github.com/govinda-attal/tkone"
+homepage    = "https://github.com/govinda-attal/tkone"
+
+[workspace.dependencies]
+# ── internal ──────────────────────────────────────────────────────────────────
+tkone-schedule        = { path = "crates/tkone-schedule",        version = "0.1.0" }
+tkone-trigger         = { path = "crates/tkone-trigger",         version = "0.1.0" }
+tkone-trigger-macros  = { path = "crates/tkone-trigger-macros",  version = "0.1.0" }
+
+# ── external ──────────────────────────────────────────────────────────────────
+chrono            = "0.4"
+chrono-tz         = "0.10"
+fallible-iterator = "0.3"
+inventory         = "0.3"
+nom               = "8.0"
+proc-macro2       = "1"
+quote             = "1"
+regex             = "1"
+syn               = { version = "2", features = ["full"] }
+thiserror         = "2.0"
+tokio             = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }
+tokio-util        = "0.7"

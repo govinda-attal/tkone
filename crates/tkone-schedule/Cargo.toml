@@ -1,0 +1,27 @@
+[package]
+name        = "tkone-schedule"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+authors.workspace   = true
+repository.workspace = true
+homepage.workspace  = true
+description = "Scheduling and recurrence library with a flexible mini-language for dates, times, and datetimes. Supports business-day adjustment, timezone awareness, and fallible iteration."
+keywords    = ["schedule", "recurrence", "business-day", "datetime", "cron"]
+categories  = ["date-and-time", "parser-implementations"]
+readme      = "README.md"
+
+[lib]
+
+[package.metadata.rdme]
+readme-path = "README.md"
+
+[dependencies]
+chrono            = { workspace = true }
+fallible-iterator = { workspace = true }
+nom               = { workspace = true }
+regex             = { workspace = true }
+thiserror         = { workspace = true }
+
+[dev-dependencies]
+chrono-tz = { workspace = true }

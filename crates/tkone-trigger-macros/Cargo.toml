@@ -1,0 +1,23 @@
+[package]
+name        = "tkone-trigger-macros"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+authors.workspace   = true
+repository.workspace = true
+homepage.workspace  = true
+description = "Proc-macro attributes for tkone-trigger: #[schedule] and #[job] for declarative, zero-boilerplate async job scheduling."
+keywords    = ["scheduler", "macro", "async", "tokio", "jobs"]
+categories  = ["asynchronous", "development-tools::procedural-macro-helpers"]
+readme      = "README.md"
+
+[lib]
+proc-macro = true
+
+[package.metadata.rdme]
+readme-path = "README.md"
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote       = { workspace = true }
+syn         = { workspace = true }

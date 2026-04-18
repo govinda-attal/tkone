@@ -115,10 +115,10 @@ name = "example-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "lib-schedule",
- "lib-trigger",
- "lib-trigger-macros",
  "thiserror",
+ "tkone-schedule",
+ "tkone-trigger",
+ "tkone-trigger-macros",
  "tokio",
 ]
 
@@ -179,41 +179,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cee9c64da59eae3b50095c18d3e74f8b73c0b86d2792824ff01bbce68ba229ca"
 dependencies = [
  "wasm-bindgen",
-]
-
-[[package]]
-name = "lib-schedule"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "chrono-tz",
- "fallible-iterator",
- "nom",
- "regex",
- "thiserror",
-]
-
-[[package]]
-name = "lib-trigger"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "fallible-iterator",
- "inventory",
- "lib-schedule",
- "lib-trigger-macros",
- "thiserror",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "lib-trigger-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -435,6 +400,41 @@ name = "thiserror-impl"
 version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f077553d607adc1caf65430528a576c757a71ed73944b66ebb58ef2bbd243568"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "tkone-schedule"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "fallible-iterator",
+ "nom",
+ "regex",
+ "thiserror",
+]
+
+[[package]]
+name = "tkone-trigger"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "fallible-iterator",
+ "inventory",
+ "thiserror",
+ "tkone-schedule",
+ "tkone-trigger-macros",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "tkone-trigger-macros"
+version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -8,15 +8,20 @@
 //! | [`#[schedule]`](macro@schedule) | `impl` block | Turn a plain struct into a scheduler entry point |
 //! | [`#[job]`](macro@job) | `async fn` | Register a function as a job on a named scheduler |
 //!
+//! Every callback and error handler receives a [`tkone_trigger::FireContext`]
+//! carrying the [`tkone_schedule::NextResult`] for that tick, so handlers can
+//! inspect the scheduled occurrence.
+//!
 //! ## Quick start
 //!
 //! ### 1 — Define a scheduler struct
 //!
 //! Apply `#[schedule]` to an `impl` block. The block must contain exactly one
-//! method marked `#[on_error]`; its parameter type becomes the shared error
-//! type `E` for all jobs attached to this scheduler.
+//! method marked `#[on_error]`. That method takes `(ctx: FireContext, e: ErrorType)`;
+//! the error type becomes the shared `E` for all jobs on this scheduler.
 //!
 //! ```rust,ignore
+//! use tkone_trigger::FireContext;
 //! use tkone_trigger_macros::schedule;
 //! use thiserror::Error;
 //!
@@ -31,8 +36,8 @@
 //! #[schedule(spec = "1H:00:00")]
 //! impl MySchedule {
 //!     #[on_error]
-//!     async fn on_error(e: AppError) {
-//!         eprintln!("job failed: {e}");
+//!     async fn on_error(ctx: FireContext, e: AppError) {
+//!         eprintln!("job failed at {:?}: {e}", ctx.occurrence().observed());
 //!     }
 //! }
 //! ```
@@ -54,18 +59,18 @@
 //!
 //! ### 2 — Register jobs
 //!
-//! Apply `#[job(SchedulerStruct)]` to any `async fn` that returns
-//! `Result<(), E>`. The error type must match the one inferred from
-//! `#[on_error]`.
+//! Apply `#[job(SchedulerStruct)]` to any `async fn` that takes
+//! `ctx: FireContext` and returns `Result<(), E>`.
 //!
 //! ```rust,ignore
+//! use tkone_trigger::FireContext;
 //! use tkone_trigger_macros::job;
 //!
 //! # struct MySchedule;
 //! # #[derive(Debug)] enum AppError { Msg(String) }
 //! #[job(MySchedule)]
-//! async fn do_work() -> Result<(), AppError> {
-//!     println!("tick");
+//! async fn do_work(ctx: FireContext) -> Result<(), AppError> {
+//!     println!("tick at {:?}", ctx.occurrence().observed());
 //!     Ok(())
 //! }
 //! ```
@@ -99,7 +104,7 @@ use syn::{
     ReturnType, punctuated::Punctuated,
 };
 
-// ── #[schedule(spec = "...", tz = "...", fire_on_start)] ─────────────────────
+// ── #[schedule(spec = "...", fire_on_start)] ─────────────────────────────────
 
 struct ScheduleArgs {
     spec: LitStr,
@@ -139,7 +144,7 @@ impl Parse for ScheduleArgs {
 /// Apply to an `impl` block to turn a plain struct into a scheduler entry point.
 ///
 /// The impl block must contain exactly one method annotated `#[on_error]`.
-/// That method must be `async fn on_error(e: ErrorType)` (no `self`).
+/// That method must be `async fn on_error(ctx: FireContext, e: ErrorType)` (no `self`).
 ///
 /// # Generated items
 ///
@@ -151,6 +156,7 @@ impl Parse for ScheduleArgs {
 /// # Example
 ///
 /// ```rust,ignore
+/// use tkone_trigger::FireContext;
 /// use tkone_trigger_macros::schedule;
 ///
 /// struct Payments;
@@ -158,8 +164,8 @@ impl Parse for ScheduleArgs {
 /// #[schedule(spec = "1H:00:00")]
 /// impl Payments {
 ///     #[on_error]
-///     async fn on_error(e: MyError) {
-///         eprintln!("error: {e}");
+///     async fn on_error(ctx: FireContext, e: MyError) {
+///         eprintln!("error at {:?}: {e}", ctx.occurrence().observed());
 ///     }
 /// }
 /// ```
@@ -179,13 +185,10 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
     let spec_lit = &args.spec;
     let fire_on_start = args.fire_on_start;
 
-    // Find the #[on_error] method
     let on_error_fn = find_on_error_fn(&item_impl)?;
-    let error_type = extract_on_error_param_type(on_error_fn)?;
+    let error_type = extract_on_error_error_type(on_error_fn)?;
     let on_error_ident = &on_error_fn.sig.ident;
 
-    // Keep the original impl block but strip the #[on_error] helper attribute
-    // so Rust doesn't complain about unknown attributes.
     let stripped_impl = strip_helper_attrs(&item_impl);
 
     let fire_on_start_call = if fire_on_start {
@@ -246,10 +249,11 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
         }
 
         impl ::tkone_trigger::ScheduleErrorHandler<#error_type> for #struct_ty {
-            fn handle_error(e: #error_type) -> ::std::pin::Pin<
-                Box<dyn ::std::future::Future<Output = ()> + Send + 'static>
-            > {
-                Box::pin(Self::#on_error_ident(e))
+            fn handle_error(
+                ctx: ::tkone_trigger::FireContext,
+                e: #error_type,
+            ) -> ::tkone_trigger::BoxedFuture {
+                ::std::boxed::Box::pin(Self::#on_error_ident(ctx, e))
             }
         }
     };
@@ -280,14 +284,14 @@ fn find_on_error_fn(item_impl: &ItemImpl) -> syn::Result<&ImplItemFn> {
     })
 }
 
-fn extract_on_error_param_type(f: &ImplItemFn) -> syn::Result<&Type> {
-    // Expect exactly one parameter (no self): `e: ErrorType`
+fn extract_on_error_error_type(f: &ImplItemFn) -> syn::Result<&Type> {
+    // Expect exactly two parameters (no self): `ctx: FireContext, e: ErrorType`
     let inputs: Vec<&FnArg> = f.sig.inputs.iter().collect();
     match inputs.as_slice() {
-        [FnArg::Typed(pt)] => Ok(&pt.ty),
+        [FnArg::Typed(_ctx_param), FnArg::Typed(err_param)] => Ok(&err_param.ty),
         _ => Err(syn::Error::new_spanned(
             &f.sig,
-            "#[on_error] method must have exactly one parameter: `e: ErrorType`",
+            "#[on_error] must have exactly two parameters: `ctx: FireContext, e: ErrorType`",
         )),
     }
 }
@@ -310,16 +314,18 @@ fn strip_helper_attrs(item_impl: &ItemImpl) -> ItemImpl {
 
 /// Register an async function as a job for a scheduler defined with `#[schedule]`.
 ///
-/// The function must return `Result<(), E>` where `E` matches the error type
-/// of the named scheduler struct.
+/// The function must accept `ctx: FireContext` as its first parameter and return
+/// `Result<(), E>` where `E` matches the error type of the named scheduler struct.
 ///
 /// # Example
 ///
 /// ```rust,ignore
+/// use tkone_trigger::FireContext;
 /// use tkone_trigger_macros::job;
 ///
 /// #[job(Payments)]
-/// async fn process_payments() -> Result<(), MyError> {
+/// async fn process_payments(ctx: FireContext) -> Result<(), MyError> {
+///     println!("scheduled at {:?}", ctx.occurrence().observed());
 ///     Ok(())
 /// }
 /// ```
@@ -337,20 +343,22 @@ pub fn job(args: TokenStream, item: TokenStream) -> TokenStream {
 fn expand_job(struct_path: Path, item_fn: ItemFn) -> syn::Result<TokenStream2> {
     let fn_ident = &item_fn.sig.ident;
 
-    // Validate return type is Result<(), E>
     let error_type = extract_job_error_type(&item_fn)?;
 
-    // Generate a unique helper fn name that won't clash with user code.
+    // Plain fn so its pointer is a const expression (required by inventory::submit!).
     let helper_ident = quote::format_ident!("__tkone_trigger_job_{}", fn_ident);
 
     let expanded = quote! {
         #item_fn
 
-        // Plain fn so its pointer is a const expression (required by inventory::submit!).
-        fn #helper_ident() -> ::tkone_trigger::BoxedFuture {
+        fn #helper_ident(ctx: ::tkone_trigger::FireContext) -> ::tkone_trigger::BoxedFuture {
             ::std::boxed::Box::pin(async move {
-                if let Err(e) = #fn_ident().await {
-                    <#struct_path as ::tkone_trigger::ScheduleErrorHandler<#error_type>>::handle_error(e).await;
+                match #fn_ident(ctx.clone()).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        <#struct_path as ::tkone_trigger::ScheduleErrorHandler<#error_type>>
+                            ::handle_error(ctx, e).await;
+                    }
                 }
             })
         }

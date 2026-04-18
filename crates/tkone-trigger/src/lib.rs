@@ -1,9 +1,12 @@
 //! In-memory schedule triggering built on top of [`tkone_schedule`].
 //!
 //! [`Scheduler<I, E>`] owns a single [`ScheduleIter`] that fans out each tick
-//! to N async callbacks. Callbacks return `Result<(), E>`; any error is routed
-//! to the async `on_error` handler supplied at construction. Both `I` and `E`
-//! are fully generic and inferred from the arguments to [`Scheduler::new`].
+//! to N async callbacks. Each callback receives a [`FireContext`] carrying the
+//! [`tkone_schedule::NextResult`] for that tick, so handlers can inspect the
+//! scheduled occurrence (actual vs. observed date, UTC fire time). Callbacks
+//! return `Result<(), E>`; any error is routed to the async `on_error` handler,
+//! which also receives the [`FireContext`]. Both `I` and `E` are fully generic
+//! and inferred from the arguments to [`Scheduler::new`].
 //!
 //! | Iterator type | Spec example |
 //! |---------------|--------------|
@@ -29,6 +32,53 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use chrono::{DateTime, TimeZone, Utc};
+use fallible_iterator::FallibleIterator;
+use tkone_schedule::biz_day::BizDayProcessor;
+use tkone_schedule::NextResult;
+use tokio::task::JoinHandle;
+pub use tokio_util::sync::CancellationToken;
+pub use inventory;
+
+// ── Context ──────────────────────────────────────────────────────────────────
+
+/// Provides access to the schedule occurrence that triggered a tick.
+///
+/// Implemented by [`FireContext`], which is passed to every callback and error
+/// handler on each tick. Write handlers against this trait for easier testing.
+pub trait TickContext: Send + 'static {
+    /// The [`NextResult`] for this tick, carrying both the raw calendar date
+    /// (`actual`) and the business-day-adjusted settlement date (`observed`).
+    ///
+    /// For `time`-based iterators the result is always [`NextResult::Single`]
+    /// since no adjustment is applied. For `date` / `datetime` iterators the
+    /// variant reflects any business-day rule that was applied.
+    fn occurrence(&self) -> &NextResult<DateTime<Utc>>;
+}
+
+/// Concrete tick context passed to every callback and error handler.
+///
+/// Carries the [`NextResult<DateTime<Utc>>`] for the current tick.
+/// Clone is cheap — the inner `DateTime` values are `Copy`.
+#[derive(Clone)]
+pub struct FireContext {
+    occurrence: NextResult<DateTime<Utc>>,
+}
+
+impl FireContext {
+    pub fn new(occurrence: NextResult<DateTime<Utc>>) -> Self {
+        Self { occurrence }
+    }
+}
+
+impl TickContext for FireContext {
+    fn occurrence(&self) -> &NextResult<DateTime<Utc>> {
+        &self.occurrence
+    }
+}
+
+// ── Macro support types ───────────────────────────────────────────────────────
+
 /// Alias for a pinned, boxed, `Send` future returning `()`.
 ///
 /// Used as the return type of [`JobEntry::func`] and
@@ -37,49 +87,57 @@ pub type BoxedFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 /// A registered job entry, submitted via `#[job(StructType)]`.
 ///
-/// `func` is a plain function pointer (not a closure) so that it can be stored
-/// in a `#[used]` static — required by [`inventory`]'s link-time collection.
-/// Error handling is already baked into the function: on `Err` it calls the
-/// struct's `#[on_error]` handler, so the returned future always resolves to `()`.
+/// `func` is a plain function pointer so it can live in a `#[used]` static —
+/// required by [`inventory`]'s link-time collection. The function receives a
+/// [`FireContext`] for the current tick; error handling is baked in so it
+/// always resolves to `()`.
 pub struct JobEntry {
     /// Identifies which scheduler struct this job belongs to.
     pub schedule_type_id: TypeId,
-    /// Constructs the job future for one tick. Always returns `()`.
-    pub func: fn() -> BoxedFuture,
+    /// Constructs the job future for one tick, given the tick's context.
+    pub func: fn(FireContext) -> BoxedFuture,
 }
 
 inventory::collect!(JobEntry);
 
 /// Implemented by structs annotated with `#[schedule]`.
 ///
-/// Bridges the `#[job]` macro's error handling to the struct's `#[on_error]` method.
-/// Not intended to be implemented manually.
+/// Bridges the `#[job]` macro's error handling to the struct's `#[on_error]`
+/// method. Not intended to be implemented manually.
 pub trait ScheduleErrorHandler<E: Send + 'static>: 'static {
-    fn handle_error(e: E) -> BoxedFuture;
+    fn handle_error(ctx: FireContext, e: E) -> BoxedFuture;
 }
 
-use chrono::{DateTime, TimeZone, Utc};
-use fallible_iterator::FallibleIterator;
-use tkone_schedule::biz_day::BizDayProcessor;
-use tokio::task::JoinHandle;
-pub use tokio_util::sync::CancellationToken;
-pub use inventory;
+// ── Internal callback types ───────────────────────────────────────────────────
 
-type BoxedCallback<E> =
-    Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), E>> + Send + 'static>> + Send + 'static>;
+type BoxedCallback<E> = Box<
+    dyn Fn(FireContext) -> Pin<Box<dyn Future<Output = Result<(), E>> + Send + 'static>>
+        + Send
+        + 'static,
+>;
 
-type BoxedErrorHandler<E> =
-    Arc<dyn Fn(E) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync + 'static>;
+type BoxedErrorHandler<E> = Arc<
+    dyn Fn(FireContext, E) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
+// ── ScheduleIter ─────────────────────────────────────────────────────────────
 
 /// Abstracts over the three [`tkone_schedule`] iterator families.
+///
+/// Returns a [`NextResult`] rather than a plain [`DateTime`] so that callers
+/// can distinguish raw calendar dates from business-day-adjusted ones.
 ///
 /// Implemented for:
 /// - [`tkone_schedule::datetime::SpecIterator<Tz, Bdp>`]
 /// - [`tkone_schedule::date::SpecIterator<Tz, Bdp>`]
 /// - [`tkone_schedule::time::SpecIterator<Tz>`]
 pub trait ScheduleIter: Send + 'static {
-    /// Returns the next UTC fire time, or `None` when exhausted or on error.
-    fn next_fire(&mut self) -> Option<DateTime<Utc>>;
+    /// Returns the next fire time as a [`NextResult`] in UTC, or `None` when
+    /// the iterator is exhausted or encounters an error.
+    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>>;
 }
 
 impl<Tz, Bdp> ScheduleIter for tkone_schedule::datetime::SpecIterator<Tz, Bdp>
@@ -88,8 +146,16 @@ where
     Tz::Offset: Send + Sync,
     Bdp: BizDayProcessor + Send + 'static,
 {
-    fn next_fire(&mut self) -> Option<DateTime<Utc>> {
-        self.next().ok()?.map(|nr| nr.observed().with_timezone(&Utc))
+    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>> {
+        self.next().ok()?.map(|nr| match nr {
+            NextResult::Single(t) => NextResult::Single(t.with_timezone(&Utc)),
+            NextResult::AdjustedLater(a, o) => {
+                NextResult::AdjustedLater(a.with_timezone(&Utc), o.with_timezone(&Utc))
+            }
+            NextResult::AdjustedEarlier(a, o) => {
+                NextResult::AdjustedEarlier(a.with_timezone(&Utc), o.with_timezone(&Utc))
+            }
+        })
     }
 }
 
@@ -99,8 +165,16 @@ where
     Tz::Offset: Send + Sync,
     Bdp: BizDayProcessor + Send + 'static,
 {
-    fn next_fire(&mut self) -> Option<DateTime<Utc>> {
-        self.next().ok()?.map(|nr| nr.observed().with_timezone(&Utc))
+    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>> {
+        self.next().ok()?.map(|nr| match nr {
+            NextResult::Single(t) => NextResult::Single(t.with_timezone(&Utc)),
+            NextResult::AdjustedLater(a, o) => {
+                NextResult::AdjustedLater(a.with_timezone(&Utc), o.with_timezone(&Utc))
+            }
+            NextResult::AdjustedEarlier(a, o) => {
+                NextResult::AdjustedEarlier(a.with_timezone(&Utc), o.with_timezone(&Utc))
+            }
+        })
     }
 }
 
@@ -109,18 +183,22 @@ where
     Tz: TimeZone + Send + Sync + 'static,
     Tz::Offset: Send + Sync,
 {
-    fn next_fire(&mut self) -> Option<DateTime<Utc>> {
-        self.next().ok()?.map(|dt| dt.with_timezone(&Utc))
+    // Time iterators have no business-day adjustment, so always Single.
+    fn next_fire(&mut self) -> Option<NextResult<DateTime<Utc>>> {
+        self.next().ok()?.map(|dt| NextResult::Single(dt.with_timezone(&Utc)))
     }
 }
+
+// ── Scheduler ────────────────────────────────────────────────────────────────
 
 /// In-memory scheduler that fans out each schedule tick to N async callbacks.
 ///
 /// - `I` — the iterator type; inferred from the value passed to [`Scheduler::new`].
 /// - `E` — the error type returned by callbacks; inferred from the `on_error` handler.
 ///
-/// Errors from callbacks are routed to the `on_error` handler; the scheduler
-/// continues to the next tick regardless.
+/// Each callback and the error handler receive a [`FireContext`] for the tick,
+/// giving access to the [`NextResult`] (actual vs. observed occurrence).
+/// Errors are routed to `on_error`; the scheduler always continues to the next tick.
 pub struct Scheduler<I: ScheduleIter, E: Send + 'static> {
     iter: I,
     shutdown: CancellationToken,
@@ -132,40 +210,45 @@ pub struct Scheduler<I: ScheduleIter, E: Send + 'static> {
 impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
     /// Create a scheduler driven by `iter`.
     ///
-    /// `on_error` is called whenever a callback returns `Err`; it receives the
-    /// error value and may log, alert, or record metrics. The scheduler always
-    /// continues to the next tick.
+    /// `on_error` receives the [`FireContext`] and the error value whenever a
+    /// callback returns `Err`. It may log, alert, or record metrics. The
+    /// scheduler always continues to the next tick.
     pub fn new<H, Hf>(iter: I, on_error: H) -> Self
     where
-        H: Fn(E) -> Hf + Send + Sync + 'static,
+        H: Fn(FireContext, E) -> Hf + Send + Sync + 'static,
         Hf: Future<Output = ()> + Send + 'static,
     {
         Self {
             iter,
             shutdown: CancellationToken::new(),
             callbacks: Vec::new(),
-            on_error: Arc::new(move |e| Box::pin(on_error(e)) as Pin<Box<dyn Future<Output = ()> + Send + 'static>>),
+            on_error: Arc::new(move |ctx, e| {
+                Box::pin(on_error(ctx, e)) as Pin<Box<dyn Future<Output = ()> + Send + 'static>>
+            }),
             fire_on_start: false,
         }
     }
 
     /// Register an async callback fired on every tick of the schedule.
     ///
+    /// The callback receives a [`FireContext`] for each tick.
     /// Returns a [`CancellationToken`] that silences only this callback on
     /// future ticks without stopping the iterator or other callbacks.
     pub fn add<F, Fut>(&mut self, callback: F) -> CancellationToken
     where
-        F: Fn() -> Fut + Send + 'static,
+        F: Fn(FireContext) -> Fut + Send + 'static,
         Fut: Future<Output = Result<(), E>> + Send + 'static,
     {
         let token = CancellationToken::new();
         self.callbacks
-            .push((token.clone(), Box::new(move || Box::pin(callback()))));
+            .push((token.clone(), Box::new(move |ctx| Box::pin(callback(ctx)))));
         token
     }
 
     /// Fire all registered callbacks once immediately when [`run`](Self::run) is called,
     /// before waiting for the first scheduled tick.
+    ///
+    /// The [`FireContext`] for the startup fire carries `NextResult::Single(Utc::now())`.
     pub fn fire_on_start(mut self) -> Self {
         self.fire_on_start = true;
         self
@@ -175,12 +258,12 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
     /// at its next opportunity. Useful for triggering shutdown from outside [`run`](Self::run).
     ///
     /// ```rust,no_run
-    /// # use tkone_trigger::Scheduler;
+    /// # use tkone_trigger::{Scheduler, FireContext};
     /// # use tkone_schedule::time::SpecIteratorBuilder as TimeBuilder;
     /// # async fn example() {
     /// # let mut scheduler = Scheduler::new(
     /// #     TimeBuilder::new("1H:00:00", chrono::Utc).build().unwrap(),
-    /// #     |_e: String| async {},
+    /// #     |_ctx: FireContext, _e: String| async {},
     /// # );
     /// let token = scheduler.shutdown_token();
     /// tokio::spawn(async move {
@@ -203,13 +286,14 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
 
     /// Register a pre-boxed job function (used by the `#[schedule]` macro).
     ///
-    /// The `func` closure has error handling already baked in and returns `()`.
-    pub fn add_job(&mut self, func: fn() -> BoxedFuture) {
+    /// The function receives a [`FireContext`] and has error handling already
+    /// baked in, so it always returns `()`.
+    pub fn add_job(&mut self, func: fn(FireContext) -> BoxedFuture) {
         let token = CancellationToken::new();
         self.callbacks.push((
             token,
-            Box::new(move || {
-                let fut = func();
+            Box::new(move |ctx: FireContext| {
+                let fut = func(ctx);
                 Box::pin(async move {
                     fut.await;
                     Ok(())
@@ -225,20 +309,23 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
 
     /// Drive the schedule until the iterator is exhausted or [`shutdown`](Self::shutdown) is called.
     ///
-    /// On each tick all non-cancelled callbacks are spawned as concurrent tasks.
-    /// Errors are forwarded to `on_error`; the scheduler always advances to the next tick.
+    /// On each tick all non-cancelled callbacks are spawned as concurrent tasks,
+    /// each receiving a [`FireContext`] for that tick. Errors are forwarded to
+    /// `on_error`; the scheduler always advances to the next tick.
     /// If [`fire_on_start`](Self::fire_on_start) was called, all callbacks fire once immediately
     /// before waiting for the first scheduled tick.
     pub async fn run(mut self) {
         if self.fire_on_start {
-            self.fire_callbacks().await;
+            let ctx = FireContext::new(NextResult::Single(Utc::now()));
+            self.fire_callbacks(ctx).await;
         }
 
         loop {
-            let Some(fire_at) = self.iter.next_fire() else {
+            let Some(nr) = self.iter.next_fire() else {
                 break;
             };
 
+            let fire_at = nr.observed().clone();
             let delay = fire_at - Utc::now();
             if delay > chrono::Duration::zero() {
                 let sleep = delay.to_std().unwrap_or_default();
@@ -252,17 +339,20 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
                 break;
             }
 
-            self.fire_callbacks().await;
+            let ctx = FireContext::new(nr);
+            self.fire_callbacks(ctx).await;
         }
     }
 
-    async fn fire_callbacks(&self) {
+    async fn fire_callbacks(&self, ctx: FireContext) {
         let handles: Vec<JoinHandle<()>> = self
             .callbacks
             .iter()
             .filter(|(token, _)| !token.is_cancelled())
             .map(|(token, cb)| {
-                let fut = cb();
+                let ctx_for_cb = ctx.clone();
+                let ctx_for_err = ctx.clone();
+                let fut = cb(ctx_for_cb);
                 let token = token.clone();
                 let shutdown = self.shutdown.clone();
                 let on_error = self.on_error.clone();
@@ -272,7 +362,7 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
                         _ = shutdown.cancelled() => {}
                         result = fut => {
                             if let Err(e) = result {
-                                on_error(e).await;
+                                on_error(ctx_for_err, e).await;
                             }
                         }
                     }

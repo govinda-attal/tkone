@@ -1,5 +1,5 @@
 use tkone_schedule::time::SpecIteratorBuilder as TimeBuilder;
-use tkone_trigger::Scheduler;
+use tkone_trigger::{FireContext, TickContext, Scheduler};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -8,12 +8,13 @@ enum JobError {
     Downstream(String),
 }
 
-async fn process_payments() -> Result<(), JobError> {
+async fn process_payments(ctx: FireContext) -> Result<(), JobError> {
+    println!("process_payments fired at {:?}", ctx.occurrence().observed());
     Err(JobError::Downstream("payment service is down".to_string()))
 }
 
-async fn on_error(e: JobError) {
-    eprintln!("scheduled job failed: {e}");
+async fn on_error(ctx: FireContext, e: JobError) {
+    eprintln!("job failed at {:?}: {e}", ctx.occurrence().observed());
 }
 
 #[tokio::main]

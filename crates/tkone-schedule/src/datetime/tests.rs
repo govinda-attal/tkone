@@ -1,11 +1,11 @@
 use crate::biz_day::WeekendSkipper;
 use crate::datetime::SpecIteratorBuilder;
-use crate::NextResult;
+use crate::Occurrence;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Timelike, Utc, Weekday};
 use fallible_iterator::FallibleIterator;
 
 /// Convenience alias — reduces line noise in assertions.
-type NR<Tz> = NextResult<DateTime<Tz>>;
+type NR<Tz> = Occurrence<DateTime<Tz>>;
 
 // ---------------------------------------------------------------------------
 // Group 1: Fixed time — one tick per valid calendar date (specs 1–5)
@@ -32,12 +32,12 @@ fn test_last_biz_day_monthly_fixed_time() {
     // Apr 30 (Wed): Single at 11:00
     assert_eq!(
         results[0],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap())
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap())
     );
 
     // May 31 (Sat) → Jun 2 (Mon): AdjustedLater, observed at 11:00 on Jun 2
     assert!(
-        matches!(results[1], NextResult::AdjustedLater(_, _)),
+        matches!(results[1], Occurrence::AdjustedLater(_, _)),
         "May 31 (Sat) should be AdjustedLater"
     );
     assert_eq!(
@@ -52,7 +52,7 @@ fn test_last_biz_day_monthly_fixed_time() {
     // Jun 30 (Mon): Single at 11:00
     assert_eq!(
         results[2],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 6, 30, 11, 0, 0).unwrap())
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 30, 11, 0, 0).unwrap())
     );
 }
 
@@ -79,7 +79,7 @@ fn test_mwf_fixed_time() {
         tz.with_ymd_and_hms(2025, 1, 17, 9, 30, 0).unwrap(), // Fri
     ];
     for (i, dt) in expected.iter().enumerate() {
-        assert_eq!(results[i], NextResult::Single(*dt), "result[{}]", i);
+        assert_eq!(results[i], Occurrence::Exact(*dt), "result[{}]", i);
     }
     // All on Mon/Wed/Fri
     for r in &results {
@@ -113,7 +113,7 @@ fn test_weekly_friday_fixed_time() {
         tz.with_ymd_and_hms(2025, 1, 24, 16, 30, 0).unwrap(),
     ];
     for (i, dt) in expected.iter().enumerate() {
-        assert_eq!(results[i], NextResult::Single(*dt), "result[{}]", i);
+        assert_eq!(results[i], Occurrence::Exact(*dt), "result[{}]", i);
         assert_eq!(
             results[i].observed().date_naive().weekday(),
             Weekday::Fri
@@ -142,7 +142,7 @@ fn test_quarterly_15th_fixed_time() {
         tz.with_ymd_and_hms(2025, 10, 15, 9, 0, 0).unwrap(),
     ];
     for (i, dt) in expected.iter().enumerate() {
-        assert_eq!(results[i], NextResult::Single(*dt), "result[{}]", i);
+        assert_eq!(results[i], Occurrence::Exact(*dt), "result[{}]", i);
     }
     // Adjacent results are 3 months apart
     for w in results.windows(2) {
@@ -174,7 +174,7 @@ fn test_first_monday_monthly_fixed_time() {
         tz.with_ymd_and_hms(2025, 4, 7, 9, 30, 0).unwrap(),
     ];
     for (i, dt) in expected.iter().enumerate() {
-        assert_eq!(results[i], NextResult::Single(*dt), "result[{}]", i);
+        assert_eq!(results[i], Occurrence::Exact(*dt), "result[{}]", i);
         assert_eq!(results[i].observed().date_naive().weekday(), Weekday::Mon);
         // Each result is the first Monday of its month (day ≤ 7)
         assert!(
@@ -422,12 +422,12 @@ fn test_31n_overflow_fixed_time() {
     // Jan 31: Single
     assert_eq!(
         results[0],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 1, 31, 11, 0, 0).unwrap())
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 11, 0, 0).unwrap())
     );
 
     // Feb: overflows → AdjustedLater, observed = Mar 1 at 11:00
     assert!(
-        matches!(results[1], NextResult::AdjustedLater(_, _)),
+        matches!(results[1], Occurrence::AdjustedLater(_, _)),
         "Feb overflow should be AdjustedLater"
     );
     assert_eq!(
@@ -439,12 +439,12 @@ fn test_31n_overflow_fixed_time() {
     // Mar 31: Single
     assert_eq!(
         results[2],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 3, 31, 11, 0, 0).unwrap())
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 11, 0, 0).unwrap())
     );
 
     // Apr: overflows → AdjustedLater, observed = May 1 at 11:00
     assert!(
-        matches!(results[3], NextResult::AdjustedLater(_, _)),
+        matches!(results[3], Occurrence::AdjustedLater(_, _)),
         "Apr overflow should be AdjustedLater"
     );
     assert_eq!(
@@ -483,7 +483,7 @@ fn test_adjusted_later_only_on_first_intraday_tick() {
 
     // First tick on Jun 2 is AdjustedLater (actual = May, observed = Jun 2)
     assert!(
-        matches!(jun2[0], NextResult::AdjustedLater(_, _)),
+        matches!(jun2[0], Occurrence::AdjustedLater(_, _)),
         "first tick on Jun 2 must be AdjustedLater"
     );
     assert_eq!(jun2[0].actual().month(), 5, "actual month should be May");
@@ -492,7 +492,7 @@ fn test_adjusted_later_only_on_first_intraday_tick() {
     // All subsequent ticks on Jun 2 are Single
     for tick in jun2.iter().skip(1) {
         assert!(
-            matches!(tick, NextResult::Single(_)),
+            matches!(tick, Occurrence::Exact(_)),
             "subsequent ticks on Jun 2 must be Single, got {:?} at {:?}",
             tick,
             tick.observed().time()
@@ -556,16 +556,16 @@ fn test_new_after_non_aligned_cursor() {
 
     assert_eq!(
         results[0],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap()),
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap()),
         "first result after 09:30 with 1H:00:00 should be 10:00"
     );
     assert_eq!(
         results[1],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap())
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap())
     );
     assert_eq!(
         results[2],
-        NextResult::Single(tz.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap())
+        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap())
     );
 }
 
@@ -624,7 +624,7 @@ fn test_asis_time_carry_loss_on_date_gaps() {
     let results: Vec<NR<_>> = iter.take(3).collect().unwrap();
 
     // Passthrough: start preserved unchanged
-    assert_eq!(results[0], NextResult::Single(start));
+    assert_eq!(results[0], Occurrence::Exact(start));
     assert_eq!(results[0].observed().hour(), 14);
     assert_eq!(results[0].observed().minute(), 30);
 

@@ -124,15 +124,15 @@ pub enum LastDayOption {
     /// month automatically by the calendar. Default.
     #[default]
     NA,
-    /// Clamp to the last day of the month and emit a [`crate::NextResult::Single`]
+    /// Clamp to the last day of the month and emit a [`crate::Occurrence::Exact`]
     /// result (`ddL` / `L`).
     LastDay,
     /// Use the 1st of the following month as the *observed* date; the raw
     /// calendar date is still the last day of the current month.
-    /// Yields [`crate::NextResult::AdjustedLater`] (`ddN`).
+    /// Yields [`crate::Occurrence::AdjustedLater`] (`ddN`).
     NextMonthFirstDay,
     /// Overflow into the next month by the excess days.
-    /// Yields [`crate::NextResult::AdjustedLater`] (`ddO`).
+    /// Yields [`crate::Occurrence::AdjustedLater`] (`ddO`).
     NextMonthOverflow,
 }
 

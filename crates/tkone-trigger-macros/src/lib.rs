@@ -9,7 +9,7 @@
 //! | [`#[job]`](macro@job) | `async fn` | Register a function as a job on a named scheduler |
 //!
 //! Every callback and error handler receives a [`tkone_trigger::FireContext`]
-//! carrying the [`tkone_schedule::NextResult`] for that tick, so handlers can
+//! carrying the [`tkone_schedule::Occurrence`] for that tick, so handlers can
 //! inspect the scheduled occurrence.
 //!
 //! ## Quick start
@@ -55,6 +55,7 @@
 //! | Argument | Required | Description |
 //! |----------|----------|-------------|
 //! | `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` |
+//! | `start_spec = "..."` | no | Where to start iterating. RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a tkone-schedule time spec (`"09:00:00"`). When omitted the scheduler starts from `Utc::now()`. |
 //! | `fire_on_start` | no | Fire all jobs once immediately before the first tick |
 //!
 //! ### 2 — Register jobs
@@ -108,12 +109,14 @@ use syn::{
 
 struct ScheduleArgs {
     spec: LitStr,
+    start_spec: Option<LitStr>,
     fire_on_start: bool,
 }
 
 impl Parse for ScheduleArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut spec: Option<LitStr> = None;
+        let mut start_spec: Option<LitStr> = None;
         let mut fire_on_start = false;
 
         let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
@@ -122,6 +125,11 @@ impl Parse for ScheduleArgs {
                 Meta::NameValue(nv) if nv.path.is_ident("spec") => {
                     if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
                         spec = Some(s.clone());
+                    }
+                }
+                Meta::NameValue(nv) if nv.path.is_ident("start_spec") => {
+                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
+                        start_spec = Some(s.clone());
                     }
                 }
                 Meta::Path(p) if p.is_ident("fire_on_start") => {
@@ -137,7 +145,7 @@ impl Parse for ScheduleArgs {
         }
 
         let spec = spec.ok_or_else(|| input.error("expected `spec = \"...\"`"))?;
-        Ok(ScheduleArgs { spec, fire_on_start })
+        Ok(ScheduleArgs { spec, start_spec, fire_on_start })
     }
 }
 
@@ -146,6 +154,14 @@ impl Parse for ScheduleArgs {
 /// The impl block must contain exactly one method annotated `#[on_error]`.
 /// That method must be `async fn on_error(ctx: FireContext, e: ErrorType)` (no `self`).
 ///
+/// # Attribute arguments
+///
+/// | Argument | Required | Description |
+/// |---|---|---|
+/// | `spec = "..."` | yes | `tkone-schedule` time spec, e.g. `"1H:00:00"` |
+/// | `start_spec = "..."` | no | Start point: RFC 3339 datetime **or** a tkone-schedule time spec. Omit to start from `Utc::now()`. |
+/// | `fire_on_start` | no | Run all jobs once immediately before the first tick |
+///
 /// # Generated items
 ///
 /// On the struct:
@@ -153,21 +169,24 @@ impl Parse for ScheduleArgs {
 /// - `async fn run()`
 /// - `async fn run_until_signal()`
 ///
-/// # Example
+/// # Examples
 ///
+/// Default — start from now:
 /// ```rust,ignore
-/// use tkone_trigger::FireContext;
-/// use tkone_trigger_macros::schedule;
+/// #[schedule(spec = "1H:00:00", fire_on_start)]
+/// impl Payments { … }
+/// ```
 ///
-/// struct Payments;
+/// Start from the next occurrence of 9 am (time-spec start):
+/// ```rust,ignore
+/// #[schedule(spec = "1H:00:00", start_spec = "09:00:00")]
+/// impl Payments { … }
+/// ```
 ///
-/// #[schedule(spec = "1H:00:00")]
-/// impl Payments {
-///     #[on_error]
-///     async fn on_error(ctx: FireContext, e: MyError) {
-///         eprintln!("error at {:?}: {e}", ctx.occurrence().observed());
-///     }
-/// }
+/// Start from a fixed wall-clock moment (RFC 3339 start):
+/// ```rust,ignore
+/// #[schedule(spec = "YY-1M-L~NBT11:00:00", start_spec = "2026-06-01T00:00:00Z")]
+/// impl MonthlySettlement { … }
 /// ```
 #[proc_macro_attribute]
 pub fn schedule(args: TokenStream, item: TokenStream) -> TokenStream {
@@ -197,6 +216,28 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
         quote! {}
     };
 
+    // Build the iterator differently depending on whether start_spec was supplied.
+    let iter_build = if let Some(start_lit) = &args.start_spec {
+        quote! {
+            let __start_dt = ::tkone_trigger::resolve_start_spec(#start_lit);
+            let iter = ::tkone_schedule::time::SpecIteratorBuilder::new_after(
+                #spec_lit,
+                __start_dt,
+            )
+            .build()
+            .expect("invalid schedule spec");
+        }
+    } else {
+        quote! {
+            let iter = ::tkone_schedule::time::SpecIteratorBuilder::new(
+                #spec_lit,
+                ::chrono::Utc,
+            )
+            .build()
+            .expect("invalid schedule spec");
+        }
+    };
+
     let expanded = quote! {
         #stripped_impl
 
@@ -212,12 +253,7 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
             /// Build and run the scheduler until the iterator is exhausted or
             /// [`shutdown_token()`](Self::shutdown_token) is cancelled.
             pub async fn run() {
-                let iter = ::tkone_schedule::time::SpecIteratorBuilder::new(
-                    #spec_lit,
-                    ::chrono::Utc,
-                )
-                .build()
-                .expect("invalid schedule spec");
+                #iter_build
 
                 let mut scheduler = ::tkone_trigger::Scheduler::new(iter, Self::#on_error_ident)
                     .with_shutdown_token(Self::shutdown_token());

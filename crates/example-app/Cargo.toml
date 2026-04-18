@@ -6,12 +6,12 @@ license.workspace = true
 publish          = false
 
 [[bin]]
-name = "imperative"
-path = "src/bin/imperative.rs"
+name = "trigger-imperative"
+path = "src/trigger/imperative.rs"
 
 [[bin]]
-name = "declarative"
-path = "src/bin/declarative.rs"
+name = "trigger-declarative"
+path = "src/trigger/declarative.rs"
 
 [dependencies]
 tkone-schedule       = { workspace = true }

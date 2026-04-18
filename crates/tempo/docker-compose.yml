@@ -1,0 +1,263 @@
+# =============================================================================
+# Tempo — Docker Compose
+# =============================================================================
+#
+# Two profiles:
+#
+#   (no profile)            Infrastructure only — Postgres, PgBouncer, Redpanda.
+#                           Use this while developing the application itself.
+#
+#   --profile workers       All Tempo worker services on top of infrastructure.
+#                           Suitable for local integration testing and simple
+#                           single-host deployments.
+#
+# Quick start:
+#   cp .env.example .env
+#   docker compose up -d                        # infra only
+#   docker compose --profile workers up -d     # infra + all workers
+#
+# Scale claimers (coordinator will auto-assign shard ranges):
+#   docker compose --profile workers up -d --scale tempo-claimer=4
+#
+# Key differences vs Kubernetes:
+#   - Shard assignment: coordinator-managed (DB) instead of StatefulSet ordinals
+#   - Leader election: PostgreSQL advisory locks instead of k8s Lease API
+#   - PgBouncer: shared service instead of per-pod sidecar
+#   - Autoscaling: manual (--scale flag) instead of KEDA
+#
+# See docs/docker-compose.md for full explanation of these differences.
+# =============================================================================
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-tempo}
+      POSTGRES_USER:     ${POSTGRES_USER:-tempo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tempo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docs/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./docker/init-partitions.sql:/docker-entrypoint-initdb.d/02-partitions.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tempo} -d ${POSTGRES_DB:-tempo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── PgBouncer ───────────────────────────────────────────────────────────────
+  # Shared service (contrast with per-pod sidecar in Kubernetes).
+  # All workers connect through PgBouncer; none talk to Postgres directly.
+  pgbouncer:
+    image: bitnami/pgbouncer:1.23.1
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_HOST:              postgres
+      POSTGRESQL_PORT:              "5432"
+      POSTGRESQL_DATABASE:          ${POSTGRES_DB:-tempo}
+      POSTGRESQL_USERNAME:          ${POSTGRES_USER:-tempo}
+      POSTGRESQL_PASSWORD:          ${POSTGRES_PASSWORD:-tempo}
+      PGBOUNCER_POOL_MODE:          transaction
+      PGBOUNCER_MAX_CLIENT_CONN:    "200"
+      PGBOUNCER_DEFAULT_POOL_SIZE:  "10"
+      PGBOUNCER_SERVER_IDLE_TIMEOUT: "60"
+      PGBOUNCER_AUTH_TYPE:          scram-sha-256
+    ports:
+      - "${PGBOUNCER_PORT:-5433}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Redpanda (Kafka-compatible broker) ──────────────────────────────────────
+  # Single-node, no ZooKeeper required.  Drop-in Kafka replacement.
+  # See docs/docker-compose.md for Iggy alternative configuration.
+  redpanda:
+    image: redpandadata/redpanda:v24.1.1
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --memory=512M
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --schema-registry-addr=0.0.0.0:8081
+    ports:
+      - "${REDPANDA_KAFKA_PORT:-9092}:9092"
+      - "${REDPANDA_ADMIN_PORT:-9644}:9644"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -c 'Healthy:.*true' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+
+  # Topic bootstrap — runs once, exits.
+  redpanda-init:
+    image: redpandadata/redpanda:v24.1.1
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        rpk -X brokers=redpanda:9092 topic create \
+          ${TEMPO_OUTBOX_TOPIC:-tempo.schedule.fired} \
+          ${TEMPO_INBOX_TOPIC:-tempo.schedule.completed} \
+          --partitions 12 --replicas 1
+        echo "Topics ready."
+    restart: "no"
+
+  # Redpanda Console — browser UI at http://localhost:8080
+  redpanda-console:
+    image: redpandadata/console:v2.6.0
+    restart: unless-stopped
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "${REDPANDA_CONSOLE_PORT:-8080}:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
+  # ── Tempo Workers ────────────────────────────────────────────────────────────
+  # All worker services share the same image; role is selected via TEMPO_ROLE.
+  # Start with:  docker compose --profile workers up -d
+  #
+  # TEMPO_LEADER_BACKEND=postgres  → advisory locks (Docker Compose default)
+  # TEMPO_SHARD_BACKEND=postgres   → coordinator-managed shard assignment
+  # These differ from Kubernetes where StatefulSet ordinals + k8s Lease are used.
+
+  tempo-generator:
+    image: tempo:dev
+    build:
+      context: ../..
+      dockerfile: crates/tempo/Dockerfile
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:            generator
+      TEMPO_NODE_ID:         tempo-generator-1
+      TEMPO_DB_URL:          ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_BROKER_BOOTSTRAP: ${TEMPO_BROKER_BOOTSTRAP:-redpanda:9092}
+      TEMPO_OUTBOX_TOPIC:    ${TEMPO_OUTBOX_TOPIC:-tempo.schedule.fired}
+      TEMPO_LEADER_BACKEND:  postgres
+      RUST_LOG:              ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redpanda-init:
+        condition: service_completed_successfully
+
+  tempo-coordinator:
+    image: tempo:dev
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:           coordinator
+      TEMPO_NODE_ID:        tempo-coordinator-1
+      TEMPO_DB_URL:         ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_LEADER_BACKEND: postgres
+      RUST_LOG:             ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+
+  # Scale with: docker compose --profile workers up -d --scale tempo-claimer=N
+  # The coordinator detects new claimer registrations and assigns shard ranges.
+  tempo-claimer:
+    image: tempo:dev
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:             claimer
+      # node_id is set to the container ID at runtime by the entrypoint.
+      # Override with TEMPO_NODE_ID for a fixed name when scaling to 1.
+      TEMPO_NODE_ID:          ""
+      TEMPO_DB_URL:           ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_BROKER_BOOTSTRAP: ${TEMPO_BROKER_BOOTSTRAP:-redpanda:9092}
+      TEMPO_OUTBOX_TOPIC:     ${TEMPO_OUTBOX_TOPIC:-tempo.schedule.fired}
+      TEMPO_SHARD_BACKEND:    postgres
+      TEMPO_LEASE_DURATION_SECS: "120"
+      RUST_LOG:               ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      tempo-coordinator:
+        condition: service_started
+      redpanda-init:
+        condition: service_completed_successfully
+
+  tempo-outbox-relay:
+    image: tempo:dev
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:             outbox_relay
+      TEMPO_NODE_ID:          tempo-outbox-relay-1
+      TEMPO_DB_URL:           ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_BROKER_BOOTSTRAP: ${TEMPO_BROKER_BOOTSTRAP:-redpanda:9092}
+      TEMPO_OUTBOX_TOPIC:     ${TEMPO_OUTBOX_TOPIC:-tempo.schedule.fired}
+      TEMPO_RELAY_BATCH_SIZE: "100"
+      RUST_LOG:               ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redpanda-init:
+        condition: service_completed_successfully
+
+  tempo-inbox-relay:
+    image: tempo:dev
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:             inbox_relay
+      TEMPO_NODE_ID:          tempo-inbox-relay-1
+      TEMPO_DB_URL:           ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_BROKER_BOOTSTRAP: ${TEMPO_BROKER_BOOTSTRAP:-redpanda:9092}
+      TEMPO_INBOX_TOPIC:      ${TEMPO_INBOX_TOPIC:-tempo.schedule.completed}
+      TEMPO_CONSUMER_GROUP:   tempo-inbox-relay
+      RUST_LOG:               ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redpanda-init:
+        condition: service_completed_successfully
+
+  tempo-inbox-processor:
+    image: tempo:dev
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:        inbox_processor
+      TEMPO_NODE_ID:     tempo-inbox-processor-1
+      TEMPO_DB_URL:      ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_BATCH_SIZE:  "50"
+      RUST_LOG:          ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+
+  tempo-run-aggregator:
+    image: tempo:dev
+    restart: unless-stopped
+    profiles: ["workers"]
+    environment:
+      TEMPO_ROLE:        run_aggregator
+      TEMPO_NODE_ID:     tempo-run-aggregator-1
+      TEMPO_DB_URL:      ${TEMPO_DB_URL:-postgres://tempo:tempo@pgbouncer:5432/tempo}
+      TEMPO_BATCH_SIZE:  "200"
+      RUST_LOG:          ${RUST_LOG:-info}
+    depends_on:
+      pgbouncer:
+        condition: service_started
+
+volumes:
+  postgres_data:

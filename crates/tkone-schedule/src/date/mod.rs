@@ -6,8 +6,8 @@
 //! |------|---------|
 //! | [`Spec`] | Parsed representation of a date spec string |
 //! | [`SpecIteratorBuilder`] | Fluent builder for [`SpecIterator`] and [`NaiveSpecIterator`] |
-//! | [`SpecIterator`] | Timezone-aware fallible iterator over [`crate::NextResult<DateTime<Tz>>`] |
-//! | [`NaiveSpecIterator`] | Non-timezone-aware fallible iterator over [`crate::NextResult<NaiveDateTime>`] |
+//! | [`SpecIterator`] | Timezone-aware fallible iterator over [`crate::Occurrence<DateTime<Tz>>`] |
+//! | [`NaiveSpecIterator`] | Non-timezone-aware fallible iterator over [`crate::Occurrence<NaiveDateTime>`] |
 //!
 //! ## Spec Syntax
 //!

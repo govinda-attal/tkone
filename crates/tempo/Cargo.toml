@@ -1,0 +1,19 @@
+[package]
+name                = "tempo"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+authors.workspace   = true
+repository.workspace = true
+homepage.workspace  = true
+description         = "Enterprise-grade distributed scheduler with persistent occurrences, transactional outbox/inbox messaging, and horizontal scalability — built on tkone-schedule."
+keywords            = ["scheduler", "distributed", "async", "tokio", "postgres"]
+categories          = ["asynchronous", "database"]
+publish             = false
+
+[dependencies]
+tkone-schedule = { workspace = true }
+tkone-trigger  = { workspace = true }
+chrono         = { workspace = true }
+thiserror      = { workspace = true }
+tokio          = { workspace = true }

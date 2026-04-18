@@ -21,7 +21,7 @@ async fn main() {
     let mut scheduler = Scheduler::new(
         TimeBuilder::new("HH:MM:10S", chrono::Utc).build().unwrap(),
         on_error,
-    );
+    ).fire_on_start();
 
     scheduler.add(process_payments);
 

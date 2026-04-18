@@ -182,10 +182,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lib-utils"
-version = "0.1.0"
-
-[[package]]
 name = "libc"
 version = "0.2.185"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -387,17 +383,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tempo"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "thiserror",
- "tkone-schedule",
- "tkone-trigger",
- "tokio",
-]
-
-[[package]]
 name = "thiserror"
 version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -430,6 +415,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tkone-tempo"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "thiserror",
+ "tkone-schedule",
+ "tkone-trigger",
+ "tokio",
+]
+
+[[package]]
 name = "tkone-trigger"
 version = "0.1.0"
 dependencies = [
@@ -451,6 +447,10 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "tkone-utils"
+version = "0.1.0"
 
 [[package]]
 name = "tokio"

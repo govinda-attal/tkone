@@ -4,9 +4,9 @@ members = [
     "crates/tkone-schedule",
     "crates/tkone-trigger",
     "crates/tkone-trigger-macros",
-    "crates/lib-utils",
+    "crates/tkone-utils",
     "crates/example-app",
-    "crates/tempo",
+    "crates/tkone-tempo",
 ]
 
 [workspace.package]

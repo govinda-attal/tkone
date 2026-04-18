@@ -1,4 +1,4 @@
-//! Declarative scheduling example using [`lib_trigger_macros`].
+//! Declarative scheduling example using [`tkone_trigger_macros`].
 //!
 //! Demonstrates:
 //! - Defining a scheduler struct with `#[schedule]` and `#[on_error]`
@@ -6,7 +6,7 @@
 //! - `fire_on_start` flag in the `#[schedule]` attribute
 //! - Shutdown via the generated `shutdown_token()` or `run_until_signal()`
 
-use lib_trigger_macros::{job, schedule};
+use tkone_trigger_macros::{job, schedule};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -1,13 +1,13 @@
-//! Imperative scheduling example using [`lib_trigger::Scheduler`] directly.
+//! Imperative scheduling example using [`tkone_trigger::Scheduler`] directly.
 //!
 //! Demonstrates:
-//! - Building a time-based iterator with [`lib_schedule::time::SpecIteratorBuilder`]
+//! - Building a time-based iterator with [`tkone_schedule::time::SpecIteratorBuilder`]
 //! - Registering multiple async callbacks with [`Scheduler::add`]
 //! - `fire_on_start` to execute jobs immediately before the first tick
 //! - External shutdown via [`Scheduler::shutdown_token`]
 
-use lib_schedule::time::SpecIteratorBuilder as TimeBuilder;
-use lib_trigger::Scheduler;
+use tkone_schedule::time::SpecIteratorBuilder as TimeBuilder;
+use tkone_trigger::Scheduler;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

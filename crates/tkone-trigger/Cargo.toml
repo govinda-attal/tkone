@@ -1,0 +1,29 @@
+[package]
+name        = "tkone-trigger"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+authors.workspace   = true
+repository.workspace = true
+homepage.workspace  = true
+description = "In-memory async job scheduler built on tkone-schedule. Fans each schedule tick out to N async callbacks with generic error handling and graceful shutdown."
+keywords    = ["scheduler", "async", "tokio", "jobs", "cron"]
+categories  = ["asynchronous", "date-and-time"]
+readme      = "README.md"
+
+[lib]
+
+[package.metadata.rdme]
+readme-path = "README.md"
+
+[dependencies]
+tkone-schedule    = { workspace = true }
+chrono            = { workspace = true }
+fallible-iterator = { workspace = true }
+inventory         = { workspace = true }
+tokio             = { workspace = true }
+tokio-util        = { workspace = true }
+
+[dev-dependencies]
+tkone-trigger-macros = { workspace = true }
+thiserror            = { workspace = true }

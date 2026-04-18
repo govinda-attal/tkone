@@ -2,7 +2,7 @@
 
 There is a recurring problem in backend services: something needs to happen on a schedule. Process payments at the top of every hour. Reconcile accounts every 30 minutes. Generate a report on the last business day of each month. Most languages reach for cron, a job queue, or a third-party platform. Rust has good async primitives, but wiring up a reliable, ergonomic in-process scheduler has historically meant a lot of boilerplate.
 
-This post walks through three crates — **lib-schedule**, **lib-trigger**, and **lib-trigger-macros** — that together take you from a raw recurrence spec to a fully declarative, signal-aware scheduler in a handful of lines.
+This post walks through three crates — **tkone-schedule**, **tkone-trigger**, and **tkone-trigger-macros** — that together take you from a raw recurrence spec to a fully declarative, signal-aware scheduler in a handful of lines.
 
 ---
 
@@ -14,9 +14,9 @@ What would a purpose-built Rust scheduling library look like if it started from 
 
 ---
 
-## lib-schedule: A Mini-Language for Recurrence
+## tkone-schedule: A Mini-Language for Recurrence
 
-`lib-schedule` defines a concise spec language for three schedule families: **date**, **time**, and **datetime** (date + time combined). Specs are strings parsed at startup; iteration is lazy and fallible.
+`tkone-schedule` defines a concise spec language for three schedule families: **date**, **time**, and **datetime** (date + time combined). Specs are strings parsed at startup; iteration is lazy and fallible.
 
 ### Time specs
 
@@ -57,8 +57,8 @@ Combine the two with a `T` separator:
 All three families expose a `SpecIteratorBuilder` that produces a `FallibleIterator`. Date and datetime iterators yield `NextResult<DateTime<Tz>>`, which distinguishes the raw calendar date from the business-day-adjusted settlement date:
 
 ```rust
-use lib_schedule::biz_day::WeekendSkipper;
-use lib_schedule::datetime::SpecIteratorBuilder;
+use tkone_schedule::biz_day::WeekendSkipper;
+use tkone_schedule::datetime::SpecIteratorBuilder;
 use fallible_iterator::FallibleIterator;
 use chrono_tz::Europe::London;
 use chrono::{SubsecRound, Utc};
@@ -91,15 +91,15 @@ while let Some(nr) = iter.next().unwrap() {
 
 ---
 
-## lib-trigger: Turning Iterators into Async Callbacks
+## tkone-trigger: Turning Iterators into Async Callbacks
 
-`lib-schedule` tells you *when* to fire. `lib-trigger` does the firing.
+`tkone-schedule` tells you *when* to fire. `tkone-trigger` does the firing.
 
 `Scheduler<I, E>` takes any iterator that implements `ScheduleIter` and fans each tick out to N registered async callbacks. Callbacks return `Result<(), E>`; any error is forwarded to an async `on_error` handler and the scheduler continues to the next tick regardless.
 
 ```rust
-use lib_schedule::time::SpecIteratorBuilder as TimeBuilder;
-use lib_trigger::Scheduler;
+use tkone_schedule::time::SpecIteratorBuilder as TimeBuilder;
+use tkone_trigger::Scheduler;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -155,13 +155,13 @@ Key design points:
 - Multiple logically related jobs sharing one schedule (process + reconcile)
 - Services that need clean shutdown on SIGTERM without a job-queue dependency
 
-> **In-memory caveat:** `lib-trigger` does not persist state. If the process restarts between ticks, those ticks are missed. For intra-day `time`-based schedules this is usually acceptable. For weekly or monthly schedules, pair it with an external state store.
+> **In-memory caveat:** `tkone-trigger` does not persist state. If the process restarts between ticks, those ticks are missed. For intra-day `time`-based schedules this is usually acceptable. For weekly or monthly schedules, pair it with an external state store.
 
 ---
 
-## lib-trigger-macros: Declarative Scheduling with Zero Wiring
+## tkone-trigger-macros: Declarative Scheduling with Zero Wiring
 
-The imperative `Scheduler` API is explicit and flexible, but for typical services it produces the same boilerplate every time: build an iterator, construct a scheduler, call `add` for every job, wire up a shutdown token. `lib-trigger-macros` eliminates all of it.
+The imperative `Scheduler` API is explicit and flexible, but for typical services it produces the same boilerplate every time: build an iterator, construct a scheduler, call `add` for every job, wire up a shutdown token. `tkone-trigger-macros` eliminates all of it.
 
 Two attribute macros do the work:
 
@@ -173,7 +173,7 @@ Two attribute macros do the work:
 ### Define a scheduler
 
 ```rust
-use lib_trigger_macros::schedule;
+use tkone_trigger_macros::schedule;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -200,7 +200,7 @@ The `#[on_error]` method's parameter type — `PaymentError` — is the single s
 Jobs can live anywhere in the codebase. Each one names the scheduler struct it belongs to:
 
 ```rust
-use lib_trigger_macros::job;
+use tkone_trigger_macros::job;
 
 #[job(PaymentSchedule)]
 async fn process_payments() -> Result<(), PaymentError> {
@@ -287,14 +287,14 @@ impl PaymentSchedule {
 ## The Full Stack at a Glance
 
 ```
-lib-schedule          → parse "YY-1M-L~NBT11:00:00", iterate fire times
+tkone-schedule          → parse "YY-1M-L~NBT11:00:00", iterate fire times
       ↓
-lib-trigger           → Scheduler<I, E>: sleep → fan-out → error handler
+tkone-trigger           → Scheduler<I, E>: sleep → fan-out → error handler
       ↓
-lib-trigger-macros    → #[schedule] / #[job]: zero-boilerplate wiring
+tkone-trigger-macros    → #[schedule] / #[job]: zero-boilerplate wiring
 ```
 
-Each layer is independently usable. If you need fine-grained control — multiple schedulers in one process, different error types per group of jobs, conditional callback cancellation — use `lib-trigger` directly. If you want the simplest possible path from "I have a spec and some async functions" to a running scheduler, reach for the macros.
+Each layer is independently usable. If you need fine-grained control — multiple schedulers in one process, different error types per group of jobs, conditional callback cancellation — use `tkone-trigger` directly. If you want the simplest possible path from "I have a spec and some async functions" to a running scheduler, reach for the macros.
 
 ---
 

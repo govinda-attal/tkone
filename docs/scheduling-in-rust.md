@@ -95,11 +95,31 @@ while let Some(nr) = iter.next().unwrap() {
 
 `tkone-schedule` tells you *when* to fire. `tkone-trigger` does the firing.
 
-`Scheduler<I, E>` takes any iterator that implements `ScheduleIter` and fans each tick out to N registered async callbacks. Callbacks return `Result<(), E>`; any error is forwarded to an async `on_error` handler and the scheduler continues to the next tick regardless.
+`Scheduler<I, E>` takes any iterator that implements `ScheduleIter` and fans each tick out to N registered async callbacks. Every callback and the `on_error` handler receive a `FireContext` carrying the `NextResult` for that tick, so handlers can inspect exactly which occurrence triggered the call — including whether a business-day rule shifted the settlement date. Callbacks return `Result<(), E>`; any error is forwarded to `on_error` and the scheduler continues to the next tick regardless.
+
+### FireContext and TickContext
+
+```rust
+pub trait TickContext {
+    fn occurrence(&self) -> &NextResult<DateTime<Utc>>;
+}
+```
+
+`FireContext` is the concrete type passed at runtime. It implements `TickContext`, so handler signatures can be written against the trait for easier testing and mocking. The `NextResult` it carries has three variants:
+
+| Variant | Meaning |
+|---------|---------|
+| `Single(t)` | No adjustment; `actual == observed == t` |
+| `AdjustedLater(a, o)` | Settlement moved later than the raw date |
+| `AdjustedEarlier(a, o)` | Settlement moved earlier than the raw date |
+
+For time-only specs (`"1H:00:00"`) the result is always `Single` since no business-day rule applies.
+
+### Imperative API
 
 ```rust
 use tkone_schedule::time::SpecIteratorBuilder as TimeBuilder;
-use tkone_trigger::Scheduler;
+use tkone_trigger::{FireContext, Scheduler, TickContext};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -108,18 +128,19 @@ enum PaymentError {
     Downstream(String),
 }
 
-async fn process_payments() -> Result<(), PaymentError> {
+async fn process_payments(ctx: FireContext) -> Result<(), PaymentError> {
+    println!("firing at {:?}", ctx.occurrence().observed());
     // ... call payment service
     Ok(())
 }
 
-async fn reconcile_accounts() -> Result<(), PaymentError> {
+async fn reconcile_accounts(ctx: FireContext) -> Result<(), PaymentError> {
     // ... reconciliation logic
     Ok(())
 }
 
-async fn on_error(e: PaymentError) {
-    eprintln!("scheduled job failed: {e}");
+async fn on_error(ctx: FireContext, e: PaymentError) {
+    eprintln!("job failed at {:?}: {e}", ctx.occurrence().observed());
 }
 
 #[tokio::main]
@@ -144,6 +165,7 @@ async fn main() {
 Key design points:
 
 - **Generic error type** — `E` is inferred from the `on_error` handler; no `Box<dyn Error>` required.
+- **FireContext** — every callback and error handler receives the tick's `NextResult`, giving access to the scheduled occurrence and any business-day adjustment that was applied.
 - **Per-callback cancellation** — `add()` returns a `CancellationToken` that silences only that callback without stopping others or the iterator.
 - **Global shutdown** — `shutdown_token()` clones the internal token before `run()` consumes `self`, enabling the `tokio::select!` pattern.
 - **`fire_on_start`** — runs all callbacks once immediately before waiting for the first scheduled tick; avoids the "we just deployed, do we wait an hour?" problem.
@@ -173,6 +195,7 @@ Two attribute macros do the work:
 ### Define a scheduler
 
 ```rust
+use tkone_trigger::{FireContext, TickContext};
 use tkone_trigger_macros::schedule;
 use thiserror::Error;
 
@@ -187,29 +210,31 @@ struct PaymentSchedule;
 #[schedule(spec = "1H:00:00", fire_on_start)]
 impl PaymentSchedule {
     #[on_error]
-    async fn on_error(e: PaymentError) {
-        eprintln!("job failed: {e}");
+    async fn on_error(ctx: FireContext, e: PaymentError) {
+        eprintln!("job failed at {:?}: {e}", ctx.occurrence().observed());
     }
 }
 ```
 
-The `#[on_error]` method's parameter type — `PaymentError` — is the single source of truth for the error type across all jobs. No type parameter annotation needed anywhere.
+The `#[on_error]` method's second parameter type — `PaymentError` — is the single source of truth for the error type across all jobs. No type parameter annotation needed anywhere. The first parameter is always `FireContext`, giving the error handler access to the tick's occurrence.
 
 ### Register jobs
 
 Jobs can live anywhere in the codebase. Each one names the scheduler struct it belongs to:
 
 ```rust
+use tkone_trigger::{FireContext, TickContext};
 use tkone_trigger_macros::job;
 
 #[job(PaymentSchedule)]
-async fn process_payments() -> Result<(), PaymentError> {
+async fn process_payments(ctx: FireContext) -> Result<(), PaymentError> {
+    println!("firing at {:?}", ctx.occurrence().observed());
     // call payment service
     Ok(())
 }
 
 #[job(PaymentSchedule)]
-async fn reconcile_accounts() -> Result<(), PaymentError> {
+async fn reconcile_accounts(ctx: FireContext) -> Result<(), PaymentError> {
     // reconciliation logic
     Ok(())
 }
@@ -273,7 +298,7 @@ impl PaymentSchedule {
 }
 ```
 
-`#[job(PaymentSchedule)]` expands to the original function plus a statically-registered `JobEntry` that bakes error handling into a plain function pointer — meaning the registration itself is a zero-cost `#[used]` static, not a heap allocation at startup.
+`#[job(PaymentSchedule)]` expands to the original function plus a named helper that wraps it: on `Err(e)`, the helper calls `PaymentSchedule::handle_error(ctx, e)` (the `ScheduleErrorHandler` impl generated by `#[schedule]`), then registers a `JobEntry` via `inventory::submit!` using a plain function pointer — a zero-cost `#[used]` static, not a heap allocation at startup.
 
 ### Where it shines
 

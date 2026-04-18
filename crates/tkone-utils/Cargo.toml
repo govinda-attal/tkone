@@ -1,5 +1,5 @@
 [package]
-name             = "lib-utils"
+name             = "tkone-utils"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

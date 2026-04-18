@@ -1,6 +1,6 @@
 # tkone
 
-A Rust scheduling ecosystem — from simple in-memory time-based triggers to enterprise-grade distributed scheduling with guaranteed delivery.
+A growing Rust toolkit of libraries and applications across multiple domains. Currently includes a scheduling ecosystem — from simple in-memory time-based triggers to enterprise-grade distributed scheduling with guaranteed delivery. More crates and features are in progress.
 
 ## Crates
 
@@ -9,7 +9,7 @@ A Rust scheduling ecosystem — from simple in-memory time-based triggers to ent
 | [tkone-schedule](crates/tkone-schedule/README.md) | Core recurrence library with a mini-language for date, time, and combined datetime specs |
 | [tkone-trigger](crates/tkone-trigger/README.md) | In-memory scheduler built on tkone-schedule; fans out each tick to async callbacks |
 | [tkone-trigger-macros](crates/tkone-trigger-macros/README.md) | Declarative `#[schedule]` / `#[job]` attribute macros for zero-boilerplate wiring |
-| [tempo](crates/tempo/README.md) | Enterprise distributed scheduler with PostgreSQL persistence and transactional messaging |
+| [tkone-tempo](crates/tkone-tempo/README.md) | Enterprise distributed scheduler with PostgreSQL persistence and transactional messaging |
 | [example-app](crates/example-app/src/) | Runnable examples for all crates |
 
 ## Documentation

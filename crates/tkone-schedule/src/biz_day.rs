@@ -1,11 +1,11 @@
 //! Business day processing traits and implementations.
 //!
-//! The central abstraction is [`BizDayProcessor`]: any type that can answer
+//! The central abstraction is [`BizDayProcessor`](crate::biz_day::BizDayProcessor): any type that can answer
 //! "is this date a business day?" and advance/retreat by a given number of
 //! business days. Supply your own implementation to encode market holidays,
 //! custom cut-off calendars, etc.
 //!
-//! The built-in [`WeekendSkipper`] treats every Monday–Friday as a business
+//! The built-in [`WeekendSkipper`](crate::biz_day::WeekendSkipper) treats every Monday–Friday as a business
 //! day, regardless of public holidays.
 
 use std::fmt::Debug;
@@ -78,6 +78,10 @@ pub trait BizDayProcessor: Debug + Clone + Send + Sync + 'static {
     /// Finds the nearest business day relative to `dtm` in the given
     /// [`Direction`].
     ///
+    /// The library calls this only for a `dtm` that is **not** a business day
+    /// (to resolve `~NB`, `~PB`, `~B`, …), so implementations need not special-
+    /// case a `dtm` that already is one.
+    ///
     /// The [`Direction::Nearest`] variant's tie-breaking rule is
     /// implementation-defined. [`WeekendSkipper`] uses the following convention:
     /// - If the date is the 1st of the month and falls on a weekend, it steps
@@ -99,12 +103,13 @@ pub trait BizDayProcessor: Debug + Clone + Send + Sync + 'static {
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum Direction {
     /// Nearest business day; tie-breaking is implementation-defined.
+    /// [`WeekendSkipper`] returns the date itself when it is a business day.
     /// This is the default.
     #[default]
     Nearest,
-    /// The closest business day that is *before* (or equal to) the given date.
+    /// The closest business day strictly *before* the given date.
     Prev,
-    /// The closest business day that is *after* (or equal to) the given date.
+    /// The closest business day strictly *after* the given date.
     Next,
 }
 
@@ -131,8 +136,6 @@ pub enum Direction {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct WeekendSkipper {}
-unsafe impl Send for WeekendSkipper {}
-unsafe impl Sync for WeekendSkipper {}
 
 impl WeekendSkipper {
     /// Creates a new `WeekendSkipper`.

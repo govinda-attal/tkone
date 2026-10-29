@@ -70,7 +70,8 @@ let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
 
 Append `T<time_spec>` to a date spec to create a [`datetime`] schedule.
 The iterator visits each valid calendar date in order and emits every
-matching time within that day before advancing.
+matching time within that day before advancing. By default each date's
+times follow the start's time of day; see [`TimeAnchor`].
 
 ```rust
 // "~NB" = shift to next business day if the date falls on a weekend
@@ -112,7 +113,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | Token | Meaning |
 |-------|---------|
 | `YY`  | Every calendar year |
-| `_`   | Keep current year (no-op) |
+| `_`   | Same as `YY` |
 | `nY`  | Every *n* years, aligned to the iterator start date |
 | `2025` | Exactly year 2025 |
 | `[2024,2025]` | Years 2024 or 2025 |
@@ -122,7 +123,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | Token | Meaning |
 |-------|---------|
 | `MM`  | Every calendar month |
-| `_`   | Keep current month (no-op) |
+| `_`   | Same as `MM` |
 | `nM`  | Every *n* months, aligned to the iterator start date |
 | `03`  | March only |
 | `[01,06,12]` | January, June, or December |
@@ -227,8 +228,8 @@ instants in the iterator's timezone.
   the same instant is dropped.
 
 [`DstPolicy::Strict`] turns gaps and overlaps into errors instead. On the
-time iterator, [`IntervalMode::Elapsed`] measures steps in real elapsed time
-rather than on the wall clock.
+time and datetime iterators, [`IntervalMode::Elapsed`] measures steps in
+real elapsed time rather than on the wall clock.
 
 ```text
 "1H:00:00" in America/New_York, 2025-03-09 (02:00 → 03:00):
@@ -237,6 +238,97 @@ rather than on the wall clock.
 "YY-MM-DD" in Pacific/Apia, which skipped 2011-12-30:
   Exact(Dec 29), AdjustedLater(Dec 30 -10:00, Dec 31 +14:00), Exact(Jan 1)
 ```
+
+#### Persisting and resuming a schedule
+
+An application that stores schedules in a database does not keep an
+iterator alive. It stores the next occurrence, runs the action when that is
+due, then computes the following occurrence with `resume_after` from what it
+stored. The result is the same series a single long-running iterator would
+produce.
+
+Per schedule, store:
+
+| Column | Value | Used for |
+|--------|-------|----------|
+| spec | `"YY-1M-L~NBT17:00:00"` | rebuilding the iterator |
+| timezone | IANA name, e.g. `"America/New_York"` (not an offset) | rebuilding the iterator |
+| options | `TimeAnchor`, `IntervalMode`, `DstPolicy` if not default | rebuilding with the same behaviour |
+| cursor | `occurrence.actual().to_rfc3339()` | resuming |
+| due at | `occurrence.observed()` | when to run the action |
+| end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
+
+```rust
+struct Row {
+    spec: String,
+    tz: String,
+    cursor: String, // RFC 3339 `actual` of the stored occurrence
+    due_at: String, // RFC 3339 `observed`: when the action runs
+}
+
+impl Row {
+    fn set(&mut self, occ: &Occurrence<DateTime<Tz>>) {
+        self.cursor = occ.actual().to_rfc3339();
+        self.due_at = occ.observed().to_rfc3339();
+    }
+
+    /// After the action has run: store the next occurrence, or report that
+    /// the schedule has finished.
+    fn advance(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+        let tz: Tz = self.tz.parse()?;
+        let cursor = DateTime::parse_from_rfc3339(&self.cursor)?;
+        let next = SpecIteratorBuilder::resume_after(&self.spec, WeekendSkipper::new(), tz, cursor)
+            .build()?
+            .next()?;
+        Ok(match next {
+            Some(occ) => { self.set(&occ); true }
+            None => false,
+        })
+    }
+}
+
+// Creating the schedule: store its first occurrence.
+let tz = chrono_tz::America::New_York;
+let created = tz.with_ymd_and_hms(2025, 5, 20, 12, 0, 0).unwrap();
+let spec = "YY-1M-L~NBT17:00:00"; // last day of the month, next business day, 17:00
+let first = SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), created)
+    .build()?
+    .next()?
+    .expect("the spec has occurrences");
+let mut row = Row { spec: spec.into(), tz: tz.name().into(), cursor: String::new(), due_at: String::new() };
+row.set(&first);
+// May 31 2025 is a Saturday: due Monday Jun 2, cursor stays on May 31
+assert_eq!(row.due_at, "2025-06-02T17:00:00-04:00");
+assert_eq!(row.cursor, "2025-05-31T17:00:00-04:00");
+
+// When the action has run:
+assert!(row.advance()?);
+assert_eq!(row.due_at, "2025-06-30T17:00:00-04:00");
+```
+
+Rules that keep resumed results exact:
+
+- **Resume from `actual`, never `observed`.** With `~PB`, Saturday's
+  observed date is Friday; resuming from Friday would yield Saturday again,
+  forever. With daily `~NB`, resuming from observed Monday would skip
+  Sunday's occurrence.
+- **Store `actual` with its UTC offset** (RFC 3339, or a timestamp plus
+  offset). An occurrence moved by a DST gap is stored as its scheduled
+  wall-clock time — `2025-03-09T02:30:00-05:00` for a daily 02:30 that
+  happened at 03:30 EDT — so the schedule resumes at 02:30, not 03:30. The
+  offset also tells fall-back's two 01:00s apart.
+- **Rebuild with the same options** (`with_time_anchor`,
+  `with_interval_mode`, `with_dst_policy`) every time.
+- **`Ok(None)` means the schedule has finished**: a finite spec ran out
+  (e.g. `2025-MM-01` after December), or the next occurrence is after the
+  end you passed with `.with_end(end)` (inclusive). Store an end as a
+  resolved datetime; `with_end_spec` is resolved from the original start, so
+  it is not available when resuming.
+- Cadences (`3M`, `2Y`, `1Y-3M`) and step rules (`7D`, `5BD`) stay aligned,
+  because every stored occurrence lies on the cadence.
+
+The same `resume_after` exists on [`date::SpecIteratorBuilder`] and
+[`time::SpecIteratorBuilder`].
 
 <!-- cargo-rdme end -->
 
@@ -266,7 +358,7 @@ Schedules follow the wall clock and never repeat an instant:
 | Time doesn't exist (spring-forward, skipped day) | Moves later by the gap; reported as `AdjustedLater` in date / datetime results | `DstPolicy::Strict` returns an error |
 | Time exists twice (fall-back) | Visited once, at the earlier offset | `DstPolicy::Strict` returns an error |
 | Two scheduled times land on one instant | The later one is dropped | — |
-| Time-spec steps (`nH`, `nM`, `nS`) | Move the wall clock, like cron | `IntervalMode::Elapsed` on the time iterator measures real elapsed time |
+| Time-spec steps (`nH`, `nM`, `nS`) | Move the wall clock, like cron | `IntervalMode::Elapsed` (time and datetime iterators) measures real elapsed time |
 
 Worked examples for each case: [Time spec](src/time/time-spec.md#daylight-saving-time),
 [DateTime spec](src/datetime/date-time-spec.md#daylight-saving-time),
@@ -312,6 +404,22 @@ misidentified.
 
 Full combining semantics, tick-per-day rules, and edge cases:
 **[DateTime Spec Reference →](src/datetime/date-time-spec.md)**
+
+## Builder options
+
+| Option | Iterators | Default | Effect |
+|--------|-----------|---------|--------|
+| `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound; nothing is invented at the boundary |
+| `.with_dst_policy(…)` | all | `Adjust` | `Strict` turns DST gaps and overlaps into errors |
+| `.with_interval_mode(…)` | time, datetime | `WallClock` | `Elapsed` measures steps in real time across DST |
+| `.with_time_anchor(…)` | datetime | `Start` | `Midnight` restarts each date's times from 00:00 instead of following the start's time of day |
+
+`new_with_start(start)` always yields `start` first, unchanged and as `Exact`, even if it does
+not match the spec. That lets you feed an already-adjusted (observed) date back in as the start.
+
+To continue a schedule stored in a database, use `resume_after(spec, …, tz, last_actual)` with
+the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end — see
+[Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
 
 ## Runnable examples
 

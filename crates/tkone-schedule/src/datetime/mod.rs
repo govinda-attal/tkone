@@ -1,6 +1,6 @@
 //! Combined date + time recurrence.
 //!
-//! [`Spec`] combines a [`crate::date::Spec`] and a [`crate::time::Spec`] with
+//! [`Spec`](crate::datetime::Spec) combines a [`crate::date::Spec`] and a [`crate::time::Spec`] with
 //! a `T` separator into a single schedule string. The corresponding iterator
 //! visits each valid calendar date in order and, within that date, emits every
 //! time that matches the time spec — a *date-first* strategy.

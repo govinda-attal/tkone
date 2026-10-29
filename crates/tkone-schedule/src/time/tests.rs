@@ -751,3 +751,62 @@ fn test_dst_long_steps_wall_clock_vs_elapsed() {
     assert_eq!(elapsed[..4], head);
     assert_eq!(elapsed[4], "2025-03-09T07:00:00-04:00");
 }
+
+// ---------------------------------------------------------------------------
+// Grid search: fixed fields never skip the current slot
+// ---------------------------------------------------------------------------
+
+fn after(spec: &str, dtm: DateTime<Utc>, take: usize) -> Vec<String> {
+    SpecIteratorBuilder::new_after(spec, dtm)
+        .build()
+        .unwrap()
+        .take(take)
+        .map(|d| Ok(d.format("%m-%d %H:%M:%S").to_string()))
+        .collect()
+        .unwrap()
+}
+
+#[test]
+fn test_fixed_finer_field_does_not_skip_current_slot() {
+    let ten = Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
+    assert_eq!(after("HH:30:00", ten, 2), ["01-01 10:30:00", "01-01 11:30:00"]);
+    assert_eq!(after("HH:MM:30", ten, 2), ["01-01 10:00:30", "01-01 10:01:30"]);
+}
+
+#[test]
+fn test_fixed_coarser_field_repeats_daily() {
+    let eight = Utc.with_ymd_and_hms(2025, 1, 1, 8, 0, 0).unwrap();
+    assert_eq!(
+        after("09:30M:00", eight, 4),
+        ["01-01 09:00:00", "01-01 09:30:00", "01-02 09:00:00", "01-02 09:30:00"]
+    );
+}
+
+#[test]
+fn test_end_is_inclusive_without_made_up_item() {
+    let start = Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap();
+    let results: Vec<DateTime<_>> = SpecIteratorBuilder::new_with_start("1H:00:00", start)
+        .with_end(Utc.with_ymd_and_hms(2025, 1, 15, 11, 30, 0).unwrap())
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(
+        results,
+        vec![start, start + chrono::Duration::hours(1), start + chrono::Duration::hours(2)]
+    );
+}
+
+/// An end spec whose time has passed today resolves to tomorrow.
+#[test]
+fn test_end_spec_rolls_to_next_day() {
+    let start = Utc.with_ymd_and_hms(2025, 1, 15, 22, 0, 0).unwrap();
+    let results: Vec<DateTime<_>> = SpecIteratorBuilder::new_with_start("1H:00:00", start)
+        .with_end_spec("01:00:00")
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(results.len(), 4); // 22:00, 23:00, 00:00, 01:00
+    assert_eq!(*results.last().unwrap(), Utc.with_ymd_and_hms(2025, 1, 16, 1, 0, 0).unwrap());
+}

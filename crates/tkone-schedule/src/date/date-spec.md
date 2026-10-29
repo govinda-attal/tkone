@@ -71,7 +71,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 ## Result Types
 
-- **`Single(date)`** — the date is exactly as computed, no adjustment needed.
+- **`Exact(date)`** — the date is exactly as computed, no adjustment needed.
 - **`AdjustedLater(actual, observed)`** — `actual` is the computed date; `observed` is a later adjusted date.
 - **`AdjustedEarlier(actual, observed)`** — `actual` is the computed date; `observed` is an earlier adjusted date.
 
@@ -309,21 +309,21 @@ The `L` suffix means: if day 31 does not exist this month, use the last day inst
 The `N` suffix means: when day 31 overflows, `actual` = last day of month, `observed` = 1st of the following month.
 
 ```text
- 1. Single        2025-01-31
+ 1. Exact         2025-01-31
  2. AdjustedLater actual=2025-02-28  observed=2025-03-01
- 3. Single        2025-03-31
+ 3. Exact         2025-03-31
  4. AdjustedLater actual=2025-04-30  observed=2025-05-01
- 5. Single        2025-05-31
+ 5. Exact         2025-05-31
  6. AdjustedLater actual=2025-06-30  observed=2025-07-01
- 7. Single        2025-07-31
- 8. Single        2025-08-31
+ 7. Exact         2025-07-31
+ 8. Exact         2025-08-31
  9. AdjustedLater actual=2025-09-30  observed=2025-10-01
-10. Single        2025-10-31
+10. Exact         2025-10-31
 11. AdjustedLater actual=2025-11-30  observed=2025-12-01
-12. Single        2025-12-31
-13. Single        2026-01-31
+12. Exact         2025-12-31
+13. Exact         2026-01-31
 14. AdjustedLater actual=2026-02-28  observed=2026-03-01
-15. Single        2026-03-31
+15. Exact         2026-03-31
 ```
 
 ---
@@ -337,21 +337,21 @@ The `O` suffix means: when day 31 overflows by *k* days, `observed` = 1st of nex
 - 30-day months: overflow = 1 → observed = 1st of next month + 0 = **1st of next month**
 
 ```text
- 1. Single        2025-01-31
+ 1. Exact         2025-01-31
  2. AdjustedLater actual=2025-02-28  observed=2025-03-03
- 3. Single        2025-03-31
+ 3. Exact         2025-03-31
  4. AdjustedLater actual=2025-04-30  observed=2025-05-01
- 5. Single        2025-05-31
+ 5. Exact         2025-05-31
  6. AdjustedLater actual=2025-06-30  observed=2025-07-01
- 7. Single        2025-07-31
- 8. Single        2025-08-31
+ 7. Exact         2025-07-31
+ 8. Exact         2025-08-31
  9. AdjustedLater actual=2025-09-30  observed=2025-10-01
-10. Single        2025-10-31
+10. Exact         2025-10-31
 11. AdjustedLater actual=2025-11-30  observed=2025-12-01
-12. Single        2025-12-31
-13. Single        2026-01-31
+12. Exact         2025-12-31
+13. Exact         2026-01-31
 14. AdjustedLater actual=2026-02-28  observed=2026-03-03
-15. Single        2026-03-31
+15. Exact         2026-03-31
 ```
 
 ---
@@ -781,19 +781,19 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 `~NW` is conditional: only adjusts when the target date falls on Saturday or Sunday.
 
 ```text
- 1. Single        2025-01-15  Wed
+ 1. Exact         2025-01-15  Wed
  2. AdjustedLater actual=2025-02-15 Sat  observed=2025-02-17 Mon
  3. AdjustedLater actual=2025-03-15 Sat  observed=2025-03-17 Mon
- 4. Single        2025-04-15  Tue
- 5. Single        2025-05-15  Thu
+ 4. Exact         2025-04-15  Tue
+ 5. Exact         2025-05-15  Thu
  6. AdjustedLater actual=2025-06-15 Sun  observed=2025-06-16 Mon
- 7. Single        2025-07-15  Tue
- 8. Single        2025-08-15  Fri
- 9. Single        2025-09-15  Mon
-10. Single        2025-10-15  Wed
+ 7. Exact         2025-07-15  Tue
+ 8. Exact         2025-08-15  Fri
+ 9. Exact         2025-09-15  Mon
+10. Exact         2025-10-15  Wed
 11. AdjustedLater actual=2025-11-15 Sat  observed=2025-11-17 Mon
-12. Single        2025-12-15  Mon
-13. Single        2026-01-15  Thu
+12. Exact         2025-12-15  Mon
+13. Exact         2026-01-15  Thu
 14. AdjustedLater actual=2026-02-15 Sun  observed=2026-02-16 Mon
 15. AdjustedLater actual=2026-03-15 Sun  observed=2026-03-16 Mon
 ```
@@ -805,19 +805,19 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 **Start:** 2025-01-15
 
 ```text
- 1. Single          2025-01-15  Wed
+ 1. Exact           2025-01-15  Wed
  2. AdjustedEarlier actual=2025-02-15 Sat  observed=2025-02-14 Fri
  3. AdjustedEarlier actual=2025-03-15 Sat  observed=2025-03-14 Fri
- 4. Single          2025-04-15  Tue
- 5. Single          2025-05-15  Thu
+ 4. Exact           2025-04-15  Tue
+ 5. Exact           2025-05-15  Thu
  6. AdjustedEarlier actual=2025-06-15 Sun  observed=2025-06-13 Fri
- 7. Single          2025-07-15  Tue
- 8. Single          2025-08-15  Fri
- 9. Single          2025-09-15  Mon
-10. Single          2025-10-15  Wed
+ 7. Exact           2025-07-15  Tue
+ 8. Exact           2025-08-15  Fri
+ 9. Exact           2025-09-15  Mon
+10. Exact           2025-10-15  Wed
 11. AdjustedEarlier actual=2025-11-15 Sat  observed=2025-11-14 Fri
-12. Single          2025-12-15  Mon
-13. Single          2026-01-15  Thu
+12. Exact           2025-12-15  Mon
+13. Exact           2026-01-15  Thu
 14. AdjustedEarlier actual=2026-02-15 Sun  observed=2026-02-13 Fri
 15. AdjustedEarlier actual=2026-03-15 Sun  observed=2026-03-13 Fri
 ```
@@ -912,7 +912,7 @@ All three handle the case where the target day does not exist in a given month:
 
 | Suffix | Behaviour on overflow |
 |--------|-----------------------|
-| `L` | Clamp to last day; `Single(last_day)` |
+| `L` | Clamp to last day; `Exact(last_day)` |
 | `N` | `AdjustedLater(last_day, first_of_next_month)` |
 | `O` | `AdjustedLater(last_day, first_of_next_month + (overflow_days − 1))` |
 
@@ -938,9 +938,34 @@ Exact(2012-01-01 00:00 +14:00)
 
 With `DstPolicy::Strict` the skipped date returns `Error::AmbiguousLocalTime` instead.
 
+### Resuming a stored schedule
+
+To continue from an occurrence stored in a database, use
+`SpecIteratorBuilder::resume_after(spec, bdp, tz, last_actual)`, where `last_actual` is the
+stored ``actual()`` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
+same options; add `.with_end(end)` if the schedule has a stored end. The crate docs' section *Persisting and resuming a schedule* has the full
+pattern and the rules that keep resumed results identical to a continuous iterator.
+
 ### Start-date inclusivity
 
-When constructed with `new_with_start`, the start date itself is always returned as the **first result** if it satisfies the spec (or is equal to the provided start). Use `new_after` to begin strictly after a given point in time.
+When constructed with `new_with_start`, the start date is always returned as the **first result**, as `Exact` and unchanged — even when it does not match the spec, and without applying any `~` adjustment (a Saturday start stays Saturday). This lets you feed an already-adjusted (observed) date back in as the start. Use `new_after` to begin strictly after a given point in time.
+
+### End bound
+
+`with_end(end)` is **inclusive**: occurrences up to and including `end` are returned, and the iterator stops at the first occurrence whose actual or observed date is after `end`. Nothing is invented at the boundary. `with_end_spec(spec)` uses the first occurrence of `spec` after the start (its observed date) as `end`.
+
+### Conditional adjustments keep every raw date
+
+Each raw date produces one result, even when the adjustment makes observed dates repeat or go back. `YY-MM-DD~NB` from a Thursday gives:
+
+```text
+Exact(Fri)
+AdjustedLater(Sat, Mon)
+AdjustedLater(Sun, Mon)
+Exact(Mon)
+```
+
+and `YY-MM-DD~PB` gives `Exact(Fri)`, `AdjustedEarlier(Sat, Fri)`, `AdjustedEarlier(Sun, Fri)`, `Exact(Mon)`. `actual` always increases; `observed` may repeat or go back. For one result per business day, use a day rule that only hits business days (`1BD`).
 
 ---
 

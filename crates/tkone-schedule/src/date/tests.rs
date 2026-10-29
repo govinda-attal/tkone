@@ -898,7 +898,7 @@ fn test_biz_day_adjustments() {
             ]),
         },
         // 15th monthly; unconditionally subtract 3 business days (~3P)
-        // new_with_start always returns the start date as Single (no adjustment applied).
+        // new_with_start always returns the start date as Exact  (no adjustment applied).
         TestCase {
             spec: "YY-1M-15~3P",
             take: 10,
@@ -944,7 +944,7 @@ fn test_biz_day_adjustments() {
             ]),
         },
         // Last day of month; unconditionally add 2 business days (~2N)
-        // new_with_start returns the start date as Single; adjustment applies from result 2 onward.
+        // new_with_start returns the start date as Exact; adjustment applies from result 2 onward.
         TestCase {
             spec: "YY-1M-L~2N",
             take: 10,
@@ -1125,13 +1125,31 @@ fn test_out_of_range_specs_rejected() {
         "YY-MM-WED#0",
         "YY-MM-WED#6",
         "YY-MM-WED#6L",
+        // silent fallbacks that used to mean `#1` / `1`
+        "YY-MM-WED#",
+        "YY-MM-WED#300",
+        "YY-MM-15~99999999999P",
+        // a step in the wrong slot
+        "YY-3Y-15",
+        "2M-MM-15",
     ] {
         assert!(
             matches!(spec.parse::<crate::date::Spec>(), Err(Error::InvalidDateSpec(_))),
             "spec should be rejected: {spec}"
         );
     }
-    for spec in ["YY-12-31", "YY-MM-31L", "YY-MM-WED#5", "YY-MM-FRI#5L", "YY-1M-1D"] {
+    for spec in [
+        "YY-12-31",
+        "YY-MM-31L",
+        "YY-MM-WED#5",
+        "YY-MM-FRI#5L",
+        "YY-MM-FRI#L",
+        "YY-1M-1D",
+        "_-_-15",
+        "2Y-3M-15",
+        "YY-MM-15~P",
+        "YY-MM-15~2N",
+    ] {
         assert!(spec.parse::<crate::date::Spec>().is_ok(), "spec should parse: {spec}");
     }
 }
@@ -1153,7 +1171,7 @@ fn test_with_end_spec_resolves_after_start() {
     .build()
     .unwrap();
     let results: Vec<_> = iter.collect().unwrap();
-    // End = 2025-04-30; the 15th of Jan–Apr fall inside it
+    // End = 2025-04-30 (inclusive); the 15th of Jan–Apr fall inside it
     let observed: Vec<_> = results.iter().map(|r| r.observed().date_naive()).collect();
     assert_eq!(
         observed,
@@ -1162,7 +1180,6 @@ fn test_with_end_spec_resolves_after_start() {
             chrono::NaiveDate::from_ymd_opt(2025, 2, 15).unwrap(),
             chrono::NaiveDate::from_ymd_opt(2025, 3, 15).unwrap(),
             chrono::NaiveDate::from_ymd_opt(2025, 4, 15).unwrap(),
-            chrono::NaiveDate::from_ymd_opt(2025, 4, 30).unwrap(),
         ]
     );
 }
@@ -1181,7 +1198,7 @@ fn test_with_end_in_other_timezone() {
         .unwrap();
     let results: Vec<_> = iter.collect().unwrap();
     assert!(results.iter().all(|r| *r.observed() <= end), "{results:?}");
-    assert_eq!(results.len(), 3, "{results:?}"); // Jan 10, Jan 11, end
+    assert_eq!(results.len(), 2, "{results:?}"); // Jan 10, Jan 11
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,5 +1297,42 @@ fn test_skipped_day_reported_as_adjusted_later() {
     assert_eq!(
         results[2],
         Occurrence::Exact(apia.with_ymd_and_hms(2012, 1, 1, 0, 0, 0).unwrap())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Group 19: Conditional adjustments keep every raw date
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_conditional_adjustments_keep_every_raw_date() {
+    let tz = chrono_tz::America::New_York;
+    let thu = tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap();
+    let day = |d| tz.with_ymd_and_hms(2025, 1, d, 0, 0, 0).unwrap();
+    let take = |spec| -> Vec<_> {
+        SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), thu)
+            .build()
+            .unwrap()
+            .take(4)
+            .collect()
+            .unwrap()
+    };
+    assert_eq!(
+        take("YY-MM-DD~NB"),
+        vec![
+            Occurrence::Exact(day(10)),
+            Occurrence::AdjustedLater(day(11), day(13)),
+            Occurrence::AdjustedLater(day(12), day(13)),
+            Occurrence::Exact(day(13)),
+        ]
+    );
+    assert_eq!(
+        take("YY-MM-DD~PB"),
+        vec![
+            Occurrence::Exact(day(10)),
+            Occurrence::AdjustedEarlier(day(11), day(10)),
+            Occurrence::AdjustedEarlier(day(12), day(10)),
+            Occurrence::Exact(day(13)),
+        ]
     );
 }

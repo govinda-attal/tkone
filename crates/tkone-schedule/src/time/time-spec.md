@@ -49,16 +49,29 @@ Valid ranges: `00`–`59` for At; `1S`–`59S` for Every.
 
 ## Semantics
 
-Components are applied in order: **seconds first, then minutes, then hours**.
+A time spec describes a **regular grid of times**, and each result is the first point of the grid
+after the previous one (or after the `new_after` cursor):
 
-- **`Every(n)`** adds a `chrono::Duration` of *n* units to the running datetime.
-- **`At(v)`** sets that field to value *v* (via `with_second` / `with_minute` / `with_hour`).
-- **`AsIs`** (`_`) is a true no-op — the field is left at its current value. Useful primarily in combined datetime specs (e.g. `YY-1M-31T_:_:_`) where only the date advances.
-- **`ForEach`** (`HH`/`MM`/`SS`) advances each occurrence; behaves differently depending on whether any `Every` component is present:
+- **Step** — the sum of the `Every` fields (`1H:30M:00` = every 90 minutes), or 1 unit of the
+  finest `ForEach` field when there is no `Every` (`HH:MM:00` = every minute). The unit of that
+  field is the *driver*.
+- **Phase** — the grid passes through the start (or `new_after` cursor) with the fixed fields
+  finer than the driver applied: `1H:30:00` from 09:10 runs at 09:30, 10:30, …
+- **Window** — fixed fields **coarser** than the driver limit the grid to a window:
+  `09:30M:00` is every 30 minutes during hour 9 only (09:00, 09:30, then 09:00 the next day).
+
+Per field:
+
+- **`Every(n)`** contributes *n* units to the step.
+- **`At(v)`** fixes the field to *v*: finer than the driver it sets the grid's phase, coarser it
+  opens a window.
+- **`AsIs`** (`_`) keeps the start's value when finer than the driver; coarser, it is free like
+  `ForEach`. Useful primarily in combined datetime specs (e.g. `YY-1M-31T_:_:_`).
+- **`ForEach`** (`HH`/`MM`/`SS`) behaves differently depending on whether any `Every` component is present:
 
 ### ForEach when an `Every` component is present
 
-`ForEach` means **carry** — the field is not independently advanced. The `Every` component drives the tick; `ForEach` fields accumulate any natural overflow from the duration arithmetic.
+`ForEach` means **carry** — the field is not independently advanced. The `Every` component drives the tick; coarser `ForEach` fields roll over naturally as the step accumulates, and finer ones keep the start's value.
 
 Examples: `HH:30M:00` (minutes drive, hours carry), `1H:MM:SS` (hours drive, minutes and seconds carry).
 
@@ -81,7 +94,7 @@ The rule: find the rightmost (finest) `ForEach` component; it advances by 1 of i
 | `HH`/`MM`/`SS` | `ForEach` | Carry | Drive (finest advances by 1) |
 | `_` | `AsIs` | No-op (keep current) | No-op (keep current) |
 
-**Key distinction:** `ForEach` participates in the "finest driver" election; `AsIs` never does. A spec using only `AsIs` and `At` components with no `ForEach` or `Every` will not advance time — this is intentional for combined datetime specs but is an infinite loop in a pure time spec.
+**Key distinction:** `ForEach` participates in the "finest driver" election; `AsIs` never does. A spec using only `AsIs` and `At` components has no step: it names **one time of day**. In a combined datetime spec that time is used on every date; as a pure time iterator it is yielded at most once (see [All-`At` specs](#hhmmss-all-at-used-as-an-iterator)).
 
 ---
 
@@ -470,8 +483,8 @@ Hours advance by 1; minutes are pinned to 30; seconds pinned to 00.
 
 **Start:** 09:00:00  **End spec:** `13:00:00`
 
-The end is computed by applying the end spec once from the start via `new_after`:
-`At(0)` seconds, `At(0)` minutes, `At(13)` hours → **13:00:00**.
+The end is the first time the end spec produces after the start → **13:00:00**. The end is
+inclusive, so 13:00 is yielded.
 
 ```text
 1.  09:00:00
@@ -488,7 +501,7 @@ The end is computed by applying the end spec once from the start via `new_after`
 
 **Start:** 09:00:00  **End spec:** `3H:30M:SS`
 
-End computed: from 09:00:00, apply `Every(3)H` + `Every(30)M` + `ForEach S` (carry) → **12:30:00**.
+End computed: the first `3H:30M:SS` time after 09:00:00 (a 3h30m step, seconds carried) → **12:30:00**.
 
 ```text
 1.  09:00:00
@@ -588,16 +601,19 @@ Contrast with `HH:00:00`: that spec pins minutes to `00`; this one preserves the
 
 ## end_spec Usage
 
-An end spec is a time spec string evaluated **once from the start datetime** to produce the absolute end boundary. Any valid time spec may be used:
+An end spec is a time spec string evaluated **once from the start datetime**: its first
+occurrence after the start becomes the end boundary. Any valid time spec may be used:
 
 | end_spec | Meaning when applied from start S |
 |----------|-----------------------------------|
-| `13:00:00` | End at 13:00:00 same day (all At: pins all three fields) |
+| `13:00:00` | The next 13:00:00 after S — today, or tomorrow if S is later than 13:00 |
 | `1H:00:00` | End 1 hour after start, on the hour |
 | `3H:30M:SS` | End 3 hours and 30 minutes after start |
 | `8H:MM:SS` | End exactly 8 hours after start |
 
-The iterator terminates when the computed next value reaches or passes the end boundary. If the computed end is ≤ start (e.g. using `13:00:00` from a 14:00 start), the iterator produces zero results.
+The end is **inclusive**: results up to and including the end are yielded, and the iterator stops
+at the first result after it. Nothing is invented at the boundary — `1H:00:00` from 09:00 with an
+end of 11:30 yields 09:00, 10:00, 11:00.
 
 ---
 
@@ -609,22 +625,30 @@ When constructed with `new_with_start`, the start datetime is always returned as
 
 ### `new_after` with non-aligned starts
 
-With `new_after`, the first result is the next occurrence **strictly after** the given datetime. Because `At` transforms apply before `Every` on higher units, a non-aligned start may produce a shorter-than-expected first interval.
+With `new_after`, the first result is the next grid point **strictly after** the given datetime,
+so a non-aligned cursor snaps to the grid:
 
-**Example:** `1H:00:00` via `new_after` from 09:30:00:
-1. seconds → At(0): 09:30:00
-2. minutes → At(0): **09:00:00** (moves minute backwards)
-3. hours → Every(1): **10:00:00**
-
-First result is 10:00:00, not 09:30:00. Subsequent results are 11:00:00, 12:00:00 … (exactly 1-hour gaps).
+- `1H:00:00` from 09:30:00 → **10:00:00**, then 11:00:00, 12:00:00 …
+- `HH:30:00` from 10:00:00 → **10:30:00** (the current hour's :30 is not skipped)
+- `HH:MM:30` from 10:00:00 → **10:00:30**
 
 ### Day boundary crossing
 
 The spec is applied to the wall-clock (local) time using `chrono::Duration` arithmetic. Day boundaries are crossed transparently. There is no built-in "end of day" concept; the spec produces results indefinitely until an end boundary is set or the caller stops consuming results. For what happens across DST changes, see [Daylight Saving Time](#daylight-saving-time).
 
-### Component application order
+### Resuming a stored schedule
 
-On each tick: **seconds → minutes → hours**, in that fixed order. The seconds transform runs before the minutes transform, so a spec like `HH:30M:05` sets seconds to :05 first and then adds 30 minutes.
+To continue from an occurrence stored in a database, use
+`SpecIteratorBuilder::resume_after(spec, tz, last_actual)`, where `last_actual` is the
+stored `time` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
+same options; add `.with_end(end)` if the schedule has a stored end. The crate docs' section *Persisting and resuming a schedule* has the full
+pattern and the rules that keep resumed results identical to a continuous iterator.
+
+### Sub-second precision
+
+Specs have whole-second resolution. Results drop any sub-second part of the start or cursor, so
+`HH:MM:10S` from `Utc::now()` runs on whole seconds. A `new_with_start` start is still yielded
+exactly as given.
 
 ---
 
@@ -721,24 +745,23 @@ results. They are documented here for clarity.
 
 **Examples:** `09:30:00`, `13:00:00`
 
-**Behaviour:** Each call pins all three fields to the same fixed values. Because `At` transforms
-can move a field backward (e.g. setting hours to 09 when the cursor is already at 10:00 makes
-time go backward), the computed `next` is ≤ the current cursor.  The **no-progress guard** fires
-and the iterator terminates.
+**Behaviour:** A spec with no step names one time of day. As a time iterator it yields that time
+**at most once, on the current day**, then terminates.
 
 - `new_with_start` from `09:30:00` → yields `09:30:00` (passthrough) then terminates.
-- `new_after` from `09:30:00` → yields nothing (first `next = 09:30:00 = dtm`, guard fires).
+- `new_after` from `09:30:00` → yields nothing (09:30 today is not after the cursor).
 - `new_after` from `09:00:00` → yields `09:30:00` once, then terminates.
 
 **Preferred use:** All-`At` specs are most useful as **end specs** (passed to `with_end_spec`),
-where they are evaluated exactly once to produce an absolute boundary.
+where they resolve to the next such time after the start — tomorrow, if today's has passed — or
+as the time part of a combined datetime spec, where they apply to every date.
 
 ---
 
 ### `_:_:_` (all AsIs) used as a pure time iterator
 
-**Behaviour:** `AsIs` is a true no-op — the computed `next` always equals `self.dtm`. The
-**no-progress guard** fires and the iterator terminates immediately after any passthrough.
+**Behaviour:** `AsIs` keeps every field at the start's value, so the spec names the start's own
+time of day — which is never after it. The iterator terminates immediately after any passthrough.
 
 - `new_with_start` from any time → yields start once then terminates.
 - `new_after` from any time → yields nothing.
@@ -772,7 +795,7 @@ and seconds 0–59. Steps are not limited this way: `25H:00:00` and `HH:90M:00` 
 
 | Combination | Behaviour | Notes |
 |-------------|-----------|-------|
-| `hh:mm:ss` (as iterator) | Terminates via no-progress guard: one tick with `new_with_start`, zero with `new_after` | Preferred as `end_spec` only |
-| `_:_:_` (as pure time iterator) | Terminates via no-progress guard: one tick with `new_with_start`, zero with `new_after` | Use in combined datetime spec only |
+| `hh:mm:ss` (as iterator) | At most one result, on the current day (plus any `new_with_start` start) | Preferred as `end_spec` or datetime time part |
+| `_:_:_` (as pure time iterator) | Only the `new_with_start` start; nothing with `new_after` | Use in combined datetime spec only |
 | `0H:00:00` / `HH:0M:00` / `HH:MM:0S` | **Parse error** — rejected at construction | Use n ≥ 1 (enforced by parser) |
 | `24:00:00` / `HH:60:00` / `HH:MM:60` | **Parse error** — fixed value out of range | Hours 0–23, minutes and seconds 0–59 |

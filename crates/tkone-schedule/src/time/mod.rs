@@ -4,10 +4,10 @@
 //!
 //! | Type | Purpose |
 //! |------|---------|
-//! | [`Spec`] | Parsed representation of a time spec string |
-//! | [`SpecIteratorBuilder`] | Fluent builder for [`SpecIterator`] and [`NaiveSpecIterator`] |
-//! | [`SpecIterator`] | Timezone-aware fallible iterator over [`chrono::DateTime<Tz>`] |
-//! | [`NaiveSpecIterator`] | Non-timezone-aware fallible iterator over [`chrono::NaiveDateTime`] |
+//! | [`Spec`](crate::time::Spec) | Parsed representation of a time spec string |
+//! | [`SpecIteratorBuilder`](crate::time::SpecIteratorBuilder) | Fluent builder for [`SpecIterator`](crate::time::SpecIterator) and [`NaiveSpecIterator`](crate::time::NaiveSpecIterator) |
+//! | [`SpecIterator`](crate::time::SpecIterator) | Timezone-aware fallible iterator over [`chrono::DateTime<Tz>`] |
+//! | [`NaiveSpecIterator`](crate::time::NaiveSpecIterator) | Non-timezone-aware fallible iterator over [`chrono::NaiveDateTime`] |
 //!
 //! ## Spec Syntax
 //!
@@ -50,6 +50,7 @@
 //! *Run `cargo run -p tkone-schedule --example time_recurrence` for a complete program.*
 #![doc = include_str!("time-spec.md")]
 
+mod engine;
 mod iter;
 mod spec;
 
@@ -57,6 +58,6 @@ mod spec;
 mod tests;
 
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
-pub(crate) use iter::apply;
+pub(crate) use engine::next_after;
 
 pub use spec::{Cycle, Spec};

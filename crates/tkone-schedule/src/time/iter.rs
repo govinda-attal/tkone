@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
-use chrono::{DateTime, Duration, NaiveDateTime, Offset, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, Offset, TimeZone, Utc};
 
 use fallible_iterator::FallibleIterator;
 
-use super::spec::{Cycle, Spec};
+use super::{engine, spec::Spec};
 use crate::utils::resolve_local;
 use crate::{prelude::*, DstPolicy, IntervalMode};
 
@@ -27,9 +27,9 @@ pub struct NotSealed;
 /// | `new_after(spec, dtm)` | First occurrence strictly **after** `dtm` |
 /// | `new_with_start(spec, start)` | `start` itself is the first item |
 ///
-/// After `new_with_start` you may optionally call:
-/// - `.with_end(end)` — bound by an explicit datetime
-/// - `.with_end_spec(end_spec)` — bound by another time spec
+/// Any builder may be bounded with `.with_end(end)` (inclusive). After
+/// `new_with_start` you may instead call `.with_end_spec(end_spec)` to bound
+/// it by another time spec.
 ///
 /// Any builder can also take `.with_dst_policy(…)` and `.with_interval_mode(…)`
 /// to control behaviour across DST changes; see [`crate::IntervalMode`].
@@ -41,6 +41,8 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     end: END,
     dst_policy: DstPolicy,
     interval_mode: IntervalMode,
+    /// Wall-clock cursor given to `resume_after`; `None` means `dtm`.
+    local: Option<NaiveDateTime>,
     marker_sealed: PhantomData<S>,
 }
 
@@ -83,13 +85,69 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             end: NoEnd,
             dst_policy: DstPolicy::default(),
             interval_mode: IntervalMode::default(),
+            local: None,
             marker_sealed: PhantomData,
         }
     }
 
+    /// Resume a stored schedule: times strictly after `last`, the last time
+    /// you handled, in timezone `tz`.
+    ///
+    /// Store `last` with its UTC offset (e.g. RFC 3339) and pass it back here,
+    /// with the same options as the original schedule. See the crate docs on
+    /// [persisting and resuming](crate#persisting-and-resuming-a-schedule).
+    pub fn resume_after(
+        spec: &str,
+        tz: Tz,
+        last: DateTime<FixedOffset>,
+    ) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+        let mut builder = Self::new_after(spec, last.with_timezone(&tz));
+        builder.local = Some(last.naive_local());
+        builder
+    }
+
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        Ok(SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)?
-            .with_interval_mode(self.interval_mode))
+        let mut iter = SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)?
+            .with_interval_mode(self.interval_mode);
+        // Elapsed steps continue from the instant, so they keep its own
+        // local time; wall-clock steps continue from the stored wall clock.
+        if let (Some(local), IntervalMode::WallClock) = (self.local, self.interval_mode) {
+            iter.local = local;
+        }
+        Ok(iter)
+    }
+
+    /// Bound the iterator by an explicit end datetime (inclusive).
+    ///
+    /// Useful with [`resume_after`](Self::resume_after) for a stored schedule
+    /// that has an end.
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, NoStart, EndDateTime<Tz>, Sealed> {
+        SpecIteratorBuilder {
+            timezone: self.timezone,
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            end: EndDateTime(end),
+            dst_policy: self.dst_policy,
+            interval_mode: self.interval_mode,
+            local: self.local,
+            marker_sealed: PhantomData,
+        }
+    }
+}
+
+impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, EndDateTime<Tz>, Sealed> {
+    pub fn build(self) -> Result<SpecIterator<Tz>> {
+        let end = self.end.0.with_timezone(&self.dtm.timezone());
+        let mut iter = SpecIterator::new(&self.spec, self.dtm, None, Some(end), self.dst_policy)?
+            .with_interval_mode(self.interval_mode);
+        if let (Some(local), IntervalMode::WallClock) = (self.local, self.interval_mode) {
+            iter.local = local;
+        }
+        Ok(iter)
     }
 }
 
@@ -108,6 +166,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             end: NoEnd,
             dst_policy: DstPolicy::default(),
             interval_mode: IntervalMode::default(),
+            local: None,
             marker_sealed: PhantomData,
         }
     }
@@ -127,6 +186,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
+            local: self.local,
             marker_sealed: PhantomData,
         }
     }
@@ -147,6 +207,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             end: EndSpec(end_spec.into()),
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
+            local: self.local,
             marker_sealed: PhantomData,
         }
     }
@@ -205,14 +266,17 @@ pub struct SpecIterator<Tz: TimeZone> {
     spec: Spec,
     dst_policy: DstPolicy,
     interval_mode: IntervalMode,
-    /// Wall-clock position the spec is applied to on the next step.
+    /// Local time of the last result (or the initial cursor). The next result
+    /// is searched for after it, and it anchors the grid's phase.
     local: NaiveDateTime,
     /// The last yielded instant, or the initial cursor. Results must be
     /// strictly later.
     cursor: DateTime<Tz>,
     /// Yielded first, then cleared.
     start: Option<DateTime<Tz>>,
+    /// Inclusive upper bound.
     end: Option<DateTime<Tz>>,
+    done: bool,
 }
 
 impl<Tz: TimeZone> SpecIterator<Tz> {
@@ -232,6 +296,7 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
             cursor,
             start,
             end,
+            done: false,
         })
     }
 
@@ -253,15 +318,16 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         Self::new(spec, start.clone(), Some(start), Some(end), dst_policy)
     }
 
+    /// The end is the first occurrence of `end_spec` after `start`, on any
+    /// day: `13:00:00` from a 14:00 start is 13:00 the next day.
     fn new_with_end_spec(
         spec: &str,
         start: DateTime<Tz>,
         end_spec: &str,
         dst_policy: DstPolicy,
     ) -> Result<Self> {
-        let end = NaiveSpecIterator::new_after(end_spec, start.naive_local())?
-            .next()?
-            .ok_or(Error::InvalidEndSpec)?;
+        let local = start.naive_local();
+        let end = engine::next_after(&end_spec.parse()?, local, local).ok_or(Error::InvalidEndSpec)?;
         let end = resolve_local(&start.timezone(), end, dst_policy)?;
         Self::new(spec, start.clone(), Some(start), Some(end), dst_policy)
     }
@@ -272,177 +338,31 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
     }
 }
 
-/// ## NaiveSpecIterator
-/// An iterator for generating recurring naive datetimes as per time based specifications.
-/// ### Examples
-///
-/// ```rust
-/// use tkone_schedule::time::NaiveSpecIterator;
-/// use chrono::{NaiveDate, NaiveDateTime, Duration};
-/// use fallible_iterator::FallibleIterator;
-///
-/// let start = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap().and_hms_opt(10, 0, 0).unwrap();
-/// let iter = NaiveSpecIterator::new_with_start("1H:00:00", start.clone()).unwrap();
-/// let occurrences = iter.take(3).collect::<Vec<NaiveDateTime>>().unwrap();
-///        
-/// assert_eq!(occurrences, vec![start, start + Duration::hours(1), start + Duration::hours(2)]);
-///
-/// ```
-#[derive(Debug, Clone)]
-pub struct NaiveSpecIterator {
-    spec: Spec,
-    end: Option<NaiveDateTime>,
-    dtm: NaiveDateTime,
-    start: Option<NaiveDateTime>,
-    index: usize,
-}
-
-impl NaiveSpecIterator {
-    pub fn new_after(spec: &str, dtm: NaiveDateTime) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            dtm,
-            spec,
-            end: None,
-            start: None,
-            index: 0,
-        })
-    }
-
-    pub fn new_with_start(spec: &str, start: NaiveDateTime) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            dtm: start.clone(),
-            spec,
-            end: None,
-            start: Some(start),
-            index: 0,
-        })
-    }
-
-    pub fn new_with_end(spec: &str, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            dtm: start.clone(),
-            end: Some(end),
-            spec,
-            start: Some(start),
-            index: 0,
-        })
-    }
-
-    pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
-        let spec = spec.parse()?;
-        let end = Self::new_after(end_spec, start.clone())?
-            .next()?
-            .ok_or(Error::InvalidEndSpec)?;
-        Ok(Self {
-            end: Some(end),
-            spec,
-            dtm: start.clone(),
-            start: Some(start),
-            index: 0,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
-        self.dtm = dtm;
-    }
-}
-
-/// Advances the iterator and returns the next `NaiveDateTime` value or `None` if the end is reached.
-///
-/// # Returns
-///
-/// - `Ok(Some(NaiveDateTime))` if the next date-time value is successfully computed.
-/// - `Ok(None)` if the iterator has reached the end date-time specified by `self.end`.
-/// - `Err(Error)` if an error occurs during the computation.
-///
-/// The function computes next naive datetime based on the specified cycles for seconds, minutes, and hours.
-/// - If `Cycle::At` is specified, it sets the corresponding field to the specified value.
-/// - If `Cycle::Every` is specified, it increments the corresponding field by the specified duration.
-///
-/// ### Example 1:
-/// If the current date-time is 2024-11-01 12:30:45 and the specification is HH:MM:15S then it adds seconds every iteration,
-/// the `next` method will produce the following sequence:
-///
-/// 1. 2024-11-01 12:31:00
-/// 2. 2024-11-01 12:31:15
-/// 3. 2024-11-01 12:31:30
-/// 4. ...
-///
-/// This continues until the end condition is met, if specified.
-///
-/// ### Example 2:
-/// If the current date-time is 2024-11-01 00:30:00 and the specification is 1H:00:00 then it adds hours every iteration with minutes and seconds set to 00,
-/// the `next` method will produce the following sequence:
-///
-/// 1. 2024-11-01 13:00:00
-/// 2. 2024-11-01 14:30:45
-/// 3. 2024-11-01 15:30:45
-/// 4. ...
-///
-/// This continues until the end condition is met, if specified.
-impl FallibleIterator for NaiveSpecIterator {
-    type Item = NaiveDateTime;
-    type Error = Error;
-
-    fn next(&mut self) -> Result<Option<Self::Item>> {
-        if let Some(end) = &self.end {
-            if &self.dtm >= end {
-                return Ok(None);
-            }
-        }
-
-        if self.index == 0 {
-            if let Some(start) = &self.start {
-                if &self.dtm <= start {
-                    self.dtm = start.clone();
-                    self.index += 1;
-                    return Ok(Some(start.clone()));
-                }
-            }
-        }
-
-        let next = apply(&self.spec, self.dtm);
-
-        // No-progress guard: all-At and all-AsIs specs produce next == self.dtm,
-        // which would loop forever without this check.
-        if next <= self.dtm {
-            return Ok(None);
-        }
-
-        if let Some(end) = &self.end {
-            if &next > end {
-                self.dtm = end.clone();
-                self.index += 1;
-                return Ok(Some(end.clone()));
-            }
-        };
-
-        self.dtm = next;
-        self.index += 1;
-        Ok(Some(self.dtm.clone()))
-    }
-}
-
 impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
     type Item = DateTime<Tz>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        if self.end.as_ref().is_some_and(|end| self.cursor >= *end) {
+        if self.done {
             return Ok(None);
         }
         if let Some(start) = self.start.take() {
+            if self.end.as_ref().is_some_and(|end| start > *end) {
+                self.done = true;
+                return Ok(None);
+            }
             return Ok(Some(start));
         }
 
         loop {
-            let next = apply(&self.spec, self.local);
-            // No-progress guard: all-At and all-AsIs specs never move.
-            if next <= self.local {
+            let Some(next) = engine::next_after(&self.spec, self.local, self.local) else {
+                self.done = true;
+                return Ok(None);
+            };
+            // A spec without a step names one time of day; as an iterator it
+            // yields that time at most once, on the current day.
+            if !engine::has_step(&self.spec) && next.date() != self.local.date() {
+                self.done = true;
                 return Ok(None);
             }
             let instant = match self.interval_mode {
@@ -451,8 +371,8 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
                     resolve_local(&self.tz, next, self.dst_policy)?
                 }
                 IntervalMode::Elapsed => {
-                    // The step was applied in the previous occurrence's
-                    // offset, so it measures real elapsed time.
+                    // `next` was computed in the previous occurrence's
+                    // offset, so the step measures real elapsed time.
                     let offset = self.cursor.offset().fix().local_minus_utc();
                     let instant = self
                         .tz
@@ -466,11 +386,9 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
             if instant <= self.cursor {
                 continue;
             }
-            if let Some(end) = &self.end {
-                if instant > *end {
-                    self.cursor = end.clone();
-                    return Ok(Some(end.clone()));
-                }
+            if self.end.as_ref().is_some_and(|end| instant > *end) {
+                self.done = true;
+                return Ok(None);
             }
             self.cursor = instant.clone();
             return Ok(Some(instant));
@@ -478,38 +396,61 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
     }
 }
 
-/// Apply a time spec once to `cursor`: seconds, then minutes, then hours, each
-/// either `At(n)` (set the field) or `Every(n)` (add a duration).
+/// ## NaiveSpecIterator
+/// An iterator for generating recurring naive datetimes as per time based specifications.
 ///
-/// When no `Every` exists, the finest `ForEach` acts as `Every(1)` for its
-/// unit; coarser `ForEach` fields and `AsIs` carry their value unchanged.
-pub(crate) fn apply(spec: &Spec, cursor: NaiveDateTime) -> NaiveDateTime {
-    let has_any_every = matches!(spec.seconds, Cycle::Every(_))
-        || matches!(spec.minutes, Cycle::Every(_))
-        || matches!(spec.hours, Cycle::Every(_));
-    let seconds_is_foreach = matches!(spec.seconds, Cycle::ForEach);
-    let minutes_is_foreach = matches!(spec.minutes, Cycle::ForEach);
+/// Behaves like [`SpecIterator`] in UTC: no DST, so steps are plain durations.
+///
+/// ### Examples
+///
+/// ```rust
+/// use tkone_schedule::time::NaiveSpecIterator;
+/// use chrono::{NaiveDate, NaiveDateTime, Duration};
+/// use fallible_iterator::FallibleIterator;
+///
+/// let start = NaiveDate::from_ymd_opt(2024, 3, 31).unwrap().and_hms_opt(10, 0, 0).unwrap();
+/// let iter = NaiveSpecIterator::new_with_start("1H:00:00", start.clone()).unwrap();
+/// let occurrences = iter.take(3).collect::<Vec<NaiveDateTime>>().unwrap();
+///
+/// assert_eq!(occurrences, vec![start, start + Duration::hours(1), start + Duration::hours(2)]);
+/// ```
+#[derive(Debug, Clone)]
+pub struct NaiveSpecIterator(SpecIterator<Utc>);
 
-    // `At` values are range-checked when the spec is parsed.
-    let next = match &spec.seconds {
-        Cycle::At(s) => cursor.with_second(*s as u32).unwrap(),
-        Cycle::Every(s) => cursor + Duration::seconds(*s as i64),
-        Cycle::ForEach if !has_any_every => cursor + Duration::seconds(1),
-        Cycle::ForEach | Cycle::AsIs => cursor,
-    };
-    let next = match &spec.minutes {
-        Cycle::At(m) => next.with_minute(*m as u32).unwrap(),
-        Cycle::Every(m) => next + Duration::minutes(*m as i64),
-        Cycle::ForEach if !has_any_every && !seconds_is_foreach => next + Duration::minutes(1),
-        Cycle::ForEach | Cycle::AsIs => next,
-    };
-    match &spec.hours {
-        Cycle::At(h) => next.with_hour(*h as u32).unwrap(),
-        Cycle::Every(h) => next + Duration::hours(*h as i64),
-        Cycle::ForEach if !has_any_every && !seconds_is_foreach && !minutes_is_foreach => {
-            next + Duration::hours(1)
-        }
-        Cycle::ForEach | Cycle::AsIs => next,
+impl NaiveSpecIterator {
+    pub fn new_after(spec: &str, dtm: NaiveDateTime) -> Result<Self> {
+        Ok(Self(SpecIterator::new_after(spec, dtm.and_utc(), DstPolicy::Adjust)?))
+    }
+
+    pub fn new_with_start(spec: &str, start: NaiveDateTime) -> Result<Self> {
+        Ok(Self(SpecIterator::new_with_start(spec, start.and_utc(), DstPolicy::Adjust)?))
+    }
+
+    pub fn new_with_end(spec: &str, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
+        Ok(Self(SpecIterator::new_with_end(
+            spec,
+            start.and_utc(),
+            end.and_utc(),
+            DstPolicy::Adjust,
+        )?))
+    }
+
+    pub fn new_with_end_spec(spec: &str, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
+        Ok(Self(SpecIterator::new_with_end_spec(
+            spec,
+            start.and_utc(),
+            end_spec,
+            DstPolicy::Adjust,
+        )?))
+    }
+}
+
+impl FallibleIterator for NaiveSpecIterator {
+    type Item = NaiveDateTime;
+    type Error = Error;
+
+    fn next(&mut self) -> Result<Option<Self::Item>> {
+        Ok(self.0.next()?.map(|d| d.naive_utc()))
     }
 }
 

@@ -1,7 +1,7 @@
 use super::{engine, spec::Spec};
 use crate::utils::next_result_to_tz;
 use crate::{biz_day::BizDayProcessor, prelude::*, DstPolicy, Occurrence};
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
 use std::marker::PhantomData;
 
@@ -23,7 +23,9 @@ pub struct NotSealed;
 /// you call methods in a valid order:
 ///
 /// - Every builder can be `.build()`-ed immediately.
-/// - `with_end` / `with_end_spec` are only available after `new_with_start`.
+/// - `with_end` is available after `new_after` / `resume_after` and after
+///   `new_with_start`; `with_end_spec` only after `new_with_start` (an end
+///   spec is resolved from the start).
 ///
 /// # Construction variants
 ///
@@ -53,7 +55,7 @@ pub struct NotSealed;
 ///     .unwrap();
 ///
 /// let dates: Vec<_> = iter.collect().unwrap();
-/// // → 2024-01-31, 2024-02-29, 2024-03-31, 2024-04-30, 2024-05-31
+/// // → 2024-01-31, 2024-02-29, 2024-03-31, 2024-04-30, 2024-05-31, 2024-06-30 (end is inclusive)
 /// ```
 pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> {
     dtm: DateTime<Tz>,
@@ -63,6 +65,8 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
     end: END,
     timezone: Tz,
     dst_policy: DstPolicy,
+    /// Wall-clock cursor given to `resume_after`; `None` means `dtm`.
+    local: Option<NaiveDateTime>,
     marker_sealed: PhantomData<S>,
 }
 
@@ -109,19 +113,87 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
             bd_processor: bdp,
             end: NoEnd,
             dst_policy: DstPolicy::default(),
+            local: None,
             marker_sealed: PhantomData,
         }
+    }
+
+    /// Resume a stored schedule: occurrences strictly after `last_actual`, the
+    /// [`actual`](crate::Occurrence::actual) of the last occurrence you
+    /// handled, in timezone `tz`.
+    ///
+    /// Store `actual` with its UTC offset (e.g. RFC 3339) and pass it back
+    /// here. The offset keeps the scheduled wall-clock time of an occurrence
+    /// moved by a DST gap (`2025-03-09T02:30:00-05:00`), which a plain
+    /// instant would lose. See the crate docs on
+    /// [persisting and resuming](crate#persisting-and-resuming-a-schedule).
+    pub fn resume_after(
+        spec: &str,
+        bdp: BDP,
+        tz: Tz,
+        last_actual: DateTime<FixedOffset>,
+    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+        let mut builder = Self::new_after(spec, bdp, last_actual.with_timezone(&tz));
+        builder.local = Some(last_actual.naive_local());
+        builder
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         Ok(SpecIterator {
             tz: self.dtm.timezone(),
-            last: None,
+            // Results must be after `dtm` as an instant too, so a DST-shifted
+            // occurrence equal to it is not repeated.
+            last: Some(self.dtm.clone()),
             dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_after(
                 &self.spec,
                 self.bd_processor,
-                self.dtm.naive_local(),
+                self.local.unwrap_or_else(|| self.dtm.naive_local()),
+            )?,
+        })
+    }
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    /// Bound the iterator by an explicit end datetime (inclusive).
+    ///
+    /// Useful with [`resume_after`](Self::resume_after) for a stored schedule
+    /// that has an end.
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed> {
+        SpecIteratorBuilder {
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end: EndDateTime(end),
+            dst_policy: self.dst_policy,
+            local: self.local,
+            marker_sealed: PhantomData,
+            timezone: self.timezone,
+        }
+    }
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor>
+    SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed>
+{
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let local = self.local.unwrap_or_else(|| self.dtm.naive_local());
+        let end = self.end.0.with_timezone(&self.dtm.timezone()).naive_local();
+        Ok(SpecIterator {
+            tz: self.dtm.timezone(),
+            last: Some(self.dtm.clone()),
+            dst_policy: self.dst_policy,
+            naive_spec_iter: NaiveSpecIterator::new(
+                &self.spec,
+                self.bd_processor,
+                local,
+                local,
+                None,
+                Some(end),
             )?,
         })
     }
@@ -157,8 +229,8 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
                 &self.spec,
-                start.naive_local(),
                 self.bd_processor,
+                start.naive_local(),
                 &self.end.0,
             )?,
         })
@@ -221,15 +293,15 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             bd_processor: bdp,
             end: NoEnd,
             dst_policy: DstPolicy::default(),
+            local: None,
             marker_sealed: PhantomData,
         }
     }
 
     /// Bound the iterator by another spec string.
     ///
-    /// The end datetime is resolved by running `end_spec` as its own single-shot
-    /// iterator starting from `start`. The first occurrence of `end_spec` becomes
-    /// the exclusive upper bound.
+    /// The end is the first occurrence of `end_spec` strictly after `start`
+    /// (its observed date), and is inclusive.
     ///
     /// This is useful when the end boundary is itself expressed as a recurrence
     /// rule (e.g. "stop at the end of the current quarter").
@@ -244,6 +316,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             bd_processor: self.bd_processor,
             end: EndSpec(end_spec.into()),
             dst_policy: self.dst_policy,
+            local: self.local,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -251,9 +324,9 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
 
     /// Bound the iterator by an explicit end datetime.
     ///
-    /// Occurrences whose *actual* (unadjusted) date or *observed* (adjusted)
-    /// date exceeds `end` are suppressed. When the boundary is hit the iterator
-    /// emits `end` itself as a terminal `Single` result, then stops.
+    /// The end is inclusive: occurrences up to and including `end` are
+    /// yielded. The iterator stops at the first occurrence whose *actual*
+    /// (unadjusted) or *observed* (adjusted) date is after `end`.
     pub fn with_end(
         self,
         end: DateTime<Tz>,
@@ -265,6 +338,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             bd_processor: self.bd_processor,
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
+            local: self.local,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -354,31 +428,37 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
     }
 }
 
-impl<Tz: TimeZone, BDM: BizDayProcessor> SpecIterator<Tz, BDM> {
-    #[allow(dead_code)]
-    pub(crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
-        self.naive_spec_iter.update_cursor(dtm.naive_local());
-    }
-}
-
 /// Non-timezone-aware calendar-day recurrence iterator.
 ///
 /// The timezone-aware [`SpecIterator`] delegates all date arithmetic to this
-/// type. You can use `NaiveSpecIterator` directly when you do not need
-/// timezone conversion, or when you are composing it with other naive
-/// iterators (as [`crate::datetime::NaiveSpecIterator`] does internally).
+/// type, and so does the datetime iterator. Use it directly when you do not
+/// need timezone conversion.
 ///
 /// # Construction
 ///
 /// `NaiveSpecIterator` is not constructed through the builder; use its
-/// inherent constructors:
+/// inherent constructors, which mirror the builder's:
 ///
 /// | Method | First result |
 /// |--------|-------------|
 /// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` |
 /// | `new_with_start(spec, bdp, start)` | `start` itself is the first item |
-/// | `new_with_end(spec, bdp, start, end)` | As above, bounded by `end` |
-/// | `new_with_end_spec(spec, start, bdp, end_spec)` | As above; end resolved from `end_spec` |
+/// | `new_with_end(spec, bdp, start, end)` | As above, up to and including `end` |
+/// | `new_with_end_spec(spec, bdp, start, end_spec)` | As above; `end` is the first occurrence of `end_spec` after `start` |
+///
+/// # Example
+///
+/// ```rust
+/// use tkone_schedule::biz_day::WeekendSkipper;
+/// use tkone_schedule::date::NaiveSpecIterator;
+/// use chrono::NaiveDate;
+/// use fallible_iterator::FallibleIterator;
+///
+/// let start = NaiveDate::from_ymd_opt(2025, 1, 31).unwrap().and_hms_opt(0, 0, 0).unwrap();
+/// let iter = NaiveSpecIterator::new_with_start("YY-1M-L", WeekendSkipper::new(), start).unwrap();
+/// let dates: Vec<_> = iter.take(3).map(|o| Ok(o.observed().date())).collect().unwrap();
+/// assert_eq!(dates[1], NaiveDate::from_ymd_opt(2025, 2, 28).unwrap());
+/// ```
 #[derive(Debug, Clone)]
 pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     spec: Spec,
@@ -390,8 +470,30 @@ pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
 }
 
 impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
-    pub(crate) fn new_after(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
-        Self::new_after_anchored(spec, bdp, dtm, dtm)
+    fn new(
+        spec: &str,
+        bdp: BDP,
+        dtm: NaiveDateTime,
+        anchor: NaiveDateTime,
+        start: Option<NaiveDateTime>,
+        end: Option<NaiveDateTime>,
+    ) -> Result<Self> {
+        Ok(Self {
+            spec: spec.parse()?,
+            dtm,
+            context: engine::IterContext {
+                anchor,
+                bd_processor: bdp,
+            },
+            index: 0,
+            start,
+            end,
+        })
+    }
+
+    /// Iterate occurrences strictly after `dtm`; `nY` / `nM` cadences align to `dtm`.
+    pub fn new_after(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
+        Self::new(spec, bdp, dtm, dtm, None, None)
     }
 
     /// Like [`new_after`](Self::new_after), but aligns `nY` / `nM` cadences to
@@ -402,84 +504,38 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         dtm: NaiveDateTime,
         anchor: NaiveDateTime,
     ) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            spec,
-            dtm,
-            context: engine::IterContext {
-                anchor,
-                bd_processor: bdp,
-            },
-            index: 0,
-            start: None,
-            end: None,
-        })
+        Self::new(spec, bdp, dtm, anchor, None, None)
     }
 
-    fn new_with_start(spec: &str, bdp: BDP, start: NaiveDateTime) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            spec,
-            dtm: start.clone(),
-            context: engine::IterContext {
-                anchor: start,
-                bd_processor: bdp,
-            },
-            index: 0,
-            start: Some(start),
-            end: None,
-        })
+    /// Yield `start` first (unchanged, as `Exact`), then iterate forward.
+    pub fn new_with_start(spec: &str, bdp: BDP, start: NaiveDateTime) -> Result<Self> {
+        Self::new(spec, bdp, start, start, Some(start), None)
     }
 
-    fn new_with_end(
+    /// Like [`new_with_start`](Self::new_with_start), up to and including `end`.
+    pub fn new_with_end(
         spec: &str,
         bdp: BDP,
         start: NaiveDateTime,
         end: NaiveDateTime,
     ) -> Result<Self> {
-        let spec = spec.parse()?;
-        Ok(Self {
-            spec,
-            dtm: start.clone(),
-            context: engine::IterContext {
-                anchor: start,
-                bd_processor: bdp,
-            },
-            index: 0,
-            start: Some(start),
-            end: Some(end),
-        })
+        Self::new(spec, bdp, start, start, Some(start), Some(end))
     }
 
-    fn new_with_end_spec(
+    /// Like [`new_with_end`](Self::new_with_end), with `end` set to the first
+    /// occurrence of `end_spec` strictly after `start` (its observed date).
+    pub fn new_with_end_spec(
         spec: &str,
-        start: NaiveDateTime,
         bdp: BDP,
+        start: NaiveDateTime,
         end_spec: &str,
     ) -> Result<Self> {
-        let spec = spec.parse()?;
-        // First occurrence strictly after `start`; a start-inclusive iterator
-        // would yield `start` itself and leave an empty range.
+        // A start-inclusive iterator would yield `start` itself and leave an
+        // empty range.
         let end = Self::new_after(end_spec, bdp.clone(), start)?
             .next()?
             .ok_or(Error::InvalidEndSpec)?;
-        Ok(Self {
-            spec,
-            dtm: start.clone(),
-            context: engine::IterContext {
-                anchor: start,
-                bd_processor: bdp,
-            },
-            index: 0,
-            start: Some(start),
-            end: Some(end.observed().clone()),
-        })
-    }
-
-    pub(crate) fn update_cursor(&mut self, dtm: NaiveDateTime) {
-        self.dtm = dtm;
-        self.start = None;
-        self.index = 0;
+        Self::new_with_end(spec, bdp, start, *end.observed())
     }
 }
 
@@ -510,15 +566,13 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
         let next_result = engine::adjust(&self.spec, raw, &self.context)?;
 
         if let Some(end) = &self.end {
-            // Filter when the actual date exceeds the end boundary.
-            // Also filter when the observed (adjusted) date exceeds the end,
-            // so that e.g. a biz-day adjustment that pushes into the next
-            // month does not produce a result whose settlement date is beyond
-            // the caller's stated upper bound.
-            if next_result.actual() > &end || next_result.observed() > &end {
-                self.dtm = end.clone();
-                self.index += 1;
-                return Ok(Some(Occurrence::Exact(end.clone())));
+            // The end is inclusive. Stop when either the actual or the
+            // observed (adjusted) date passes it, so a biz-day adjustment that
+            // pushes into the next month does not produce a settlement date
+            // beyond the caller's stated upper bound.
+            if next_result.actual() > end || next_result.observed() > end {
+                self.dtm = *end;
+                return Ok(None);
             }
         };
 

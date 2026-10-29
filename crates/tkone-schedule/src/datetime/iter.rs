@@ -2,10 +2,12 @@ use super::spec::Spec;
 use crate::biz_day::BizDayProcessor;
 use crate::date::NaiveSpecIterator as DateNaiveSpecIterator;
 use crate::prelude::*;
-use crate::time::{apply as apply_time_spec, Cycle as TimeCycle, Spec as TimeSpec};
-use crate::utils::next_result_to_tz;
-use crate::{DstPolicy, Occurrence};
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use crate::time::Spec as TimeSpec;
+use crate::utils::{next_result_to_tz, resolve_local};
+use crate::{DstPolicy, IntervalMode, Occurrence, TimeAnchor};
+use chrono::{
+    DateTime, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc,
+};
 use fallible_iterator::FallibleIterator;
 use std::marker::PhantomData;
 use std::str::FromStr;
@@ -14,6 +16,7 @@ use std::str::FromStr;
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
 pub struct EndDateTime<Tz: TimeZone>(DateTime<Tz>);
+pub struct EndSpec(String);
 pub struct NoEnd;
 pub struct Sealed;
 pub struct NotSealed;
@@ -30,6 +33,10 @@ pub struct NotSealed;
 /// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` | schedule from a known cursor |
 /// | `new_with_start(spec, bdp, start)` | `start` itself is the first item | anchor to a fixed start datetime |
 ///
+/// Any builder may be bounded with `.with_end(end)`; after `new_with_start`
+/// also with `.with_end_spec(end_spec)` (both inclusive). Any builder also takes
+/// `.with_dst_policy(…)`, `.with_interval_mode(…)` and `.with_time_anchor(…)`.
+///
 /// # Examples
 ///
 /// ```rust
@@ -43,7 +50,7 @@ pub struct NotSealed;
 /// let start = Utc.with_ymd_and_hms(2024, 1, 31, 11, 0, 0).unwrap();
 /// let end   = Utc.with_ymd_and_hms(2024, 4, 30, 11, 0, 0).unwrap();
 ///
-/// // Last day of every month at 11:00 UTC, bounded until end of April
+/// // Last day of every month at 11:00 UTC, up to and including end of April
 /// let iter = SpecIteratorBuilder::new_with_start(
 ///     "YY-1M-L~WT11:00:00", bdp, start,
 /// )
@@ -60,9 +67,17 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
     spec: String,
     bd_processor: BDP,
     end: END,
-    timezone: Tz,
+    options: Options,
+    /// Wall-clock cursor given to `resume_after`; `None` means `dtm`.
+    local: Option<NaiveDateTime>,
+    marker_sealed: PhantomData<(Tz, S)>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Options {
     dst_policy: DstPolicy,
-    marker_sealed: PhantomData<S>,
+    interval_mode: IntervalMode,
+    time_anchor: TimeAnchor,
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
@@ -73,8 +88,41 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
     /// Defaults to [`DstPolicy::Adjust`]. Set to [`DstPolicy::Strict`] to
     /// receive [`Error::AmbiguousLocalTime`] instead of silent adjustment.
     pub fn with_dst_policy(mut self, policy: DstPolicy) -> Self {
-        self.dst_policy = policy;
+        self.options.dst_policy = policy;
         self
+    }
+
+    /// Choose whether time-spec steps (`nH`, `nM`, `nS`) move the wall clock
+    /// or measure elapsed time across DST changes.
+    ///
+    /// Defaults to [`IntervalMode::WallClock`]. With `Elapsed`, the first time
+    /// on each date still comes from the wall clock; later times that day are
+    /// whole steps of real time after the previous one.
+    pub fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
+        self.options.interval_mode = mode;
+        self
+    }
+
+    /// Choose which times each date gets: following the start's time of day,
+    /// or restarting from midnight.
+    ///
+    /// Defaults to [`TimeAnchor::Start`].
+    pub fn with_time_anchor(mut self, anchor: TimeAnchor) -> Self {
+        self.options.time_anchor = anchor;
+        self
+    }
+
+    fn sealed<E, S2>(self, end: E) -> SpecIteratorBuilder<Tz, BDP, START, E, S2> {
+        SpecIteratorBuilder {
+            dtm: self.dtm,
+            start: self.start,
+            spec: self.spec,
+            bd_processor: self.bd_processor,
+            end,
+            options: self.options,
+            local: self.local,
+            marker_sealed: PhantomData,
+        }
     }
 }
 
@@ -89,30 +137,58 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     /// Create an iterator that produces occurrences strictly **after `dtm`**.
     pub fn new_after(spec: &str, bdp: BDP, dtm: DateTime<Tz>) -> Self {
         SpecIteratorBuilder {
-            timezone: dtm.timezone(),
-            dtm: dtm.clone(),
+            dtm,
             start: NoStart,
             spec: spec.to_string(),
             bd_processor: bdp,
             end: NoEnd,
-            dst_policy: DstPolicy::default(),
+            options: Options::default(),
+            local: None,
             marker_sealed: PhantomData,
         }
     }
 
+    /// Resume a stored schedule: occurrences strictly after `last_actual`, the
+    /// [`actual`](crate::Occurrence::actual) of the last occurrence you
+    /// handled, in timezone `tz`.
+    ///
+    /// Store `actual` with its UTC offset (e.g. RFC 3339) and pass it back
+    /// here. The offset keeps the scheduled wall-clock time of an occurrence
+    /// moved by a DST gap, and tells fall-back's two 01:00s apart. Rebuild
+    /// with the same options (`with_time_anchor`, `with_interval_mode`, …) as
+    /// the original schedule. See the crate docs on
+    /// [persisting and resuming](crate#persisting-and-resuming-a-schedule).
+    pub fn resume_after(spec: &str, bdp: BDP, tz: Tz, last_actual: DateTime<FixedOffset>) -> Self {
+        let mut builder = Self::new_after(spec, bdp, last_actual.with_timezone(&tz));
+        builder.local = Some(last_actual.naive_local());
+        builder
+    }
+
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        let spec = Spec::from_str(&self.spec)?;
-        Ok(SpecIterator {
-            tz: self.dtm.timezone(),
-            last: None,
-            dst_policy: self.dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_after(
-                &spec.date_spec,
-                &spec.time_spec,
-                self.bd_processor,
-                self.dtm.naive_local(),
-            )?,
-        })
+        let (bdp, dtm, local) = (self.bd_processor, self.dtm, self.local);
+        SpecIterator::new(&self.spec, bdp, dtm, local, false, None, self.options)
+    }
+}
+
+// --- no-start, with-end ---
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    /// Bound the iterator by an explicit end datetime (inclusive).
+    ///
+    /// Useful with [`resume_after`](Self::resume_after) for a stored schedule
+    /// that has an end.
+    pub fn with_end(
+        self,
+        end: DateTime<Tz>,
+    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed> {
+        self.sealed(EndDateTime(end))
+    }
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed> {
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let end = self.end.0.with_timezone(&self.dtm.timezone());
+        let (bdp, dtm, local) = (self.bd_processor, self.dtm, self.local);
+        SpecIterator::new(&self.spec, bdp, dtm, local, false, Some(end), self.options)
     }
 }
 
@@ -122,7 +198,9 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
 {
     /// Create an iterator where `start` is the **first yielded item**.
     ///
-    /// Use this after you have resolved the start datetime from the spec:
+    /// `start` is yielded as-is, as [`Occurrence::Exact`], even when it does
+    /// not match the spec or would be adjusted by it. This lets you feed back
+    /// an already-adjusted (observed) date:
     ///
     /// ```rust
     /// use tkone_schedule::biz_day::WeekendSkipper;
@@ -149,48 +227,40 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     /// ```
     pub fn new_with_start(spec: &str, bdp: BDP, start: DateTime<Tz>) -> Self {
         SpecIteratorBuilder {
-            timezone: start.timezone(),
             dtm: start.clone(),
             start: StartDateTime(start),
             spec: spec.to_string(),
             bd_processor: bdp,
             end: NoEnd,
-            dst_policy: DstPolicy::default(),
+            options: Options::default(),
+            local: None,
             marker_sealed: PhantomData,
         }
     }
 
-    /// Bound the iterator by an explicit end datetime (exclusive upper bound).
+    /// Bound the iterator by an explicit end datetime (inclusive).
     pub fn with_end(
         self,
         end: DateTime<Tz>,
     ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
-        SpecIteratorBuilder {
-            timezone: self.timezone,
-            dtm: self.dtm,
-            start: self.start,
-            spec: self.spec,
-            bd_processor: self.bd_processor,
-            end: EndDateTime(end),
-            dst_policy: self.dst_policy,
-            marker_sealed: PhantomData,
-        }
+        self.sealed(EndDateTime(end))
+    }
+
+    /// Bound the iterator by another datetime spec.
+    ///
+    /// The end is the first occurrence of `end_spec` strictly after `start`
+    /// (its observed time), and is inclusive. For example
+    /// `.with_end_spec("YY-MM-LT17:00:00")` stops at 17:00 on the last day of
+    /// the start's month.
+    pub fn with_end_spec(
+        self,
+        end_spec: impl Into<String>,
+    ) -> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed> {
+        self.sealed(EndSpec(end_spec.into()))
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        let spec = Spec::from_str(&self.spec)?;
-        let start = self.start.0;
-        Ok(SpecIterator {
-            tz: start.timezone(),
-            last: None,
-            dst_policy: self.dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_with_start(
-                &spec.date_spec,
-                &spec.time_spec,
-                self.bd_processor,
-                start.naive_local(),
-            )?,
-        })
+        SpecIterator::new(&self.spec, self.bd_processor, self.start.0, None, true, None, self.options)
     }
 }
 
@@ -199,56 +269,239 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed>
 {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        let spec = Spec::from_str(&self.spec)?;
         let start = self.start.0;
-        Ok(SpecIterator {
-            tz: start.timezone(),
-            last: None,
-            dst_policy: self.dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_with_end(
-                &spec.date_spec,
-                &spec.time_spec,
-                self.bd_processor,
-                start.naive_local(),
-                self.end.0.with_timezone(&start.timezone()).naive_local(),
-            )?,
-        })
+        let end = self.end.0.with_timezone(&start.timezone());
+        SpecIterator::new(&self.spec, self.bd_processor, start, None, true, Some(end), self.options)
+    }
+}
+
+// --- with-start, with-end-spec ---
+impl<Tz: TimeZone, BDP: BizDayProcessor>
+    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed>
+{
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        let start = self.start.0;
+        let bdp = self.bd_processor.clone();
+        let end = SpecIterator::new(&self.end.0, bdp, start.clone(), None, false, None, self.options)?
+            .next()?
+            .ok_or(Error::InvalidEndSpec)?
+            .observed()
+            .clone();
+        SpecIterator::new(&self.spec, self.bd_processor, start, None, true, Some(end), self.options)
     }
 }
 
 // ---------------------------------------------------------------------------
-// SpecIterator (timezone-aware wrapper)
+// SpecIterator
 // ---------------------------------------------------------------------------
 
 /// Timezone-aware datetime recurrence iterator combining a date spec and a time spec.
+///
+/// Visits each date the date spec produces, in order, and yields every time
+/// the time spec produces on that date (on the *observed* date when a `~`
+/// adjustment moved it). Every time on an adjusted date reports the
+/// adjustment: `actual` is the raw date at that time, `observed` the moved one.
 ///
 /// Use [`SpecIteratorBuilder`] to construct one.
 #[derive(Debug)]
 pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     tz: Tz,
-    dst_policy: DstPolicy,
-    naive_spec_iter: NaiveSpecIterator<BDP>,
-    /// Actual instant of the last yielded occurrence. Distinct local times
-    /// can map to one instant across a DST gap; later duplicates are dropped
-    /// so instants strictly increase.
-    last: Option<DateTime<Tz>>,
+    dates: DateNaiveSpecIterator<BDP>,
+    time_spec: TimeSpec,
+    options: Options,
+    /// Time of day of the start (or `new_after` cursor); the phase for
+    /// [`TimeAnchor::Start`].
+    start_time: NaiveTime,
+    /// Wall-clock time of the start or `new_after` / `resume_after` cursor.
+    initial_local: NaiveDateTime,
+    /// The date whose times are being yielded.
+    day: Option<Day<Tz>>,
+    /// Whether a date has been taken from `dates` yet.
+    first_date_taken: bool,
+    /// Actual instant of the last result, or the initial cursor. Results must
+    /// be strictly later, so DST collisions are dropped.
+    cursor: DateTime<Tz>,
+    /// Yielded first, then cleared.
+    start: Option<DateTime<Tz>>,
+    /// Inclusive upper bound.
+    end: Option<DateTime<Tz>>,
+    done: bool,
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor + Clone> FallibleIterator for SpecIterator<Tz, BDP> {
+#[derive(Debug)]
+struct Day<Tz: TimeZone> {
+    /// The date-level occurrence (raw date, observed date).
+    occurrence: Occurrence<NaiveDateTime>,
+    /// The observed date: times are yielded on it.
+    date: NaiveDate,
+    /// Local time of the last time searched on this date.
+    local: NaiveDateTime,
+    /// Observed instant of the last time yielded on this date.
+    prev: Option<DateTime<Tz>>,
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
+    /// `cursor` is the start when `include_start`, else the `new_after` point.
+    /// `local` overrides the cursor's wall-clock time (see `resume_after`).
+    fn new(
+        spec: &str,
+        bdp: BDP,
+        cursor: DateTime<Tz>,
+        local: Option<NaiveDateTime>,
+        include_start: bool,
+        end: Option<DateTime<Tz>>,
+        options: Options,
+    ) -> Result<Self> {
+        let spec = Spec::from_str(spec)?;
+        let local = local.unwrap_or_else(|| cursor.naive_local());
+        // With a start, its date is already in progress, so the date
+        // iterator resumes after it; otherwise the cursor's date is still a
+        // candidate. Cadences (`nY`, `nM`) align to the cursor's date either way.
+        let dates_after = if include_start {
+            local.date().and_hms_nano_opt(23, 59, 59, 999_999_999)
+        } else {
+            local.date().and_hms_opt(0, 0, 0).map(|m| m - Duration::nanoseconds(1))
+        }
+        .ok_or(Error::IteratorNotConverged)?;
+
+        let day = include_start.then(|| Day {
+            occurrence: Occurrence::Exact(local),
+            date: local.date(),
+            local,
+            prev: Some(cursor.clone()),
+        });
+        Ok(Self {
+            tz: cursor.timezone(),
+            dates: DateNaiveSpecIterator::new_after_anchored(&spec.date_spec, bdp, dates_after, local)?,
+            time_spec: spec.time_spec.parse()?,
+            options,
+            start_time: local.time(),
+            initial_local: local,
+            day,
+            first_date_taken: include_start,
+            start: include_start.then(|| cursor.clone()),
+            cursor,
+            end,
+            done: false,
+        })
+    }
+
+    /// The next time on the current date, or `None` once the date is exhausted.
+    fn next_on_day(&mut self) -> Result<Option<Occurrence<DateTime<Tz>>>> {
+        let Some(day) = self.day.as_mut() else {
+            return Ok(None);
+        };
+        let policy = self.options.dst_policy;
+
+        if let (IntervalMode::Elapsed, Some(prev)) = (self.options.interval_mode, &day.prev) {
+            // Step in the previous time's offset so the step is real time.
+            let local = prev.naive_local();
+            let offset = Duration::seconds(i64::from(prev.offset().fix().local_minus_utc()));
+            let Some(next) = crate::time::next_after(&self.time_spec, local, local) else {
+                return Ok(None);
+            };
+            let instant = self.tz.from_utc_datetime(&(next - offset));
+            if instant.naive_local().date() != day.date {
+                return Ok(None);
+            }
+            day.prev = Some(instant.clone());
+            let occurrence = match tick(&day.occurrence, instant.naive_local()) {
+                Occurrence::Exact(_) => Occurrence::Exact(instant),
+                Occurrence::AdjustedLater(actual, _) => {
+                    Occurrence::AdjustedLater(resolve_local(&self.tz, actual, policy)?, instant)
+                }
+                Occurrence::AdjustedEarlier(actual, _) => {
+                    Occurrence::AdjustedEarlier(resolve_local(&self.tz, actual, policy)?, instant)
+                }
+            };
+            return Ok(Some(occurrence));
+        }
+
+        let anchor = match self.options.time_anchor {
+            TimeAnchor::Start => day.date.and_time(self.start_time),
+            TimeAnchor::Midnight => day.date.and_time(NaiveTime::MIN),
+        };
+        let Some(next) = crate::time::next_after(&self.time_spec, anchor, day.local) else {
+            return Ok(None);
+        };
+        if next.date() != day.date {
+            return Ok(None);
+        }
+        day.local = next;
+        let occurrence = next_result_to_tz(&self.tz, tick(&day.occurrence, next), policy)?;
+        day.prev = Some(occurrence.observed().clone());
+        Ok(Some(occurrence))
+    }
+
+    /// Move to the next date from the date spec; `false` when there are none.
+    fn next_day(&mut self) -> Result<bool> {
+        let Some(occurrence) = self.dates.next()? else {
+            return Ok(false);
+        };
+        let date = occurrence.observed().date();
+        let midnight = date.and_time(NaiveTime::MIN);
+        // On the `new_after` date only times after the cursor are candidates,
+        // and `Elapsed` steps continue from the cursor itself.
+        let on_cursor_date = !self.first_date_taken && date == self.initial_local.date();
+        let (local, prev) = if on_cursor_date {
+            (self.initial_local, Some(self.cursor.clone()))
+        } else {
+            (midnight - Duration::nanoseconds(1), None)
+        };
+        self.first_date_taken = true;
+        self.day = Some(Day { occurrence, date, local, prev });
+        Ok(true)
+    }
+}
+
+/// The date-level occurrence carried to one time `t` on its observed date.
+fn tick(day: &Occurrence<NaiveDateTime>, t: NaiveDateTime) -> Occurrence<NaiveDateTime> {
+    match day {
+        Occurrence::Exact(_) => Occurrence::Exact(t),
+        Occurrence::AdjustedLater(actual, _) => {
+            Occurrence::AdjustedLater(actual.date().and_time(t.time()), t)
+        }
+        Occurrence::AdjustedEarlier(actual, _) => {
+            Occurrence::AdjustedEarlier(actual.date().and_time(t.time()), t)
+        }
+    }
+}
+
+impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, BDP> {
     type Item = Occurrence<DateTime<Tz>>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        loop {
-            let Some(next) = self.naive_spec_iter.next()? else {
+        if self.done {
+            return Ok(None);
+        }
+        if let Some(start) = self.start.take() {
+            if self.end.as_ref().is_some_and(|end| start > *end) {
+                self.done = true;
                 return Ok(None);
+            }
+            return Ok(Some(Occurrence::Exact(start)));
+        }
+
+        loop {
+            let Some(occurrence) = self.next_on_day()? else {
+                if !self.next_day()? {
+                    self.done = true;
+                    return Ok(None);
+                }
+                continue;
             };
-            let next = next_result_to_tz(&self.tz, next, self.dst_policy)?;
-            if self.last.as_ref().is_some_and(|last| next.actual() <= last) {
+            if *occurrence.actual() <= self.cursor {
                 continue;
             }
-            self.last = Some(next.actual().clone());
-            return Ok(Some(next));
+            if let Some(end) = &self.end {
+                if occurrence.actual() > end || occurrence.observed() > end {
+                    self.done = true;
+                    return Ok(None);
+                }
+            }
+            self.cursor = occurrence.actual().clone();
+            return Ok(Some(occurrence));
         }
     }
 }
@@ -259,311 +512,39 @@ impl<Tz: TimeZone, BDP: BizDayProcessor + Clone> FallibleIterator for SpecIterat
 
 /// Naive (non-timezone-aware) datetime recurrence iterator.
 ///
-/// Combines a date spec (which calendar days to visit) with a time spec
-/// (which times within each day to emit), using a **date-first** strategy:
-///
-/// 1. Find the next valid calendar date via the date spec.
-/// 2. Within that date, emit every matching time produced by the time spec.
-/// 3. When times are exhausted for that date, advance to the next valid date.
-///
-/// This correctly handles sub-daily recurrence on specific dates, e.g.
-/// "every 30 minutes on the last business day of each month".
-#[derive(Debug, Clone)]
-pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
-    date_iter: DateNaiveSpecIterator<BDP>,
-    time_spec: TimeSpec,
-    /// Exclusive end of the current date window (next midnight after the date
-    /// we are currently emitting times for).  `None` until the first date is
-    /// entered.
-    current_date_end: Option<NaiveDateTime>,
-    /// Set to `true` the first time we successfully consume a result from
-    /// `date_iter`.  Until then we must NOT call `date_iter.update_cursor`,
-    /// because the iterator is already pre-positioned before the starting date
-    /// and advancing it would make `NextNth(n)` skip the first eligible period.
-    date_iter_started: bool,
-    /// Cursor to use when advancing the date iterator to the next period.
-    /// Stored as `actual_date 23:59:59` (the *unadjusted* date) rather than
-    /// `observed_date 23:59:59`, so that business-day adjustments that push
-    /// the observed date into the next month do not cause that month's natural
-    /// occurrence to be skipped.  For `Single` results actual == observed, so
-    /// there is no behavioural difference in the common case.
-    next_period_cursor: Option<NaiveDateTime>,
-    /// Moving cursor — the last datetime returned (or the initial value).
-    dtm: NaiveDateTime,
-    /// The very first cursor value supplied by the caller, used to restrict
-    /// which times are eligible on the first day.
-    initial_dtm: NaiveDateTime,
-    start: Option<NaiveDateTime>,
-    end: Option<NaiveDateTime>,
-    index: usize,
-}
+/// Behaves like [`SpecIterator`] in UTC, with default options.
+#[derive(Debug)]
+pub struct NaiveSpecIterator<BDP: BizDayProcessor>(SpecIterator<Utc, BDP>);
 
-impl<BDP: BizDayProcessor + Clone> NaiveSpecIterator<BDP> {
+impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
     /// Iterate occurrences strictly after `dtm`.
-    pub(crate) fn new_after(
-        date_spec: &str,
-        time_spec: &str,
-        bdp: BDP,
-        dtm: NaiveDateTime,
-    ) -> Result<Self> {
-        // Position the date iterator just before today so that today is a
-        // candidate on the first `date_iter.next()` call. Cadences (`nY`,
-        // `nM`) stay aligned to `dtm` itself, not to the day before.
-        let before_today = dtm.date().and_hms_opt(0, 0, 0).unwrap() - Duration::seconds(1);
-        Ok(Self {
-            date_iter: DateNaiveSpecIterator::new_after_anchored(
-                date_spec,
-                bdp,
-                before_today,
-                dtm,
-            )?,
-            time_spec: time_spec.parse()?,
-            current_date_end: None,
-            date_iter_started: false,
-            next_period_cursor: None,
-            dtm,
-            initial_dtm: dtm,
-            start: None,
-            end: None,
-            index: 0,
-        })
+    pub fn new_after(spec: &str, bdp: BDP, dtm: NaiveDateTime) -> Result<Self> {
+        SpecIteratorBuilder::new_after(spec, bdp, dtm.and_utc()).build().map(Self)
     }
 
-    /// Include `start` as the first result, then iterate forward.
-    pub(crate) fn new_with_start(
-        date_spec: &str,
-        time_spec: &str,
-        bdp: BDP,
-        start: NaiveDateTime,
-    ) -> Result<Self> {
-        let before_today = start.date().and_hms_opt(0, 0, 0).unwrap() - Duration::seconds(1);
-        Ok(Self {
-            date_iter: DateNaiveSpecIterator::new_after_anchored(
-                date_spec,
-                bdp,
-                before_today,
-                start,
-            )?,
-            time_spec: time_spec.parse()?,
-            current_date_end: None,
-            date_iter_started: false,
-            next_period_cursor: None,
-            dtm: start,
-            initial_dtm: start,
-            start: Some(start),
-            end: None,
-            index: 0,
-        })
+    /// Yield `start` first, then iterate forward.
+    pub fn new_with_start(spec: &str, bdp: BDP, start: NaiveDateTime) -> Result<Self> {
+        SpecIteratorBuilder::new_with_start(spec, bdp, start.and_utc()).build().map(Self)
     }
 
-    /// Like [`new_with_start`] but stop at `end` (inclusive).
-    pub(crate) fn new_with_end(
-        date_spec: &str,
-        time_spec: &str,
-        bdp: BDP,
-        start: NaiveDateTime,
-        end: NaiveDateTime,
-    ) -> Result<Self> {
-        let mut s = Self::new_with_start(date_spec, time_spec, bdp, start)?;
-        s.end = Some(end);
-        Ok(s)
+    /// Like [`new_with_start`](Self::new_with_start), up to and including `end`.
+    pub fn new_with_end(spec: &str, bdp: BDP, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
+        SpecIteratorBuilder::new_with_start(spec, bdp, start.and_utc())
+            .with_end(end.and_utc())
+            .build()
+            .map(Self)
     }
 }
 
-impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
+impl<BDP: BizDayProcessor> FallibleIterator for NaiveSpecIterator<BDP> {
     type Item = Occurrence<NaiveDateTime>;
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        // ── global end guard ──────────────────────────────────────────────
-        if let Some(end) = self.end {
-            if self.dtm >= end {
-                return Ok(None);
-            }
-        }
-
-        // ── index-0 start passthrough ─────────────────────────────────────
-        if self.index == 0 {
-            if let Some(start) = self.start {
-                if self.dtm <= start {
-                    self.dtm = start;
-                    self.index += 1;
-                    self.current_date_end = Some(midnight_next(start.date()));
-                    // Prime the date iterator so that when the time loop for
-                    // this day exhausts, update_cursor advances past start's
-                    // date rather than re-emitting it from midnight.
-                    self.date_iter_started = true;
-                    self.next_period_cursor = Some(start.date().and_hms_opt(23, 59, 59).unwrap());
-                    return Ok(Some(Occurrence::Exact(start)));
-                }
-            }
-        }
-
-        // ── try next time within the current date window ──────────────────
-        if let Some(date_end) = self.current_date_end {
-            let candidate = apply_time_spec(&self.time_spec, self.dtm);
-            if candidate > self.dtm && candidate < date_end {
-                if let Some(end) = self.end {
-                    if candidate > end {
-                        return Ok(None);
-                    }
-                }
-                self.dtm = candidate;
-                self.index += 1;
-                return Ok(Some(Occurrence::Exact(candidate)));
-            }
-        }
-
-        // ── advance to the next valid date ────────────────────────────────
-        //
-        // Prefer `next_period_cursor` (actual_date 23:59:59) over the plain
-        // `date_end - 1s` fallback.  When a business-day adjustment pushes the
-        // observed date into the next month (AdjustedLater), using the *actual*
-        // (unadjusted) date as the cursor keeps the month-counting epoch correct
-        // and prevents that next month's natural occurrence from being skipped.
-        //
-        // We only call update_cursor once the date iterator has been used at
-        // least once (`date_iter_started`).  Before that first use the iterator
-        // is already pre-positioned before the starting date; advancing it
-        // further would cause `NextNth(n)` month cycles to skip the first
-        // eligible period (e.g. May → June when we want May 31).
-        if self.date_iter_started {
-            if let Some(cursor) = self.next_period_cursor.take() {
-                self.date_iter.update_cursor(cursor);
-            } else if let Some(date_end) = self.current_date_end {
-                self.date_iter
-                    .update_cursor(date_end - Duration::seconds(1));
-            }
-        }
-
-        loop {
-            let next_date = self.date_iter.next()?;
-            let Some(next_date) = next_date else {
-                return Ok(None);
-            };
-            self.date_iter_started = true;
-
-            let observed_date = next_date.observed().date();
-            let date_midnight = observed_date.and_hms_opt(0, 0, 0).unwrap();
-            let date_end = midnight_next(observed_date);
-
-            // Always use the *actual* (unadjusted) date for the next period
-            // cursor so that month-boundary adjustments don't shift the epoch.
-            let next_period_cursor = next_date.actual().date().and_hms_opt(23, 59, 59).unwrap();
-
-            // On the very first date entry (current_date_end is still None),
-            // if the date returned is today, use `initial_dtm` as the time
-            // cursor so we only emit times *after* the caller's starting point.
-            // On any subsequent date, start from midnight to get all times.
-            let is_initial_day =
-                self.current_date_end.is_none() && observed_date == self.initial_dtm.date();
-
-            // On the initial day use the caller's cursor so only times *after*
-            // the start are emitted.  On any subsequent date, step back by the
-            // spec's natural driving period from midnight and apply once: this
-            // lands exactly at midnight when midnight is a natural boundary
-            // (e.g. `1H:00:00` → back 1 h → 23:00 → +1 h → 00:00).  If the
-            // candidate falls before midnight (e.g. an `At`-only spec such as
-            // `11:00:00` gives `11:00` of the previous day), fall back to
-            // applying the spec from midnight itself.
-            let first_time = if is_initial_day {
-                apply_time_spec(&self.time_spec, self.initial_dtm)
-            } else {
-                let delta = spec_delta(&self.time_spec);
-                let candidate = apply_time_spec(&self.time_spec, date_midnight - delta);
-                if candidate >= date_midnight {
-                    candidate
-                } else {
-                    apply_time_spec(&self.time_spec, date_midnight)
-                }
-            };
-
-            let is_valid = if is_initial_day {
-                // Must be strictly after the initial cursor and within today
-                first_time > self.initial_dtm && first_time < date_end
-            } else {
-                // Must be within the day window (>= midnight is guaranteed;
-                // only fail if Every-cycle pushes past midnight)
-                first_time < date_end
-            };
-
-            if !is_valid {
-                // No eligible time on this date — skip it and try the next.
-                self.current_date_end = Some(date_end);
-                self.date_iter.update_cursor(next_period_cursor);
-                continue;
-            }
-
-            // End-of-range check
-            if let Some(end) = self.end {
-                if first_time > end {
-                    return Ok(None);
-                }
-            }
-
-            self.current_date_end = Some(date_end);
-            self.next_period_cursor = Some(next_period_cursor);
-            self.dtm = first_time;
-            self.index += 1;
-
-            // Propagate business-day adjustment info from the date result.
-            let result = match next_date {
-                Occurrence::Exact(_) => Occurrence::Exact(first_time),
-                Occurrence::AdjustedEarlier(actual, _) => Occurrence::AdjustedEarlier(
-                    actual.date().and_time(first_time.time()),
-                    first_time,
-                ),
-                Occurrence::AdjustedLater(actual, _) => {
-                    Occurrence::AdjustedLater(actual.date().and_time(first_time.time()), first_time)
-                }
-            };
-
-            return Ok(Some(result));
-        }
+        Ok(self.0.next()?.map(|occ| match occ {
+            Occurrence::Exact(t) => Occurrence::Exact(t.naive_utc()),
+            Occurrence::AdjustedLater(a, o) => Occurrence::AdjustedLater(a.naive_utc(), o.naive_utc()),
+            Occurrence::AdjustedEarlier(a, o) => Occurrence::AdjustedEarlier(a.naive_utc(), o.naive_utc()),
+        }))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Return the natural step size of the driving component of a time spec.
-///
-/// Used by the new-day first-tick calculation: stepping back one period from
-/// midnight and applying the spec once produces midnight itself whenever
-/// midnight is a natural boundary of the cycle.
-///
-/// Rules (coarsest-to-finest, first match wins):
-/// - `Every(n)` on seconds  → `n` seconds
-/// - `ForEach` on seconds (and no `Every` anywhere) → 1 second
-/// - `Every(n)` on minutes  → `n` minutes
-/// - `ForEach` on minutes (and no `Every` anywhere) → 1 minute
-/// - `Every(n)` on hours    → `n` hours
-/// - `ForEach` on hours (and no `Every` anywhere) → 1 hour
-/// - All `At` / `AsIs`      → 1 second (safe fallback; result will be < midnight,
-///                             triggering the `apply_time_spec(midnight)` fallback)
-fn spec_delta(spec: &TimeSpec) -> Duration {
-    let has_any_every = matches!(spec.seconds, TimeCycle::Every(_))
-        || matches!(spec.minutes, TimeCycle::Every(_))
-        || matches!(spec.hours, TimeCycle::Every(_));
-
-    match &spec.seconds {
-        TimeCycle::Every(n) => Duration::seconds(*n as i64),
-        TimeCycle::ForEach if !has_any_every => Duration::seconds(1),
-        _ => match &spec.minutes {
-            TimeCycle::Every(n) => Duration::minutes(*n as i64),
-            TimeCycle::ForEach if !has_any_every => Duration::minutes(1),
-            _ => match &spec.hours {
-                TimeCycle::Every(n) => Duration::hours(*n as i64),
-                TimeCycle::ForEach if !has_any_every => Duration::hours(1),
-                _ => Duration::seconds(1),
-            },
-        },
-    }
-}
-
-/// Returns midnight at the start of the *next* day after `date`.
-fn midnight_next(date: NaiveDate) -> NaiveDateTime {
-    (date + Duration::days(1)).and_hms_opt(0, 0, 0).unwrap()
-}
-

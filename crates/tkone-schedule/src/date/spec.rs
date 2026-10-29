@@ -10,7 +10,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1, multispace0},
-    combinator::{all_consuming, map_res, opt, recognize, value},
+    combinator::{all_consuming, map_res, opt, value},
     error::Error as NomError,
     multi::separated_list1,
     sequence::{delimited, pair, preceded},
@@ -21,8 +21,8 @@ use nom::{
 ///
 /// | Variant | Spec token | Description |
 /// |---------|------------|-------------|
-/// | `AsIs` | `_` | Keep the current value unchanged |
-/// | `ForEach` | `YY` / `MM` | Every value in sequence |
+/// | `AsIs` | — | Not produced by the parser; behaves like `ForEach` |
+/// | `ForEach` | `YY` / `MM` / `_` | Every value in sequence |
 /// | `Values(set)` | `2025` / `[2024,2025]` | Restricted to an explicit set |
 /// | `NextNth(n)` | `1Y` / `3M` | Advance by *n* units, aligned to the iterator start |
 ///
@@ -40,10 +40,11 @@ use nom::{
 /// ```
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Default)]
 pub enum Cycle {
-    /// Keep the current year/month value unchanged (`_`).
+    /// Not produced by the parser (`_` parses as [`Cycle::ForEach`]). If
+    /// constructed directly, behaves like `ForEach`.
     #[default]
     AsIs,
-    /// Visit every year (`YY`) or every month (`MM`).
+    /// Visit every year (`YY`) or every month (`MM`); `_` is a synonym.
     ForEach,
     /// Restrict to the given set of years or months.
     ///
@@ -58,8 +59,8 @@ pub enum Cycle {
 ///
 /// | Variant | Spec tokens | Description |
 /// |---------|-------------|-------------|
-/// | `AsIs` | `_` | Keep current day |
-/// | `ForEach` | `DD` | Every calendar day |
+/// | `AsIs` | — | Not produced by the parser; the anchor's day of month |
+/// | `ForEach` | `DD` / `_` | Every calendar day |
 /// | `NextNth(n, Regular)` | `7D` | Advance *n* calendar days |
 /// | `NextNth(n, BizDay)` | `5BD` | Advance *n* business days |
 /// | `NextNth(n, WeekDay)` | `3WD` | Advance *n* weekdays (Mon–Fri) |
@@ -74,10 +75,12 @@ pub enum Cycle {
 /// | `OnWeekDays{wd, Ending(n)}` | `FRI#2L` | *n*th-to-last occurrence of weekday |
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum DayCycle {
-    /// Keep the current day-of-month unchanged (`_`).
+    /// Not produced by the parser (`_` parses as [`DayCycle::ForEach`]). If
+    /// constructed directly, the iterator's start day of month, clamped to
+    /// the last day of shorter months.
     #[default]
     AsIs,
-    /// Every calendar day (`DD`).
+    /// Every calendar day (`DD`); `_` is a synonym.
     ForEach,
     /// Advance by *n* calendar days / business days / weekdays from the current
     /// position. See [`NextNthDayOption`] for the step variant.
@@ -411,7 +414,7 @@ impl FromStr for Spec {
 ///
 /// # Errors
 ///
-/// Returns [`crate::prelude::Error::ParseError`] if the string does not
+/// Returns [`Error::InvalidDateSpec`](crate::Error::InvalidDateSpec) if the string does not
 /// conform to the spec grammar.
 ///
 /// # Examples
@@ -494,21 +497,23 @@ fn parse_cycle_single_val(input: &'_ str) -> Res<'_, Cycle> {
     Ok((input, Cycle::Values(BTreeSet::from([num]))))
 }
 
-fn parse_cycle_foreach(input: &'_ str) -> Res<'_, Cycle> {
-    value(Cycle::ForEach, alt((tag("YY"), tag("MM"), tag("_")))).parse(input)
+/// `<n><unit>`: `nY` in the year slot, `nM` in the month slot.
+fn parse_cycle_next_nth<'a>(input: &'a str, unit: char) -> Res<'a, Cycle> {
+    let (input, num) = parse_u32(input)?;
+    let (input, _) = char(unit).parse(input)?;
+    Ok((input, Cycle::NextNth(num)))
 }
 
-fn parse_cycle_next_nth(input: &'_ str) -> Res<'_, Cycle> {
-    let (input, num) = parse_u32(input)?;
-    let (input, _) = alt((tag("Y"), tag("M"))).parse(input)?;
-    Ok((input, Cycle::NextNth(num)))
+/// `_` is accepted as a synonym of `YY` / `MM` (every year / month).
+fn parse_cycle_foreach<'a>(input: &'a str, wildcard: &'static str) -> Res<'a, Cycle> {
+    value(Cycle::ForEach, alt((tag(wildcard), tag("_")))).parse(input)
 }
 
 fn parse_year_cycle(input: &'_ str) -> Res<'_, Cycle> {
     alt((
         parse_cycle_vals,
-        parse_cycle_foreach,
-        parse_cycle_next_nth,
+        |i| parse_cycle_foreach(i, "YY"),
+        |i| parse_cycle_next_nth(i, 'Y'),
         parse_cycle_single_val,
     ))
     .parse(input)
@@ -517,8 +522,8 @@ fn parse_year_cycle(input: &'_ str) -> Res<'_, Cycle> {
 fn parse_month_cycle(input: &'_ str) -> Res<'_, Cycle> {
     alt((
         parse_cycle_vals,
-        parse_cycle_foreach,
-        parse_cycle_next_nth,
+        |i| parse_cycle_foreach(i, "MM"),
+        |i| parse_cycle_next_nth(i, 'M'),
         parse_cycle_single_val,
     ))
     .parse(input)
@@ -594,18 +599,17 @@ fn parse_day_weekday_complex(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, wd) = parse_weekday_enum(input)?;
     let (input, _) = char('#').parse(input)?;
 
-    let (input, opt_str) = recognize(pair(opt(digit1), opt(char('L')))).parse(input)?;
+    // `#L`, `#n` or `#nL`; `n` must fit a u8 (range-checked in `validate`).
+    let (input, (num, last)) = alt((
+        value((None, true), char('L')),
+        pair(map_res(digit1, str::parse::<u8>).map(Some), opt(char('L')).map(|l| l.is_some())),
+    ))
+    .parse(input)?;
 
-    let option = match opt_str {
-        "L" => WeekdayOption::Ending(None),
-        s if s.ends_with('L') => {
-            let num = s.trim_end_matches('L').parse::<u8>().unwrap_or(1);
-            WeekdayOption::Ending(Some(num))
-        }
-        s => {
-            let num = s.parse::<u8>().unwrap_or(1);
-            WeekdayOption::Starting(Some(num))
-        }
+    let option = match (num, last) {
+        (None, _) => WeekdayOption::Ending(None),
+        (Some(n), true) => WeekdayOption::Ending(Some(n)),
+        (Some(n), false) => WeekdayOption::Starting(Some(n)),
     };
 
     Ok((
@@ -682,37 +686,20 @@ fn parse_day_cycle(input: &'_ str) -> Res<'_, DayCycle> {
 
 fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
     let (input, _) = char('~').parse(input)?;
-    let (input, code) = alt((
-        tag("PW"),
-        tag("NW"),
-        tag("PB"),
-        tag("NB"),
-        tag("B"),
-        tag("W"),
-        recognize(pair(opt(digit1), alt((tag("P"), tag("N"))))),
+    alt((
+        value(BizDayAdjustment::Weekday(Direction::Prev), tag("PW")),
+        value(BizDayAdjustment::Weekday(Direction::Next), tag("NW")),
+        value(BizDayAdjustment::BizDay(Direction::Prev), tag("PB")),
+        value(BizDayAdjustment::BizDay(Direction::Next), tag("NB")),
+        value(BizDayAdjustment::BizDay(Direction::Nearest), tag("B")),
+        value(BizDayAdjustment::Weekday(Direction::Nearest), tag("W")),
+        // `~nP` / `~nN`; a bare `~P` / `~N` means 1
+        pair(opt(parse_u32), alt((char('P'), char('N')))).map(|(n, dir)| {
+            let n = n.unwrap_or(1);
+            if dir == 'P' { BizDayAdjustment::Prev(n) } else { BizDayAdjustment::Next(n) }
+        }),
     ))
-    .parse(input)?;
-
-    let adj = match code {
-        "PW" => BizDayAdjustment::Weekday(Direction::Prev),
-        "NW" => BizDayAdjustment::Weekday(Direction::Next),
-        "PB" => BizDayAdjustment::BizDay(Direction::Prev),
-        "NB" => BizDayAdjustment::BizDay(Direction::Next),
-        "W" => BizDayAdjustment::Weekday(Direction::Nearest),
-        "B" => BizDayAdjustment::BizDay(Direction::Nearest),
-        
-        s if s.ends_with("P") => {
-            let n = s.trim_end_matches("P").parse().unwrap_or(1);
-            BizDayAdjustment::Prev(n)
-        }
-        s if s.ends_with("N") => {
-            let n = s.trim_end_matches("N").parse().unwrap_or(1);
-            BizDayAdjustment::Next(n)
-        }
-        _ => BizDayAdjustment::NA,
-    };
-
-    Ok((input, adj))
+    .parse(input)
 }
 
 #[cfg(test)]

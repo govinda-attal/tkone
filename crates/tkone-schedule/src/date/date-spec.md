@@ -75,6 +75,8 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 - **`AdjustedLater(actual, observed)`** — `actual` is the computed date; `observed` is a later adjusted date.
 - **`AdjustedEarlier(actual, observed)`** — `actual` is the computed date; `observed` is an earlier adjusted date.
 
+`AdjustedLater` is also used when the computed time falls in a DST gap — see [Daylight saving time](#daylight-saving-time).
+
 ---
 
 ## Examples
@@ -876,13 +878,33 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 ## Behaviour Notes
 
-### Month-constrained relative day specs (`YY-01-4D`, `1Y-[01,06]-7D`)
+### How a spec is evaluated
 
-When the month is a fixed set (`Values`) and the day is relative (`NextNth`), the N-day sequence **restarts from day 1** of each new month period. This contrasts with the unconstrained case (`YY-MM-7D`) where the step rolls transparently across month boundaries.
+The year and month rules pick the **eligible months**; the day rule picks dates inside them.
+
+- **Calendar day rules** (`DD`, `15`, `[01,15]`, `L`, `31L/N/O`, `MON`, `[MON,FRI]`, `WED#2`, `FRI#L`) list the matching days of each eligible month; the next occurrence is the first one after the previous.
+- **Step day rules** (`nD`, `nBD`, `nWD`) advance from the previous occurrence — see the two notes below.
+
+`nY` / `nM` cadences are aligned to the iterator's start (or the `new_after` cursor).
+
+### Step rules inside eligible months (`YY-01-4D`, `1Y-[01,06]-7D`, `2Y-MM-7D`)
+
+Without an `nM` cadence, the step **keeps rolling while it lands in an eligible month**, and **restarts at the 1st** of the next eligible month once it leaves them. For `nBD` / `nWD` the restart is the first business day / weekday on or after the 1st.
+
+- `YY-MM-7D` — every month is eligible, so the step rolls forever.
+- `YY-01-4D` — Jan 29 + 4 = Feb 2 is not eligible → restart on Jan 1 of the next year.
+- `YY-[01,02]-7D` — Jan 29 + 7 = Feb 5 is eligible → keeps rolling through February.
+- `2Y-MM-7D` — rolls through every month of an eligible year, restarts on Jan 1 of the next one.
+
+### Year cadence with every month (`2Y-MM-15`, `1Y-MM-L`)
+
+`nY` with `MM` visits **every month** of each eligible year: `2Y-MM-15` from 2024-10-15 gives Oct 15, Nov 15, Dec 15 2024, then Jan 15 2026, …
 
 ### Combined year+month clocks (`1Y-3M-15`)
 
-When both year and month use `NextNth`, each tick advances **both** counters simultaneously. Month overflow carries into the year counter, which is why `1Y-3M-15` produces Dec→Mar with a 2-year gap rather than 1-year.
+When both year and month use `NextNth`, each tick advances **both** counters simultaneously: `nY-mM` is a single cadence of `12·n + m` months. Month overflow carries into the year counter, which is why `1Y-3M-15` produces Dec→Mar with a 2-year gap rather than 1-year.
+
+The same clock applies to step rules under an `nM` cadence: `YY-1M-7D` adds 1 month **and** 7 days per tick (Dec 1 → Jan 8 → Feb 15 → …).
 
 ### `DDL` vs `DDN` vs `DDO`
 
@@ -898,6 +920,24 @@ All three handle the case where the target day does not exist in a given month:
 
 Specs with finite year sets (`2025-MM-01`, `[2025,2026]-MM-15`) terminate once all valid dates are exhausted. Callers should handle `None` from the iterator.
 
+Out-of-range values (month `13`, day `32`, `WD#6`, step `0M` / `0D`) are rejected when parsing with `Error::InvalidDateSpec`. Specs that parse but can never match (`YY-02-30`) return `Error::IteratorNotConverged` after a bounded search instead of looping forever.
+
+### Daylight saving time
+
+Dates keep the time-of-day of the start (or `new_after` cursor) and are mapped to real instants with the builder's `DstPolicy` (`Adjust` by default).
+
+When that local time does not exist, it moves later by the length of the gap and the result is `AdjustedLater(label, shifted)`. `label` shows the date as scheduled, with the offset in force before the gap; `shifted` shows it in the real offset. Both are the same instant, so `actual == observed` when compared. Results always strictly increase: a later date that lands on the same instant is dropped.
+
+Pacific/Apia skipped 2011-12-30 entirely (−10:00 → +14:00). `YY-MM-DD` from 2011-12-29:
+
+```text
+Exact(2011-12-29 00:00 -10:00)
+AdjustedLater(2011-12-30 00:00 -10:00, 2011-12-31 00:00 +14:00)   ← Dec 31's own occurrence is dropped
+Exact(2012-01-01 00:00 +14:00)
+```
+
+With `DstPolicy::Strict` the skipped date returns `Error::AmbiguousLocalTime` instead.
+
 ### Start-date inclusivity
 
 When constructed with `new_with_start`, the start date itself is always returned as the **first result** if it satisfies the spec (or is equal to the provided start). Use `new_after` to begin strictly after a given point in time.
@@ -910,41 +950,11 @@ The following combinations are either silently broken, produce no results, or lo
 
 ---
 
-### `nY-MM-DD` — ForEach month with a multi-year cadence
-
-**Examples:** `2Y-MM-15`, `3Y-MM-01`
-
-**Problem:** The `MM` (every-month) component relies on the month iterator to self-advance. However, `find_next_in_month_cycle` for `ForEach` always returns the current date unchanged — it never independently steps the month forward. As a result, **only the start month is ever visited** after the first year-tick. The spec silently degenerates to `nY-{start_month}-DD`.
-
-```text
-Intended:  2Y-MM-15  starting 2025-03-15  →  2025-03-15, 2025-04-15, 2025-05-15 … 2027-03-15 …
-Actual:    2Y-MM-15  starting 2025-03-15  →  2025-03-15  (only March, every 2 years)
-```
-
-**Safe alternative:** Use `YY-nM-DD` to tick monthly every year. For example, `YY-1M-15` visits the 15th of every month in every year.
-
----
-
-### `1Y-MM-DD` — Every-year + ForEach month (partial issue)
-
-**Examples:** `1Y-MM-01`, `1Y-MM-15`
-
-**Problem:** This is the same root issue as above but with `n=1`. The month wildcard does not self-advance — the iteration stays pinned to the start month. For monthly-in-every-year behaviour, the correct spec is `YY-1M-DD` (which sets the year to `AsIs` and the month to `NextNth(1)`).
-
-```text
-Intended:  1Y-MM-15  →  every 15th of every month
-Actual:    1Y-MM-15  →  every 15th of the start month only, annually
-```
-
-**Safe alternative:** `YY-1M-15` (year wildcard, 1-month cadence).
-
----
-
 ### `YY-02-30`, `YY-02-31` — Fixed day that never exists in February (without overflow suffix)
 
 **Examples:** `YY-02-30`, `YY-02-31`
 
-**Problem:** Without an overflow suffix (`L`, `N`, or `O`), day 30 or 31 in February (`02`) simply does not exist. The iterator will find no valid date in any February and will either skip February silently or, in pathological cases, loop without progress.
+**Problem:** Without an overflow suffix (`L`, `N`, or `O`), day 30 or 31 in February (`02`) simply does not exist. `YY-02-30` can never match, so the iterator returns `Error::IteratorNotConverged` after a bounded search.
 
 ```text
 YY-02-30  →  no February result (day 30 never exists)
@@ -963,7 +973,7 @@ YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb
 
 **Example:** `YY-MM-MON#0`
 
-**Problem:** There is no "zeroth" weekday occurrence in any month. The `Starting(occurrence)` arm uses `occurrence.unwrap_or(1)` for `None`, but an explicit `0` is passed through as-is. `to_months_weekday` will never find a match, causing the iterator to loop until it hits the internal 10 000-iteration safety limit and then return an error.
+**Problem:** There is no "zeroth" weekday occurrence in any month, and no month has a sixth. `WD#0` and `WD#6` (and `WD#0L`, `WD#6L`) are rejected when parsing with `Error::InvalidDateSpec`.
 
 **Safe alternative:** Use `WD#1` (first occurrence) or `WD#L` (last occurrence).
 
@@ -995,10 +1005,8 @@ YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb
 
 | Combination | Problem | Safe alternative |
 |-------------|---------|-----------------|
-| `nY-MM-DD` (n > 1) | Month wildcard never self-advances; only start month visited | `YY-nM-DD` |
-| `1Y-MM-DD` | Same as above for n=1 | `YY-1M-DD` |
-| `YY-02-30` / `YY-02-31` | Day never exists in February | `YY-02-L` or `YY-02-28L` |
+| `YY-02-30` / `YY-02-31` | Day never exists in February; `IteratorNotConverged` | `YY-02-L` or `YY-02-28L` |
 | `YY-MM-31` (no suffix) | Silently skips short months | `YY-MM-31L` (clamp) |
-| `WD#0` | No 0th occurrence; loops to limit | `WD#1` or `WD#L` |
+| `WD#0`, `WD#6` | Occurrence never exists; rejected at parse time | `WD#1` or `WD#L` |
 | `YYYY-02-29` (non-leap year) | Zero results | `YYYY-02-28L` |
 | `[YYYY,...]-02-29` (mix) | Non-leap years silently skipped | Filter list to leap years only |

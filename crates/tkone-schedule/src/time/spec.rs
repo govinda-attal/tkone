@@ -135,14 +135,28 @@ fn parse_spec(input: &str) -> Result<Spec> {
         preceded(char(':'), parse_minutes_cycle),
         preceded(char(':'), parse_seconds_cycle),
     );
-    match all_consuming(full_parser).parse(input) {
-        Ok((_, (hours, minutes, seconds))) => Ok(Spec {
+    let spec = match all_consuming(full_parser).parse(input) {
+        Ok((_, (hours, minutes, seconds))) => Spec {
             hours,
             minutes,
             seconds,
-        }),
-        Err(_) => Err(Error::InvalidTimeSpec(format!("failed to parse: {input}"))),
+        },
+        Err(_) => return Err(Error::InvalidTimeSpec(format!("failed to parse: {input}"))),
+    };
+    for (cycle, max, unit) in [
+        (&spec.hours, 23, "hour"),
+        (&spec.minutes, 59, "minute"),
+        (&spec.seconds, 59, "second"),
+    ] {
+        if let Cycle::At(n) = cycle {
+            if *n > max {
+                return Err(Error::InvalidTimeSpec(format!(
+                    "{input}: {unit} {n} is out of range 0-{max}"
+                )));
+            }
+        }
     }
+    Ok(spec)
 }
 
 impl FromStr for Spec {
@@ -228,6 +242,16 @@ mod tests {
         assert!("0H:00:00".parse::<Spec>().is_err(), "0H should be a parse error");
         assert!("HH:0M:00".parse::<Spec>().is_err(), "0M should be a parse error");
         assert!("HH:MM:0S".parse::<Spec>().is_err(), "0S should be a parse error");
+    }
+
+    #[test]
+    fn test_out_of_range_at_is_parse_error() {
+        for s in ["24:00:00", "25:00:00", "HH:60:00", "HH:MM:60", "99:99:99"] {
+            assert!(s.parse::<Spec>().is_err(), "{s} should be a parse error");
+        }
+        for s in ["23:59:59", "00:00:00", "25H:00:00", "HH:90M:00"] {
+            assert!(s.parse::<Spec>().is_ok(), "{s} should parse");
+        }
     }
 
     #[test]

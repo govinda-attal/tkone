@@ -430,15 +430,49 @@ pub fn parse_spec(input: &str) -> Result<Spec> {
         opt(preceded(multispace0, parse_adjustment)),
     );
 
-    match all_consuming(full_parser).parse(input) {
-        Ok((_, (years, months, days, biz_day_adj))) => Ok(Spec {
+    let spec = match all_consuming(full_parser).parse(input) {
+        Ok((_, (years, months, days, biz_day_adj))) => Spec {
             years,
             months,
             days,
             biz_day_adj,
-        }),
-        Err(_) => Err(Error::InvalidDateSpec(format!("failed to parse: {input}"))),
+        },
+        Err(_) => return Err(Error::InvalidDateSpec(format!("failed to parse: {input}"))),
+    };
+    validate(&spec).map_err(|reason| Error::InvalidDateSpec(format!("{input}: {reason}")))?;
+    Ok(spec)
+}
+
+/// Reject values the grammar accepts but no calendar can satisfy.
+fn validate(spec: &Spec) -> core::result::Result<(), String> {
+    if let Cycle::NextNth(0) = spec.years {
+        return Err("year step must be at least 1".into());
     }
+    match &spec.months {
+        Cycle::NextNth(0) => return Err("month step must be at least 1".into()),
+        Cycle::Values(months) => {
+            if let Some(m) = months.iter().find(|m| !(1..=12).contains(*m)) {
+                return Err(format!("month {m} is out of range 1-12"));
+            }
+        }
+        _ => {}
+    }
+    match &spec.days {
+        DayCycle::NextNth(0, _) => return Err("day step must be at least 1".into()),
+        DayCycle::OnDays { days, .. } => {
+            if let Some(d) = days.iter().find(|d| !(1..=31).contains(*d)) {
+                return Err(format!("day {d} is out of range 1-31"));
+            }
+        }
+        DayCycle::OnWeekDays {
+            option: WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)),
+            ..
+        } if !(1..=5).contains(n) => {
+            return Err(format!("weekday occurrence #{n} is out of range 1-5"));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 // --- Helpers ---

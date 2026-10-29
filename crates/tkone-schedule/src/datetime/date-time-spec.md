@@ -31,6 +31,9 @@ YY-MM-DDT_:_:_      →  date="YY-MM-DD"   time="_:_:_"       ✓ _: recognised
 The date iterator advances through valid calendar dates according to the date spec — monthly,
 weekly, every-N-days, weekday-of-month, etc. It knows nothing about time.
 
+`nY` / `nM` cadences are aligned to the date of the start (or the `new_after` cursor): `YY-3M-01T09:00:00`
+started on 2025-01-01 visits Jan, Apr, Jul, Oct.
+
 ### 2. Time spec provides intra-day ticks
 
 For each valid calendar date, the time spec is applied repeatedly within the half-open window
@@ -93,6 +96,10 @@ The `actual` date in the result is always the *calendar* date before adjustment;
 component is set to the same value as the observed tick's time (not a "natural" time for the
 pre-adjustment date).
 
+DST gaps are different: **any** tick whose local time does not exist is reported as
+`AdjustedLater(label, shifted)`, not just the first tick of the day. See
+[Daylight Saving Time](#daylight-saving-time).
+
 ---
 
 ## Result Types
@@ -104,6 +111,7 @@ Same three variants as the date iterator, now carrying `NaiveDateTime` or `DateT
 | `Single(dt)` | No adjustment; `dt` is exactly as computed. |
 | `AdjustedLater(actual, observed)` | `actual` is the natural date + time; `observed` is the adjusted (later) date + same time. Only on the first tick of an adjusted date. |
 | `AdjustedEarlier(actual, observed)` | As above but the adjustment moved the date earlier. |
+| `AdjustedLater(label, shifted)` | The tick's local time falls in a DST gap; see [Daylight Saving Time](#daylight-saving-time). Any tick. |
 
 ---
 
@@ -570,6 +578,40 @@ not required.
 
 ---
 
+## Daylight Saving Time
+
+Times are computed on the wall clock (like cron), then mapped to real instants with the
+builder's `DstPolicy` (`Adjust` by default).
+
+- **Gap (spring-forward, skipped day):** a tick whose local time does not exist moves later by the
+  length of the gap and is reported as `AdjustedLater(label, shifted)`. `label` shows the time as
+  scheduled, with the offset in force before the gap; `shifted` shows it in the real offset. Both
+  are the **same instant**, so `actual == observed` when compared.
+- **Overlap (fall-back):** the repeated hour is visited once, at the earlier offset.
+- **No duplicates:** results strictly increase. A tick that lands on (or before) the previous
+  result's instant is dropped.
+- **`DstPolicy::Strict`:** any gap or overlap returns `Error::AmbiguousLocalTime` instead.
+- Steps are always wall-clock here; `IntervalMode::Elapsed` is only available on the time iterator.
+
+### `YY-MM-DDT1H:00:00` in America/New_York on 2025-03-09
+
+```text
+Exact(00:00 -05:00)
+Exact(01:00 -05:00)
+AdjustedLater(02:00 -05:00, 03:00 -04:00)   ← 02:00 does not exist
+Exact(04:00 -04:00)                         ← the real 03:00 is dropped as a duplicate
+```
+
+### `YY-MM-DDT02:30:00` across the same change
+
+```text
+2025-03-08  Exact(02:30 -05:00)
+2025-03-09  AdjustedLater(02:30 -05:00, 03:30 -04:00)
+2025-03-10  Exact(02:30 -04:00)
+```
+
+---
+
 ## Semantically Surprising Combinations
 
 The following combinations are valid and parse without error but produce behaviour that
@@ -754,6 +796,7 @@ All-`At` time specs remain most useful when:
 | Sub-daily start mid-day (`new_with_start`) | Initial date has fewer ticks than later dates | Expected; document for callers |
 | `_:_:_` or `_`-component with date gaps | Time resets to midnight / cursor values on each new date; initial time not preserved | Use `At` components (`hh:mm:ss`) for constant time |
 | Adjusted date + sub-daily time spec | Only the first tick is `AdjustedLater`; rest are `Single` | Scan first tick per date for adjustment metadata |
+| Tick inside a DST gap | `AdjustedLater(label, shifted)` with `actual == observed` as instants; a colliding later tick is dropped | Compare `naive_local()` to see the shift; use `DstPolicy::Strict` to fail instead |
 | `AdjustedLater.actual.time()` | Same as observed time; not the "natural" time for the unadjusted date | Treat `actual.date()` as the logical date; `observed` as the real datetime |
 | `new_after` with past daily time | Entire initial date silently skipped | Use `new_with_start` if start inclusivity is required |
 | `1H:MM:SS` / `HH:nM:SS` with non-daily date spec | Carry `:mm:ss` resets on each new date to derived-from-cursor values | Use pinned `At` for minutes/seconds (`1H:30:00`) |

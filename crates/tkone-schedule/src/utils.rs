@@ -1,45 +1,12 @@
-use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Weekday};
+use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone, Weekday};
 
 use crate::{prelude::*, DstPolicy, Occurrence};
 
-impl<Tz: TimeZone> From<W<(Tz, NaiveDateTime)>> for DateTime<Tz> {
-    fn from(W((tz, dtm)): W<(Tz, NaiveDateTime)>) -> Self {
-        match tz.from_local_datetime(&dtm) {
-            chrono::LocalResult::None => {
-                // the positive timezone transition (spring forward)
-                tz.from_local_datetime(&(dtm.clone() + Duration::hours(1)))
-                    .latest()
-                    .unwrap()
-            }
-            chrono::LocalResult::Single(dtm) => dtm,
-            chrono::LocalResult::Ambiguous(_, _) => {
-                // the negative timezone transition (fallback)
-                tz.from_local_datetime(&dtm).earliest().unwrap()
-            }
-        }
-    }
-}
-
-impl<Tz: TimeZone> From<W<(Tz, Occurrence<NaiveDateTime>)>> for Occurrence<DateTime<Tz>> {
-    fn from(W((tz, next)): W<(Tz, Occurrence<NaiveDateTime>)>) -> Self {
-        match next {
-            Occurrence::Exact(dtm) => Occurrence::Exact(DateTime::<Tz>::from(W((tz, dtm)))),
-            Occurrence::AdjustedEarlier(actual, adjusted) => Occurrence::AdjustedEarlier(
-                DateTime::<Tz>::from(W((tz.clone(), actual))),
-                DateTime::<Tz>::from(W((tz, adjusted))),
-            ),
-            Occurrence::AdjustedLater(actual, adjusted) => Occurrence::AdjustedLater(
-                DateTime::<Tz>::from(W((tz.clone(), actual))),
-                DateTime::<Tz>::from(W((tz, adjusted))),
-            ),
-        }
-    }
-}
-
 /// Convert a `NaiveDateTime` to `DateTime<Tz>` according to `policy`.
 ///
-/// - `Adjust` (default): silently resolves gaps (spring-forward) and overlaps
-///   (fall-back) using the same heuristics as the internal `From<W<…>>` impl.
+/// - `Adjust` (default): a time inside a gap (spring-forward) moves later by
+///   the length of the gap; a time inside an overlap (fall-back) takes the
+///   earlier offset.
 /// - `Strict`: returns [`Error::AmbiguousLocalTime`] for any non-unique mapping.
 pub(crate) fn resolve_local<Tz: TimeZone>(
     tz: &Tz,
@@ -49,16 +16,13 @@ pub(crate) fn resolve_local<Tz: TimeZone>(
     match tz.from_local_datetime(&dtm) {
         LocalResult::Single(dt) => Ok(dt),
         LocalResult::None => match policy {
-            DstPolicy::Adjust => Ok(tz
-                .from_local_datetime(&(dtm + Duration::hours(1)))
-                .latest()
-                .unwrap()),
+            DstPolicy::Adjust => Ok(gap_shift(tz, dtm)?.1),
             DstPolicy::Strict => Err(Error::AmbiguousLocalTime(format!(
                 "{dtm} does not exist in timezone (DST spring-forward gap)"
             ))),
         },
-        LocalResult::Ambiguous(_, _) => match policy {
-            DstPolicy::Adjust => Ok(tz.from_local_datetime(&dtm).earliest().unwrap()),
+        LocalResult::Ambiguous(earliest, _) => match policy {
+            DstPolicy::Adjust => Ok(earliest),
             DstPolicy::Strict => Err(Error::AmbiguousLocalTime(format!(
                 "{dtm} is ambiguous in timezone (DST fall-back overlap)"
             ))),
@@ -66,33 +30,60 @@ pub(crate) fn resolve_local<Tz: TimeZone>(
     }
 }
 
+/// For a local time inside a gap, return `(label, shifted)`:
+///
+/// - `label` shows the wall-clock time as scheduled, carrying the offset in
+///   force just before the gap (e.g. `2011-12-30 00:00 -10:00` in Apia).
+/// - `shifted` is the same instant expressed in the timezone's real offset,
+///   i.e. the time moved later by the length of the gap (`02:30` across a
+///   1-hour spring-forward becomes `03:30`).
+///
+/// Both denote one instant, so they compare equal. Works for gaps of any
+/// length, including whole skipped days.
+fn gap_shift<Tz: TimeZone>(tz: &Tz, dtm: NaiveDateTime) -> Result<(DateTime<Tz>, DateTime<Tz>)> {
+    // Walk back to the last local time before the gap; 15-minute steps over
+    // 48 hours cover every gap in the tz database.
+    let before = (1..=48 * 4)
+        .find_map(|k| tz.from_local_datetime(&(dtm - Duration::minutes(15 * k))).latest())
+        .ok_or_else(|| {
+            Error::AmbiguousLocalTime(format!(
+                "{dtm} does not exist in timezone and no offset precedes the gap"
+            ))
+        })?;
+    let offset = before.offset().clone();
+    let utc = dtm - Duration::seconds(i64::from(offset.fix().local_minus_utc()));
+    Ok((DateTime::from_naive_utc_and_offset(utc, offset), tz.from_utc_datetime(&utc)))
+}
+
 /// Convert a `Occurrence<NaiveDateTime>` to `Occurrence<DateTime<Tz>>`,
 /// applying `policy` to each embedded naive datetime.
+///
+/// Under [`DstPolicy::Adjust`], an actual time inside a DST gap keeps its
+/// wall-clock label while the observed time moves past the gap, so an
+/// otherwise exact occurrence is reported as `AdjustedLater(label, shifted)`.
 pub(crate) fn next_result_to_tz<Tz: TimeZone>(
     tz: &Tz,
     next: Occurrence<NaiveDateTime>,
     policy: DstPolicy,
 ) -> Result<Occurrence<DateTime<Tz>>> {
-    match next {
-        Occurrence::Exact(dtm) => Ok(Occurrence::Exact(resolve_local(tz, dtm, policy)?)),
-        Occurrence::AdjustedEarlier(actual, adjusted) => Ok(Occurrence::AdjustedEarlier(
-            resolve_local(tz, actual, policy)?,
-            resolve_local(tz, adjusted, policy)?,
-        )),
-        Occurrence::AdjustedLater(actual, adjusted) => Ok(Occurrence::AdjustedLater(
-            resolve_local(tz, actual, policy)?,
-            resolve_local(tz, adjusted, policy)?,
-        )),
-    }
+    let (actual, observed) = next.as_tuple();
+    let observed_at = resolve_local(tz, *observed, policy)?;
+    let actual_at = match (policy, tz.from_local_datetime(actual)) {
+        (DstPolicy::Adjust, LocalResult::None) => gap_shift(tz, *actual)?.0,
+        _ => resolve_local(tz, *actual, policy)?,
+    };
+    Ok(match next {
+        Occurrence::Exact(_) if actual_at.naive_local() != observed_at.naive_local() => {
+            Occurrence::AdjustedLater(actual_at, observed_at)
+        }
+        Occurrence::Exact(_) => Occurrence::Exact(observed_at),
+        Occurrence::AdjustedLater(..) => Occurrence::AdjustedLater(actual_at, observed_at),
+        Occurrence::AdjustedEarlier(..) => Occurrence::AdjustedEarlier(actual_at, observed_at),
+    })
 }
 
 pub trait DateLikeUtils: Datelike {
     fn to_last_day_of_month(&self) -> Self;
-    fn to_first_day_of_month(&self) -> Self;
-    fn to_weekday(&self, weekday: &Weekday) -> Self;
-    fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self>;
-    fn to_prev_weekday(&self, weekday: &Weekday) -> Self;
-    fn to_months_last_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self>;
 }
 
 impl DateLikeUtils for NaiveDate {
@@ -102,118 +93,11 @@ impl DateLikeUtils for NaiveDate {
             .pred_opt()
             .unwrap()
     }
-
-    fn to_first_day_of_month(&self) -> Self {
-        NaiveDate::from_ymd_opt(self.year(), self.month(), 1).unwrap()
-    }
-
-    fn to_weekday(&self, weekday: &Weekday) -> Self {
-        let mut date = self.clone();
-        while date.weekday() != *weekday {
-            date = date.succ_opt().unwrap();
-        }
-        date
-    }
-
-    fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
-        let mut date = self.to_first_day_of_month().to_weekday(weekday);
-        for _ in 1..occurence {
-            date = date + Duration::days(7);
-        }
-        if self.month() == date.month() {
-            Some(date)
-        } else {
-            None
-        }
-    }
-
-    fn to_prev_weekday(&self, weekday: &Weekday) -> Self {
-        let mut date = self.clone();
-        while date.weekday() != *weekday {
-            date = date.pred_opt().unwrap();
-        }
-        date
-    }
-
-    fn to_months_last_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
-        let mut date = self.to_last_day_of_month().to_prev_weekday(weekday);
-        for _ in 1..occurence {
-            date = date - Duration::days(7);
-        }
-        if self.month() == date.month() {
-            Some(date)
-        } else {
-            None
-        }
-    }
 }
 
 impl DateLikeUtils for NaiveDateTime {
     fn to_last_day_of_month(&self) -> Self {
         NaiveDateTime::new(self.date().to_last_day_of_month(), self.time())
-    }
-
-    fn to_first_day_of_month(&self) -> Self {
-        NaiveDateTime::new(self.date().to_first_day_of_month(), self.time())
-    }
-
-    fn to_weekday(&self, weekday: &Weekday) -> Self {
-        NaiveDateTime::new(self.date().to_weekday(weekday), self.time())
-    }
-
-    fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
-        self.date()
-            .to_months_weekday(weekday, occurence)
-            .map(|date| NaiveDateTime::new(date, self.time()))
-    }
-
-    fn to_prev_weekday(&self, weekday: &Weekday) -> Self {
-        NaiveDateTime::new(self.date().to_prev_weekday(weekday), self.time())
-    }
-
-    fn to_months_last_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
-        self.date()
-            .to_months_last_weekday(weekday, occurence)
-            .map(|date| NaiveDateTime::new(date, self.time()))
-    }
-}
-
-impl<Tz: TimeZone> DateLikeUtils for DateTime<Tz> {
-    fn to_last_day_of_month(&self) -> Self {
-        DateTime::<Tz>::from(W((
-            self.timezone(),
-            self.naive_local().to_last_day_of_month(),
-        )))
-    }
-
-    fn to_first_day_of_month(&self) -> Self {
-        DateTime::<Tz>::from(W((
-            self.timezone(),
-            self.naive_local().to_first_day_of_month(),
-        )))
-    }
-
-    fn to_weekday(&self, weekday: &Weekday) -> Self {
-        DateTime::<Tz>::from(W((self.timezone(), self.naive_local().to_weekday(weekday))))
-    }
-
-    fn to_months_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
-        self.naive_local()
-            .to_months_weekday(weekday, occurence)
-            .map(|date| DateTime::<Tz>::from(W((self.timezone(), date))))
-    }
-
-    fn to_prev_weekday(&self, weekday: &Weekday) -> Self {
-        DateTime::<Tz>::from(W((
-            self.timezone(),
-            self.naive_local().to_prev_weekday(weekday),
-        )))
-    }
-
-    fn to_months_last_weekday(&self, weekday: &Weekday, occurence: u8) -> Option<Self> {
-        self.naive_local()
-            .to_months_last_weekday(weekday, occurence)
-            .map(|date| DateTime::<Tz>::from(W((self.timezone(), date))))
     }
 }
 
@@ -238,5 +122,41 @@ impl Ord for WeekdayStartingMonday {
 impl PartialOrd for WeekdayStartingMonday {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn local(y: i32, m: u32, d: u32, h: u32, mi: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(h, mi, 0).unwrap()
+    }
+
+    #[test]
+    fn test_gap_moves_later_by_gap_length() {
+        let cases = [
+            // 1h spring-forward
+            (chrono_tz::America::New_York, local(2025, 3, 9, 2, 30), "2025-03-09T03:30:00-04:00"),
+            // 30-minute gap
+            (chrono_tz::Australia::Lord_Howe, local(2025, 10, 5, 2, 15), "2025-10-05T02:45:00+11:00"),
+            // 2h gap
+            (chrono_tz::Antarctica::Troll, local(2025, 3, 30, 1, 30), "2025-03-30T03:30:00+02:00"),
+            // whole skipped day
+            (chrono_tz::Pacific::Apia, local(2011, 12, 30, 0, 0), "2011-12-31T00:00:00+14:00"),
+        ];
+        for (tz, dtm, expected) in cases {
+            let resolved = resolve_local(&tz, dtm, DstPolicy::Adjust).unwrap();
+            assert_eq!(resolved.to_rfc3339(), expected, "{tz} {dtm}");
+            assert!(resolve_local(&tz, dtm, DstPolicy::Strict).is_err(), "{tz} {dtm}");
+        }
+    }
+
+    #[test]
+    fn test_overlap_takes_earliest_offset() {
+        let tz = chrono_tz::America::New_York;
+        let resolved = resolve_local(&tz, local(2025, 11, 2, 1, 30), DstPolicy::Adjust).unwrap();
+        assert_eq!(resolved.to_rfc3339(), "2025-11-02T01:30:00-04:00");
     }
 }

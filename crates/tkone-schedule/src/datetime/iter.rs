@@ -2,10 +2,10 @@ use super::spec::Spec;
 use crate::biz_day::BizDayProcessor;
 use crate::date::NaiveSpecIterator as DateNaiveSpecIterator;
 use crate::prelude::*;
-use crate::time::{Cycle as TimeCycle, Spec as TimeSpec};
+use crate::time::{apply as apply_time_spec, Cycle as TimeCycle, Spec as TimeSpec};
 use crate::utils::next_result_to_tz;
 use crate::{DstPolicy, Occurrence};
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
 use std::marker::PhantomData;
 use std::str::FromStr;
@@ -104,6 +104,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
         let spec = Spec::from_str(&self.spec)?;
         Ok(SpecIterator {
             tz: self.dtm.timezone(),
+            last: None,
             dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_after(
                 &spec.date_spec,
@@ -181,6 +182,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         let start = self.start.0;
         Ok(SpecIterator {
             tz: start.timezone(),
+            last: None,
             dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_start(
                 &spec.date_spec,
@@ -201,13 +203,14 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
         let start = self.start.0;
         Ok(SpecIterator {
             tz: start.timezone(),
+            last: None,
             dst_policy: self.dst_policy,
             naive_spec_iter: NaiveSpecIterator::new_with_end(
                 &spec.date_spec,
                 &spec.time_spec,
                 self.bd_processor,
                 start.naive_local(),
-                self.end.0.naive_local(),
+                self.end.0.with_timezone(&start.timezone()).naive_local(),
             )?,
         })
     }
@@ -225,6 +228,10 @@ pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     tz: Tz,
     dst_policy: DstPolicy,
     naive_spec_iter: NaiveSpecIterator<BDP>,
+    /// Actual instant of the last yielded occurrence. Distinct local times
+    /// can map to one instant across a DST gap; later duplicates are dropped
+    /// so instants strictly increase.
+    last: Option<DateTime<Tz>>,
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor + Clone> FallibleIterator for SpecIterator<Tz, BDP> {
@@ -232,11 +239,17 @@ impl<Tz: TimeZone, BDP: BizDayProcessor + Clone> FallibleIterator for SpecIterat
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        let next = self.naive_spec_iter.next()?;
-        let Some(next) = next else {
-            return Ok(None);
-        };
-        Ok(Some(next_result_to_tz(&self.tz, next, self.dst_policy)?))
+        loop {
+            let Some(next) = self.naive_spec_iter.next()? else {
+                return Ok(None);
+            };
+            let next = next_result_to_tz(&self.tz, next, self.dst_policy)?;
+            if self.last.as_ref().is_some_and(|last| next.actual() <= last) {
+                continue;
+            }
+            self.last = Some(next.actual().clone());
+            return Ok(Some(next));
+        }
     }
 }
 
@@ -294,10 +307,16 @@ impl<BDP: BizDayProcessor + Clone> NaiveSpecIterator<BDP> {
         dtm: NaiveDateTime,
     ) -> Result<Self> {
         // Position the date iterator just before today so that today is a
-        // candidate on the first `date_iter.next()` call.
+        // candidate on the first `date_iter.next()` call. Cadences (`nY`,
+        // `nM`) stay aligned to `dtm` itself, not to the day before.
         let before_today = dtm.date().and_hms_opt(0, 0, 0).unwrap() - Duration::seconds(1);
         Ok(Self {
-            date_iter: DateNaiveSpecIterator::new_after(date_spec, bdp, before_today)?,
+            date_iter: DateNaiveSpecIterator::new_after_anchored(
+                date_spec,
+                bdp,
+                before_today,
+                dtm,
+            )?,
             time_spec: time_spec.parse()?,
             current_date_end: None,
             date_iter_started: false,
@@ -319,7 +338,12 @@ impl<BDP: BizDayProcessor + Clone> NaiveSpecIterator<BDP> {
     ) -> Result<Self> {
         let before_today = start.date().and_hms_opt(0, 0, 0).unwrap() - Duration::seconds(1);
         Ok(Self {
-            date_iter: DateNaiveSpecIterator::new_after(date_spec, bdp, before_today)?,
+            date_iter: DateNaiveSpecIterator::new_after_anchored(
+                date_spec,
+                bdp,
+                before_today,
+                start,
+            )?,
             time_spec: time_spec.parse()?,
             current_date_end: None,
             date_iter_started: false,
@@ -502,40 +526,6 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Apply a time spec to a cursor datetime, mirroring the time iterator logic:
-/// seconds → minutes → hours, each either `At(n)` (set absolute) or `Every(n)` (add delta).
-/// `ForEach` on the finest non-At component acts as `Every(1)` when no explicit `Every` exists.
-/// `AsIs` is a true no-op — it always carries the current value.
-fn apply_time_spec(spec: &TimeSpec, cursor: NaiveDateTime) -> NaiveDateTime {
-    let has_any_every = matches!(spec.seconds, TimeCycle::Every(_))
-        || matches!(spec.minutes, TimeCycle::Every(_))
-        || matches!(spec.hours, TimeCycle::Every(_));
-    let seconds_is_foreach = matches!(spec.seconds, TimeCycle::ForEach);
-    let minutes_is_foreach = matches!(spec.minutes, TimeCycle::ForEach);
-
-    let next = cursor;
-    let next = match &spec.seconds {
-        TimeCycle::At(s) => next.with_second(*s as u32).unwrap(),
-        TimeCycle::Every(s) => next + Duration::seconds(*s as i64),
-        TimeCycle::ForEach if !has_any_every => next + Duration::seconds(1),
-        TimeCycle::ForEach | TimeCycle::AsIs => next,
-    };
-    let next = match &spec.minutes {
-        TimeCycle::At(m) => next.with_minute(*m as u32).unwrap(),
-        TimeCycle::Every(m) => next + Duration::minutes(*m as i64),
-        TimeCycle::ForEach if !has_any_every && !seconds_is_foreach => next + Duration::minutes(1),
-        TimeCycle::ForEach | TimeCycle::AsIs => next,
-    };
-    match &spec.hours {
-        TimeCycle::At(h) => next.with_hour(*h as u32).unwrap(),
-        TimeCycle::Every(h) => next + Duration::hours(*h as i64),
-        TimeCycle::ForEach if !has_any_every && !seconds_is_foreach && !minutes_is_foreach => {
-            next + Duration::hours(1)
-        }
-        TimeCycle::ForEach | TimeCycle::AsIs => next,
-    }
-}
 
 /// Return the natural step size of the driving component of a time spec.
 ///

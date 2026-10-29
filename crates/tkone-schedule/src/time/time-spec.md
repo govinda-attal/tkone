@@ -620,11 +620,93 @@ First result is 10:00:00, not 09:30:00. Subsequent results are 11:00:00, 12:00:0
 
 ### Day boundary crossing
 
-The iterator works on naive datetimes using `chrono::Duration` arithmetic. Day boundaries are crossed transparently. There is no built-in "end of day" concept; the spec produces results indefinitely until an end boundary is set or the caller stops consuming results.
+The spec is applied to the wall-clock (local) time using `chrono::Duration` arithmetic. Day boundaries are crossed transparently. There is no built-in "end of day" concept; the spec produces results indefinitely until an end boundary is set or the caller stops consuming results. For what happens across DST changes, see [Daylight Saving Time](#daylight-saving-time).
 
 ### Component application order
 
 On each tick: **seconds → minutes → hours**, in that fixed order. The seconds transform runs before the minutes transform, so a spec like `HH:30M:05` sets seconds to :05 first and then adds 30 minutes.
+
+---
+
+## Daylight Saving Time
+
+The timezone-aware `SpecIterator` applies the spec to the wall clock and then maps each result
+to a real instant. Two settings control what happens across a DST change:
+
+- **`IntervalMode`** (`.with_interval_mode(…)`) — whether steps (`nH`, `nM`, `nS`, or a driving
+  `HH`/`MM`/`SS`) move the **wall clock** (`WallClock`, the default, like cron) or measure
+  **real elapsed time** (`Elapsed`).
+- **`DstPolicy`** (`.with_dst_policy(…)`) — what `WallClock` does with a time that does not exist
+  (spring-forward gap) or exists twice (fall-back overlap). `Adjust` (default) moves a gap time
+  later by the length of the gap and takes the earlier of two overlapping times; `Strict` returns
+  `Error::AmbiguousLocalTime` instead.
+
+Results always **strictly increase**: when two wall-clock times map to the same instant (or a
+later one maps to an earlier instant), the later one is dropped.
+
+### `1H:00:00` in America/New_York from 00:00
+
+**Spring-forward, 2025-03-09** (02:00 → 03:00):
+
+```text
+WallClock              Elapsed
+00:00 EST              00:00 EST
+01:00 EST              01:00 EST
+03:00 EDT  ← 02:00     03:00 EDT
+04:00 EDT              04:00 EDT
+```
+
+With `WallClock`, 02:00 does not exist and moves to 03:00; the real 03:00 then lands on the
+same instant and is dropped, so there is no duplicate.
+
+**Fall-back, 2025-11-02** (02:00 → 01:00):
+
+```text
+WallClock              Elapsed
+00:00 EDT              00:00 EDT
+01:00 EDT              01:00 EDT
+02:00 EST              01:00 EST  ← repeated hour
+03:00 EST              02:00 EST
+```
+
+`WallClock` visits the repeated 01:00 once; `Elapsed` runs every real hour.
+
+### Longer steps drift in `Elapsed`
+
+`6H:00:00` from 06:00 on 2025-03-08 (New York):
+
+```text
+WallClock                  Elapsed
+2025-03-08 06:00 EST       2025-03-08 06:00 EST
+2025-03-08 12:00 EST       2025-03-08 12:00 EST
+2025-03-08 18:00 EST       2025-03-08 18:00 EST
+2025-03-09 00:00 EST       2025-03-09 00:00 EST
+2025-03-09 06:00 EDT       2025-03-09 07:00 EDT  ← stays an hour off the clock
+```
+
+`WallClock` keeps the schedule on the clock (the 00:00 → 06:00 step is 5 real hours); `Elapsed`
+keeps every step at 6 real hours.
+
+### Sub-hourly steps across a gap
+
+`HH:30M:00` from 01:00 on 2025-03-09 (New York, `WallClock`):
+
+```text
+01:00 EST
+01:30 EST
+03:00 EDT  ← 02:00
+03:30 EDT  ← 02:30
+04:00 EDT     (the real 03:00 and 03:30 are dropped as duplicates)
+```
+
+### Notes
+
+- In `Elapsed` mode stepped times never fall in a gap, so `DstPolicy` does not apply to them.
+  Fixed fields (`09`, `30`) are read in the UTC offset of the previous occurrence.
+- `IntervalMode` is available on the time iterator only. Combined datetime specs always use
+  wall-clock steps.
+- The time iterator yields plain `DateTime<Tz>` values, so it cannot mark a time as shifted. The
+  date and datetime iterators report shifted times as `AdjustedLater`; see the datetime spec.
 
 ---
 
@@ -677,6 +759,15 @@ in the nom parser.  These specs cannot be constructed.
 
 ---
 
+### Out-of-range fixed values
+
+**Examples:** `24:00:00`, `HH:60:00`, `HH:MM:60`
+
+**Result:** **Parse error** (`Error::InvalidTimeSpec`). Fixed hours must be 0–23, fixed minutes
+and seconds 0–59. Steps are not limited this way: `25H:00:00` and `HH:90M:00` are valid.
+
+---
+
 ### Summary table
 
 | Combination | Behaviour | Notes |
@@ -684,3 +775,4 @@ in the nom parser.  These specs cannot be constructed.
 | `hh:mm:ss` (as iterator) | Terminates via no-progress guard: one tick with `new_with_start`, zero with `new_after` | Preferred as `end_spec` only |
 | `_:_:_` (as pure time iterator) | Terminates via no-progress guard: one tick with `new_with_start`, zero with `new_after` | Use in combined datetime spec only |
 | `0H:00:00` / `HH:0M:00` / `HH:MM:0S` | **Parse error** — rejected at construction | Use n ≥ 1 (enforced by parser) |
+| `24:00:00` / `HH:60:00` / `HH:MM:60` | **Parse error** — fixed value out of range | Hours 0–23, minutes and seconds 0–59 |

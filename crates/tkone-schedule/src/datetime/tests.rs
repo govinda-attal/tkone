@@ -816,3 +816,61 @@ fn test_ny_timezone_last_biz_day_11am() {
         assert_eq!(r.observed().hour(), 11, "all ticks should be at 11:00 NY time");
     }
 }
+
+// ---------------------------------------------------------------------------
+// DST gaps: shifted times are reported, never duplicated (America/New_York)
+// ---------------------------------------------------------------------------
+
+fn occurrence_strings(results: &[NR<chrono_tz::Tz>]) -> Vec<String> {
+    results
+        .iter()
+        .map(|r| match r {
+            Occurrence::Exact(t) => t.to_rfc3339(),
+            Occurrence::AdjustedLater(a, o) => format!("{} -> {}", a.to_rfc3339(), o.to_rfc3339()),
+            Occurrence::AdjustedEarlier(a, o) => format!("{} <- {}", a.to_rfc3339(), o.to_rfc3339()),
+        })
+        .collect()
+}
+
+#[test]
+fn test_dst_gap_hourly_reports_shift_and_drops_duplicate() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 3, 9, 0, 0, 0).unwrap();
+    let results: Vec<NR<_>> =
+        SpecIteratorBuilder::new_with_start("YY-MM-DDT1H:00:00", WeekendSkipper::new(), start)
+            .build()
+            .unwrap()
+            .take(4)
+            .collect()
+            .unwrap();
+    assert_eq!(
+        occurrence_strings(&results),
+        [
+            "2025-03-09T00:00:00-05:00",
+            "2025-03-09T01:00:00-05:00",
+            "2025-03-09T02:00:00-05:00 -> 2025-03-09T03:00:00-04:00",
+            "2025-03-09T04:00:00-04:00",
+        ]
+    );
+}
+
+#[test]
+fn test_dst_gap_daily_fixed_time_reports_shift() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 3, 8, 2, 30, 0).unwrap();
+    let results: Vec<NR<_>> =
+        SpecIteratorBuilder::new_with_start("YY-MM-DDT02:30:00", WeekendSkipper::new(), start)
+            .build()
+            .unwrap()
+            .take(3)
+            .collect()
+            .unwrap();
+    assert_eq!(
+        occurrence_strings(&results),
+        [
+            "2025-03-08T02:30:00-05:00",
+            "2025-03-09T02:30:00-05:00 -> 2025-03-09T03:30:00-04:00",
+            "2025-03-10T02:30:00-04:00",
+        ]
+    );
+}

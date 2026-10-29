@@ -57,5 +57,6 @@ mod spec;
 mod tests;
 
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
+pub(crate) use iter::apply;
 
 pub use spec::{Cycle, Spec};

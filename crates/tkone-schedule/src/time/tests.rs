@@ -649,3 +649,105 @@ fn test_asis_recurrence() {
         },
     ]);
 }
+
+// ---------------------------------------------------------------------------
+// DST: wall-clock vs elapsed steps (America/New_York)
+// ---------------------------------------------------------------------------
+
+fn rfc3339(
+    spec: &str,
+    start: DateTime<chrono_tz::Tz>,
+    mode: crate::IntervalMode,
+    take: usize,
+) -> Vec<String> {
+    SpecIteratorBuilder::new_with_start(spec, start)
+        .with_interval_mode(mode)
+        .build()
+        .unwrap()
+        .take(take)
+        .map(|d| Ok(d.to_rfc3339()))
+        .collect()
+        .unwrap()
+}
+
+#[test]
+fn test_dst_spring_forward_has_no_duplicates() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 3, 9, 0, 0, 0).unwrap();
+    let expected = [
+        "2025-03-09T00:00:00-05:00",
+        "2025-03-09T01:00:00-05:00",
+        "2025-03-09T03:00:00-04:00",
+        "2025-03-09T04:00:00-04:00",
+    ];
+    for mode in [crate::IntervalMode::WallClock, crate::IntervalMode::Elapsed] {
+        assert_eq!(rfc3339("1H:00:00", start, mode, 4), expected, "{mode:?}");
+    }
+}
+
+#[test]
+fn test_dst_spring_forward_sub_hourly_wall_clock() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 3, 9, 1, 0, 0).unwrap();
+    // 02:00 and 02:30 shift to 03:00 and 03:30; the real 03:00 / 03:30 merge
+    assert_eq!(
+        rfc3339("HH:30M:00", start, crate::IntervalMode::WallClock, 5),
+        [
+            "2025-03-09T01:00:00-05:00",
+            "2025-03-09T01:30:00-05:00",
+            "2025-03-09T03:00:00-04:00",
+            "2025-03-09T03:30:00-04:00",
+            "2025-03-09T04:00:00-04:00",
+        ]
+    );
+}
+
+#[test]
+fn test_dst_fall_back_wall_clock_visits_repeated_hour_once() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 11, 2, 0, 0, 0).unwrap();
+    assert_eq!(
+        rfc3339("1H:00:00", start, crate::IntervalMode::WallClock, 4),
+        [
+            "2025-11-02T00:00:00-04:00",
+            "2025-11-02T01:00:00-04:00",
+            "2025-11-02T02:00:00-05:00",
+            "2025-11-02T03:00:00-05:00",
+        ]
+    );
+}
+
+#[test]
+fn test_dst_fall_back_elapsed_visits_repeated_hour_twice() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 11, 2, 0, 0, 0).unwrap();
+    assert_eq!(
+        rfc3339("1H:00:00", start, crate::IntervalMode::Elapsed, 4),
+        [
+            "2025-11-02T00:00:00-04:00",
+            "2025-11-02T01:00:00-04:00",
+            "2025-11-02T01:00:00-05:00",
+            "2025-11-02T02:00:00-05:00",
+        ]
+    );
+}
+
+/// Over a spring-forward, wall-clock steps stay on the clock while elapsed
+/// steps keep real 6-hour gaps and end up an hour off the clock.
+#[test]
+fn test_dst_long_steps_wall_clock_vs_elapsed() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let start = ny.with_ymd_and_hms(2025, 3, 8, 6, 0, 0).unwrap();
+    let head = [
+        "2025-03-08T06:00:00-05:00",
+        "2025-03-08T12:00:00-05:00",
+        "2025-03-08T18:00:00-05:00",
+        "2025-03-09T00:00:00-05:00",
+    ];
+    let wall = rfc3339("6H:00:00", start, crate::IntervalMode::WallClock, 5);
+    assert_eq!(wall[..4], head);
+    assert_eq!(wall[4], "2025-03-09T06:00:00-04:00");
+    let elapsed = rfc3339("6H:00:00", start, crate::IntervalMode::Elapsed, 5);
+    assert_eq!(elapsed[..4], head);
+    assert_eq!(elapsed[4], "2025-03-09T07:00:00-04:00");
+}

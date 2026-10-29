@@ -45,7 +45,7 @@
 //! *Run `cargo run -p tkone-schedule --example date_recurrence` for a complete program.*
 #![doc = include_str!("date-spec.md")]
 
-mod component;
+mod engine;
 mod iter;
 mod spec;
 

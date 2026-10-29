@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Offset, TimeZone, Timelike, Utc};
 
 use fallible_iterator::FallibleIterator;
 
 use super::spec::{Cycle, Spec};
 use crate::utils::resolve_local;
-use crate::{prelude::*, DstPolicy};
+use crate::{prelude::*, DstPolicy, IntervalMode};
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
@@ -30,6 +30,9 @@ pub struct NotSealed;
 /// After `new_with_start` you may optionally call:
 /// - `.with_end(end)` — bound by an explicit datetime
 /// - `.with_end_spec(end_spec)` — bound by another time spec
+///
+/// Any builder can also take `.with_dst_policy(…)` and `.with_interval_mode(…)`
+/// to control behaviour across DST changes; see [`crate::IntervalMode`].
 pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     timezone: Tz,
     dtm: DateTime<Tz>,
@@ -37,6 +40,7 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     spec: String,
     end: END,
     dst_policy: DstPolicy,
+    interval_mode: IntervalMode,
     marker_sealed: PhantomData<S>,
 }
 
@@ -47,6 +51,15 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
     /// receive [`Error::AmbiguousLocalTime`] instead of silent adjustment.
     pub fn with_dst_policy(mut self, policy: DstPolicy) -> Self {
         self.dst_policy = policy;
+        self
+    }
+
+    /// Choose whether steps (`nH`, `nM`, `nS`) move the wall clock or measure
+    /// elapsed time across DST changes.
+    ///
+    /// Defaults to [`IntervalMode::WallClock`].
+    pub fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
+        self.interval_mode = mode;
         self
     }
 }
@@ -69,12 +82,14 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             spec: spec.to_string(),
             end: NoEnd,
             dst_policy: DstPolicy::default(),
+            interval_mode: IntervalMode::default(),
             marker_sealed: PhantomData,
         }
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)
+        Ok(SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)?
+            .with_interval_mode(self.interval_mode))
     }
 }
 
@@ -92,6 +107,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             spec: spec.to_string(),
             end: NoEnd,
             dst_policy: DstPolicy::default(),
+            interval_mode: IntervalMode::default(),
             marker_sealed: PhantomData,
         }
     }
@@ -110,6 +126,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             spec: self.spec,
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
+            interval_mode: self.interval_mode,
             marker_sealed: PhantomData,
         }
     }
@@ -129,24 +146,30 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             spec: self.spec,
             end: EndSpec(end_spec.into()),
             dst_policy: self.dst_policy,
+            interval_mode: self.interval_mode,
             marker_sealed: PhantomData,
         }
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_with_start(&self.spec, self.dtm, self.dst_policy)
+        Ok(SpecIterator::new_with_start(&self.spec, self.dtm, self.dst_policy)?
+            .with_interval_mode(self.interval_mode))
     }
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_with_end(&self.spec, self.dtm, self.end.0, self.dst_policy)
+        Ok(SpecIterator::new_with_end(&self.spec, self.dtm, self.end.0, self.dst_policy)?
+            .with_interval_mode(self.interval_mode))
     }
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        SpecIterator::new_with_end_spec(&self.spec, self.dtm, &self.end.0, self.dst_policy)
+        Ok(
+            SpecIterator::new_with_end_spec(&self.spec, self.dtm, &self.end.0, self.dst_policy)?
+                .with_interval_mode(self.interval_mode),
+        )
     }
 }
 
@@ -179,54 +202,73 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
 #[derive(Debug, Clone)]
 pub struct SpecIterator<Tz: TimeZone> {
     tz: Tz,
+    spec: Spec,
     dst_policy: DstPolicy,
-    naive_spec_iter: NaiveSpecIterator,
+    interval_mode: IntervalMode,
+    /// Wall-clock position the spec is applied to on the next step.
+    local: NaiveDateTime,
+    /// The last yielded instant, or the initial cursor. Results must be
+    /// strictly later.
+    cursor: DateTime<Tz>,
+    /// Yielded first, then cleared.
+    start: Option<DateTime<Tz>>,
+    end: Option<DateTime<Tz>>,
 }
 
 impl<Tz: TimeZone> SpecIterator<Tz> {
-    fn new_after(spec: &str, dtm: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
+    fn new(
+        spec: &str,
+        cursor: DateTime<Tz>,
+        start: Option<DateTime<Tz>>,
+        end: Option<DateTime<Tz>>,
+        dst_policy: DstPolicy,
+    ) -> Result<Self> {
         Ok(Self {
-            tz: dtm.timezone(),
+            tz: cursor.timezone(),
+            spec: spec.parse()?,
             dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_after(spec, dtm.naive_local())?,
+            interval_mode: IntervalMode::default(),
+            local: cursor.naive_local(),
+            cursor,
+            start,
+            end,
         })
+    }
+
+    fn new_after(spec: &str, dtm: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
+        Self::new(spec, dtm, None, None, dst_policy)
     }
 
     fn new_with_start(spec: &str, start: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
-        Ok(Self {
-            tz: start.timezone(),
-            dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_with_start(spec, start.naive_local())?,
-        })
+        Self::new(spec, start.clone(), Some(start), None, dst_policy)
     }
 
-    fn new_with_end(spec: &str, start: DateTime<Tz>, end: DateTime<Tz>, dst_policy: DstPolicy) -> Result<Self> {
-        Ok(Self {
-            tz: start.timezone(),
-            dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_with_end(
-                spec,
-                start.naive_local(),
-                end.naive_local(),
-            )?,
-        })
+    fn new_with_end(
+        spec: &str,
+        start: DateTime<Tz>,
+        end: DateTime<Tz>,
+        dst_policy: DstPolicy,
+    ) -> Result<Self> {
+        let end = end.with_timezone(&start.timezone());
+        Self::new(spec, start.clone(), Some(start), Some(end), dst_policy)
     }
 
-    fn new_with_end_spec(spec: &str, start: DateTime<Tz>, end_spec: &str, dst_policy: DstPolicy) -> Result<Self> {
-        Ok(Self {
-            tz: start.timezone(),
-            dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_with_end_spec(
-                spec,
-                start.naive_local(),
-                end_spec,
-            )?,
-        })
+    fn new_with_end_spec(
+        spec: &str,
+        start: DateTime<Tz>,
+        end_spec: &str,
+        dst_policy: DstPolicy,
+    ) -> Result<Self> {
+        let end = NaiveSpecIterator::new_after(end_spec, start.naive_local())?
+            .next()?
+            .ok_or(Error::InvalidEndSpec)?;
+        let end = resolve_local(&start.timezone(), end, dst_policy)?;
+        Self::new(spec, start.clone(), Some(start), Some(end), dst_policy)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn update_cursor(&mut self, dtm: DateTime<Tz>) {
-        self.naive_spec_iter.update_cursor(dtm.naive_local());
+    fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
+        self.interval_mode = mode;
+        self
     }
 }
 
@@ -363,40 +405,7 @@ impl FallibleIterator for NaiveSpecIterator {
             }
         }
 
-        let next = self.dtm.clone();
-
-        // When no explicit Every cadence exists, the finest ForEach component
-        // acts as Every(1) for its own unit (seconds > minutes > hours).
-        // Coarser ForEach components carry the value forward unchanged.
-        // AsIs is a true no-op — it always carries the current value.
-        let has_any_every = matches!(self.spec.seconds, Cycle::Every(_))
-            || matches!(self.spec.minutes, Cycle::Every(_))
-            || matches!(self.spec.hours, Cycle::Every(_));
-        let seconds_is_foreach = matches!(self.spec.seconds, Cycle::ForEach);
-        let minutes_is_foreach = matches!(self.spec.minutes, Cycle::ForEach);
-
-        let next = match &self.spec.seconds {
-            Cycle::At(s) => next.with_second(*s as u32).unwrap(),
-            Cycle::Every(s) => next + Duration::seconds(*s as i64),
-            Cycle::ForEach if !has_any_every => next + Duration::seconds(1),
-            Cycle::ForEach | Cycle::AsIs => next,
-        };
-
-        let next = match &self.spec.minutes {
-            Cycle::At(m) => next.with_minute(*m as u32).unwrap(),
-            Cycle::Every(m) => next + Duration::minutes(*m as i64),
-            Cycle::ForEach if !has_any_every && !seconds_is_foreach => next + Duration::minutes(1),
-            Cycle::ForEach | Cycle::AsIs => next,
-        };
-
-        let next = match &self.spec.hours {
-            Cycle::At(h) => next.with_hour(*h as u32).unwrap(),
-            Cycle::Every(h) => next + Duration::hours(*h as i64),
-            Cycle::ForEach if !has_any_every && !seconds_is_foreach && !minutes_is_foreach => {
-                next + Duration::hours(1)
-            }
-            Cycle::ForEach | Cycle::AsIs => next,
-        };
+        let next = apply(&self.spec, self.dtm);
 
         // No-progress guard: all-At and all-AsIs specs produce next == self.dtm,
         // which would loop forever without this check.
@@ -423,11 +432,84 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
-        let item = self.naive_spec_iter.next()?;
-        let Some(next) = item else {
+        if self.end.as_ref().is_some_and(|end| self.cursor >= *end) {
             return Ok(None);
-        };
-        Ok(Some(resolve_local(&self.tz, next, self.dst_policy)?))
+        }
+        if let Some(start) = self.start.take() {
+            return Ok(Some(start));
+        }
+
+        loop {
+            let next = apply(&self.spec, self.local);
+            // No-progress guard: all-At and all-AsIs specs never move.
+            if next <= self.local {
+                return Ok(None);
+            }
+            let instant = match self.interval_mode {
+                IntervalMode::WallClock => {
+                    self.local = next;
+                    resolve_local(&self.tz, next, self.dst_policy)?
+                }
+                IntervalMode::Elapsed => {
+                    // The step was applied in the previous occurrence's
+                    // offset, so it measures real elapsed time.
+                    let offset = self.cursor.offset().fix().local_minus_utc();
+                    let instant = self
+                        .tz
+                        .from_utc_datetime(&(next - Duration::seconds(i64::from(offset))));
+                    self.local = instant.naive_local();
+                    instant
+                }
+            };
+            // Distinct wall-clock times can land on one instant (or go
+            // backwards) across a spring-forward gap; skip them.
+            if instant <= self.cursor {
+                continue;
+            }
+            if let Some(end) = &self.end {
+                if instant > *end {
+                    self.cursor = end.clone();
+                    return Ok(Some(end.clone()));
+                }
+            }
+            self.cursor = instant.clone();
+            return Ok(Some(instant));
+        }
+    }
+}
+
+/// Apply a time spec once to `cursor`: seconds, then minutes, then hours, each
+/// either `At(n)` (set the field) or `Every(n)` (add a duration).
+///
+/// When no `Every` exists, the finest `ForEach` acts as `Every(1)` for its
+/// unit; coarser `ForEach` fields and `AsIs` carry their value unchanged.
+pub(crate) fn apply(spec: &Spec, cursor: NaiveDateTime) -> NaiveDateTime {
+    let has_any_every = matches!(spec.seconds, Cycle::Every(_))
+        || matches!(spec.minutes, Cycle::Every(_))
+        || matches!(spec.hours, Cycle::Every(_));
+    let seconds_is_foreach = matches!(spec.seconds, Cycle::ForEach);
+    let minutes_is_foreach = matches!(spec.minutes, Cycle::ForEach);
+
+    // `At` values are range-checked when the spec is parsed.
+    let next = match &spec.seconds {
+        Cycle::At(s) => cursor.with_second(*s as u32).unwrap(),
+        Cycle::Every(s) => cursor + Duration::seconds(*s as i64),
+        Cycle::ForEach if !has_any_every => cursor + Duration::seconds(1),
+        Cycle::ForEach | Cycle::AsIs => cursor,
+    };
+    let next = match &spec.minutes {
+        Cycle::At(m) => next.with_minute(*m as u32).unwrap(),
+        Cycle::Every(m) => next + Duration::minutes(*m as i64),
+        Cycle::ForEach if !has_any_every && !seconds_is_foreach => next + Duration::minutes(1),
+        Cycle::ForEach | Cycle::AsIs => next,
+    };
+    match &spec.hours {
+        Cycle::At(h) => next.with_hour(*h as u32).unwrap(),
+        Cycle::Every(h) => next + Duration::hours(*h as i64),
+        Cycle::ForEach if !has_any_every && !seconds_is_foreach && !minutes_is_foreach => {
+            next + Duration::hours(1)
+        }
+        Cycle::ForEach | Cycle::AsIs => next,
     }
 }
 

@@ -211,6 +211,33 @@ rule moved the settlement date:
 Use `.observed()` for the settlement date and `.actual()` for the raw
 calendar date.
 
+#### Daylight Saving Time
+
+Schedules are computed on the wall clock (like cron), then mapped to real
+instants in the iterator's timezone.
+
+- **Gaps** (spring-forward, skipped days): a local time that does not exist
+  moves later by the length of the gap. Date and datetime iterators report it
+  as `AdjustedLater(label, shifted)`, where `label` shows the time as
+  scheduled and `shifted` the time it is observed at. Both are the same
+  instant.
+- **Overlaps** (fall-back): the repeated hour is visited once, at the earlier
+  offset.
+- **No duplicates**: results strictly increase; a later result that lands on
+  the same instant is dropped.
+
+[`DstPolicy::Strict`] turns gaps and overlaps into errors instead. On the
+time iterator, [`IntervalMode::Elapsed`] measures steps in real elapsed time
+rather than on the wall clock.
+
+```text
+"1H:00:00" in America/New_York, 2025-03-09 (02:00 → 03:00):
+  00:00 EST, 01:00 EST, 03:00 EDT, 04:00 EDT
+
+"YY-MM-DD" in Pacific/Apia, which skipped 2011-12-30:
+  Exact(Dec 29), AdjustedLater(Dec 30 -10:00, Dec 31 +14:00), Exact(Jan 1)
+```
+
 <!-- cargo-rdme end -->
 
 ## `Occurrence` and business-day adjustments
@@ -220,11 +247,30 @@ unadjusted dates from adjusted ones:
 
 | Variant | Meaning |
 |---------|---------|
-| `Single(t)` | No adjustment; `actual == observed` |
+| `Exact(t)` | No adjustment; `actual == observed` |
 | `AdjustedLater(actual, observed)` | Settlement moved *later* than the raw calendar date |
 | `AdjustedEarlier(actual, observed)` | Settlement moved *earlier* than the raw calendar date |
 
 Use `.observed()` for the settlement date and `.actual()` for the raw calendar date.
+
+`AdjustedLater` is also used when a scheduled local time falls in a DST gap: `actual` shows the
+time as scheduled and `observed` the time it happens at (the same instant). See
+[Daylight saving time](#daylight-saving-time).
+
+## Daylight saving time
+
+Schedules follow the wall clock and never repeat an instant:
+
+| Situation | Default behaviour | Options |
+|-----------|-------------------|---------|
+| Time doesn't exist (spring-forward, skipped day) | Moves later by the gap; reported as `AdjustedLater` in date / datetime results | `DstPolicy::Strict` returns an error |
+| Time exists twice (fall-back) | Visited once, at the earlier offset | `DstPolicy::Strict` returns an error |
+| Two scheduled times land on one instant | The later one is dropped | — |
+| Time-spec steps (`nH`, `nM`, `nS`) | Move the wall clock, like cron | `IntervalMode::Elapsed` on the time iterator measures real elapsed time |
+
+Worked examples for each case: [Time spec](src/time/time-spec.md#daylight-saving-time),
+[DateTime spec](src/datetime/date-time-spec.md#daylight-saving-time),
+[Date spec](src/date/date-spec.md#daylight-saving-time).
 
 ## Spec syntax
 

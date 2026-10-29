@@ -992,3 +992,293 @@ fn test_biz_day_adjustments() {
     ]);
 }
 
+// ---------------------------------------------------------------------------
+// Group 12: Year cadence with every month  (nY-MM-…)
+// ---------------------------------------------------------------------------
+
+/// `nY` with `MM` visits every month of each eligible year, not just the
+/// anchor month.
+#[test]
+fn test_year_cadence_every_month() {
+    let tz = chrono_tz::America::New_York;
+    run_cases(vec![
+        // 15th of every month, every 2 years: 2025 is skipped
+        TestCase {
+            spec: "2Y-MM-15",
+            take: 5,
+            start: tz.with_ymd_and_hms(2024, 10, 15, 0, 0, 0).unwrap(),
+            expected: Ok(vec![
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 10, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 11, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 2, 15, 0, 0, 0).unwrap()),
+            ]),
+        },
+        // Every day, every 2 years
+        TestCase {
+            spec: "2Y-MM-DD",
+            take: 3,
+            start: tz.with_ymd_and_hms(2024, 12, 30, 0, 0, 0).unwrap(),
+            expected: Ok(vec![
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 30, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+            ]),
+        },
+        // Last day of every month, every year
+        TestCase {
+            spec: "1Y-MM-L",
+            take: 3,
+            start: tz.with_ymd_and_hms(2024, 1, 31, 0, 0, 0).unwrap(),
+            expected: Ok(vec![
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 1, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 2, 29, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 3, 31, 0, 0, 0).unwrap()),
+            ]),
+        },
+        // Every Friday, every 2 years
+        TestCase {
+            spec: "2Y-MM-FRI",
+            take: 3,
+            start: tz.with_ymd_and_hms(2024, 12, 27, 0, 0, 0).unwrap(),
+            expected: Ok(vec![
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 27, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 9, 0, 0, 0).unwrap()),
+            ]),
+        },
+        // Rolling 7-day step over every month of each eligible year; restarts
+        // on Jan 1 of the next eligible year
+        TestCase {
+            spec: "2Y-MM-7D",
+            take: 3,
+            start: tz.with_ymd_and_hms(2024, 12, 24, 0, 0, 0).unwrap(),
+            expected: Ok(vec![
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 24, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
+                Occurrence::Exact(tz.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+            ]),
+        },
+    ]);
+}
+
+// ---------------------------------------------------------------------------
+// Group 13: Step rules over adjacent eligible months
+// ---------------------------------------------------------------------------
+
+/// A step keeps rolling while it lands in an eligible month, and restarts at
+/// the 1st only after leaving the eligible months.
+#[test]
+fn test_step_rolls_across_adjacent_eligible_months() {
+    let tz = chrono_tz::America::New_York;
+    run_cases(vec![TestCase {
+        spec: "YY-[01,02]-7D",
+        take: 4,
+        start: tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap(),
+        expected: Ok(vec![
+            Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 29, 0, 0, 0).unwrap()),
+            Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 5, 0, 0, 0).unwrap()),
+            Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap()),
+            Occurrence::Exact(tz.with_ymd_and_hms(2025, 2, 19, 0, 0, 0).unwrap()),
+        ]),
+    }]);
+}
+
+// ---------------------------------------------------------------------------
+// Group 14: Specs that can never match fail instead of looping
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_never_matching_specs_error() {
+    let tz = chrono_tz::America::New_York;
+    let after = tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+    for spec in ["YY-02-30", "[2025,2026]-02-29"] {
+        let mut iter = SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after)
+            .build()
+            .unwrap();
+        let result = iter.next();
+        assert!(
+            matches!(result, Err(Error::IteratorNotConverged) | Ok(None)),
+            "spec: {spec}, got {result:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Group 15: Out-of-range values are rejected when parsing
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_out_of_range_specs_rejected() {
+    for spec in [
+        "YY-13-01",
+        "YY-00-01",
+        "YY-[01,13]-01",
+        "YY-0M-01",
+        "0Y-MM-01",
+        "YY-MM-0D",
+        "YY-MM-0BD",
+        "YY-MM-00",
+        "YY-MM-32",
+        "YY-MM-[01,32]",
+        "YY-MM-WED#0",
+        "YY-MM-WED#6",
+        "YY-MM-WED#6L",
+    ] {
+        assert!(
+            matches!(spec.parse::<crate::date::Spec>(), Err(Error::InvalidDateSpec(_))),
+            "spec should be rejected: {spec}"
+        );
+    }
+    for spec in ["YY-12-31", "YY-MM-31L", "YY-MM-WED#5", "YY-MM-FRI#5L", "YY-1M-1D"] {
+        assert!(spec.parse::<crate::date::Spec>().is_ok(), "spec should parse: {spec}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Group 16: Bounds
+// ---------------------------------------------------------------------------
+
+/// The end spec resolves to its first occurrence *after* start.
+#[test]
+fn test_with_end_spec_resolves_after_start() {
+    let tz = chrono_tz::America::New_York;
+    let iter = SpecIteratorBuilder::new_with_start(
+        "YY-MM-15",
+        WeekendSkipper::new(),
+        tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
+    )
+    .with_end_spec("YY-04-30")
+    .build()
+    .unwrap();
+    let results: Vec<_> = iter.collect().unwrap();
+    // End = 2025-04-30; the 15th of Jan–Apr fall inside it
+    let observed: Vec<_> = results.iter().map(|r| r.observed().date_naive()).collect();
+    assert_eq!(
+        observed,
+        vec![
+            chrono::NaiveDate::from_ymd_opt(2025, 1, 15).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2025, 2, 15).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2025, 3, 15).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2025, 4, 15).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2025, 4, 30).unwrap(),
+        ]
+    );
+}
+
+/// An end given in another timezone bounds by instant, not by wall clock.
+#[test]
+fn test_with_end_in_other_timezone() {
+    let ny: chrono_tz::Tz = chrono_tz::America::New_York;
+    let london: chrono_tz::Tz = chrono_tz::Europe::London;
+    let start = ny.with_ymd_and_hms(2025, 1, 10, 20, 0, 0).unwrap();
+    // 2025-01-13 00:30 London = 2025-01-12 19:30 New York
+    let end = london.with_ymd_and_hms(2025, 1, 13, 0, 30, 0).unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-DD", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
+    let results: Vec<_> = iter.collect().unwrap();
+    assert!(results.iter().all(|r| *r.observed() <= end), "{results:?}");
+    assert_eq!(results.len(), 3, "{results:?}"); // Jan 10, Jan 11, end
+}
+
+// ---------------------------------------------------------------------------
+// Group 17: Weekday adjustments ignore the business-day calendar
+// ---------------------------------------------------------------------------
+
+/// A calendar where Wednesday 2025-01-15 is a holiday.
+#[derive(Debug, Clone)]
+struct HolidayOn15Jan;
+
+impl crate::biz_day::BizDayProcessor for HolidayOn15Jan {
+    fn is_biz_day(&self, dtm: &chrono::NaiveDateTime) -> Result<bool> {
+        let holiday = chrono::NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        Ok(WeekendSkipper::new().is_biz_day(dtm)? && dtm.date() != holiday)
+    }
+    fn find_biz_day(
+        &self,
+        dtm: &chrono::NaiveDateTime,
+        direction: crate::biz_day::Direction,
+    ) -> Result<chrono::NaiveDateTime> {
+        match direction {
+            crate::biz_day::Direction::Prev => self.sub(dtm, 1),
+            _ => self.add(dtm, 1),
+        }
+    }
+    fn add(&self, dtm: &chrono::NaiveDateTime, num: u32) -> Result<chrono::NaiveDateTime> {
+        let mut cur = *dtm;
+        let mut n = 0;
+        while n < num {
+            cur += chrono::Duration::days(1);
+            if self.is_biz_day(&cur)? {
+                n += 1;
+            }
+        }
+        Ok(cur)
+    }
+    fn sub(&self, dtm: &chrono::NaiveDateTime, num: u32) -> Result<chrono::NaiveDateTime> {
+        let mut cur = *dtm;
+        let mut n = 0;
+        while n < num {
+            cur -= chrono::Duration::days(1);
+            if self.is_biz_day(&cur)? {
+                n += 1;
+            }
+        }
+        Ok(cur)
+    }
+}
+
+#[test]
+fn test_weekday_adjustment_ignores_holidays() {
+    let tz = chrono_tz::America::New_York;
+    let after = tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+    let holiday = tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap();
+    let next = |spec| {
+        SpecIteratorBuilder::new_after(spec, HolidayOn15Jan, after)
+            .build()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+    };
+    // ~NW: a weekday holiday is still a weekday
+    assert_eq!(next("YY-MM-15~NW"), Occurrence::Exact(holiday));
+    // ~NB: the holiday is not a business day
+    assert_eq!(
+        next("YY-MM-15~NB"),
+        Occurrence::AdjustedLater(holiday, tz.with_ymd_and_hms(2025, 1, 16, 0, 0, 0).unwrap())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Group 18: A skipped calendar day is reported as shifted, not duplicated
+// ---------------------------------------------------------------------------
+
+/// Pacific/Apia skipped 2011-12-30 entirely (-10:00 → +14:00).
+#[test]
+fn test_skipped_day_reported_as_adjusted_later() {
+    let apia: chrono_tz::Tz = chrono_tz::Pacific::Apia;
+    let start = apia.with_ymd_and_hms(2011, 12, 29, 0, 0, 0).unwrap();
+    let results: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-DD", WeekendSkipper::new(), start)
+        .build()
+        .unwrap()
+        .take(3)
+        .collect()
+        .unwrap();
+
+    assert_eq!(results[0], Occurrence::Exact(start));
+    let Occurrence::AdjustedLater(actual, observed) = &results[1] else {
+        panic!("expected AdjustedLater, got {:?}", results[1]);
+    };
+    assert_eq!(actual.to_rfc3339(), "2011-12-30T00:00:00-10:00");
+    assert_eq!(observed.to_rfc3339(), "2011-12-31T00:00:00+14:00");
+    assert_eq!(actual, observed, "label and shift are the same instant");
+    // Dec 31's own occurrence collides with the shift and is dropped
+    assert_eq!(
+        results[2],
+        Occurrence::Exact(apia.with_ymd_and_hms(2012, 1, 1, 0, 0, 0).unwrap())
+    );
+}

@@ -204,6 +204,33 @@
 //!
 //! Use `.observed()` for the settlement date and `.actual()` for the raw
 //! calendar date.
+//!
+//! ## Daylight Saving Time
+//!
+//! Schedules are computed on the wall clock (like cron), then mapped to real
+//! instants in the iterator's timezone.
+//!
+//! - **Gaps** (spring-forward, skipped days): a local time that does not exist
+//!   moves later by the length of the gap. Date and datetime iterators report it
+//!   as `AdjustedLater(label, shifted)`, where `label` shows the time as
+//!   scheduled and `shifted` the time it is observed at. Both are the same
+//!   instant.
+//! - **Overlaps** (fall-back): the repeated hour is visited once, at the earlier
+//!   offset.
+//! - **No duplicates**: results strictly increase; a later result that lands on
+//!   the same instant is dropped.
+//!
+//! [`DstPolicy::Strict`] turns gaps and overlaps into errors instead. On the
+//! time iterator, [`IntervalMode::Elapsed`] measures steps in real elapsed time
+//! rather than on the wall clock.
+//!
+//! ```text
+//! "1H:00:00" in America/New_York, 2025-03-09 (02:00 → 03:00):
+//!   00:00 EST, 01:00 EST, 03:00 EDT, 04:00 EDT
+//!
+//! "YY-MM-DD" in Pacific/Apia, which skipped 2011-12-30:
+//!   Exact(Dec 29), AdjustedLater(Dec 30 -10:00, Dec 31 +14:00), Exact(Jan 1)
+//! ```
 
 /// The `biz_day` module contains the [`biz_day::BizDayProcessor`] trait and
 /// built-in implementations for business day calculations.
@@ -236,14 +263,48 @@ pub use error::{Error, Result};
 pub enum DstPolicy {
     /// Silently resolve DST edge cases — the default.
     ///
-    /// - **Spring-forward gap** (e.g. `02:30` does not exist): advance one
-    ///   hour and take the latest UTC offset.
+    /// - **Spring-forward gap** (e.g. `02:30` does not exist): move later by
+    ///   the length of the gap (`02:30` → `03:30` across a 1-hour gap). Works
+    ///   for gaps of any length, including skipped days.
     /// - **Fall-back overlap** (e.g. `01:30` is ambiguous): take the earliest
     ///   UTC offset (still in summer time).
     #[default]
     Adjust,
     /// Return [`Error::AmbiguousLocalTime`] instead of silently resolving.
     Strict,
+}
+
+/// How the steps of a time spec (`nH`, `nM`, `nS`, or a driving `HH` / `MM` /
+/// `SS`) are measured across DST changes.
+///
+/// Configure via `.with_interval_mode(…)` on [`time::SpecIteratorBuilder`].
+///
+/// `1H:00:00` in New York from 00:00, across spring-forward (2025-03-09) and
+/// fall-back (2025-11-02):
+///
+/// | Mode | Spring-forward | Fall-back |
+/// |------|----------------|-----------|
+/// | `WallClock` | 00:00, 01:00, 03:00, 04:00 | 00:00, 01:00 EDT, 02:00 EST |
+/// | `Elapsed` | 00:00, 01:00, 03:00, 04:00 | 00:00, 01:00 EDT, 01:00 EST, 02:00 EST |
+///
+/// The difference shows on longer steps: `6H:00:00` from 06:00 on the day
+/// before spring-forward runs 06, 12, 18, 00, 06 in `WallClock` (the last step
+/// is 5 real hours) but 06, 12, 18, 00, **07** in `Elapsed`, staying an hour
+/// off the clock until fall-back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IntervalMode {
+    /// Steps move the wall clock, like cron — the default.
+    ///
+    /// A step into a spring-forward gap is resolved by [`DstPolicy`];
+    /// fall-back's repeated hour is visited once.
+    #[default]
+    WallClock,
+    /// Steps measure real elapsed time: `1H` is always 3600 seconds later.
+    ///
+    /// Stepped times never fall in a gap, so [`DstPolicy`] does not apply to
+    /// them. Fixed fields (`09`, `30`) are read in the UTC offset of the
+    /// previous occurrence.
+    Elapsed,
 }
 
 /// Outcome of a single scheduling step, distinguishing raw calendar dates from
@@ -256,6 +317,16 @@ pub enum DstPolicy {
 /// | `Single(t)` | No adjustment applied | `t` | `t` |
 /// | `AdjustedEarlier(a, o)` | Settlement moved earlier | `a` | `o` (`o < a`) |
 /// | `AdjustedLater(a, o)` | Settlement moved later | `a` | `o` (`o > a`) |
+///
+/// # DST gaps
+///
+/// When the scheduled local time does not exist (spring-forward, or a skipped
+/// day such as 2011-12-30 in Pacific/Apia) and [`DstPolicy::Adjust`] moves it
+/// past the gap, the date and datetime iterators report
+/// `AdjustedLater(label, shifted)`. `label` shows the time as scheduled, with
+/// the offset in force before the gap (`2011-12-30 00:00 -10:00`); `shifted`
+/// shows it in the real offset (`2011-12-31 00:00 +14:00`). Both are the same
+/// instant, so `a == o` here; they differ only on the wall clock.
 ///
 /// # Examples
 ///

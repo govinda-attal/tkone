@@ -56,6 +56,6 @@ mod tests;
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 
 pub use spec::{
-    parse_spec, BizDayAdjustment, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
+    parse_spec, BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
     WeekdayOption,
 };

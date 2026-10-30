@@ -5,15 +5,18 @@
 //! - **Step** — the sum of the `Every` fields (`1H:30M:00` = 90 minutes), or
 //!   one unit of the finest `ForEach` field when there is no `Every`
 //!   (`HH:MM:00` = 1 minute). The unit of that field is the *driver*.
-//! - **Origin** — an anchor time with the fixed (`At`) fields finer than the
-//!   driver applied. Fields finer than the driver that are `ForEach` or `AsIs`
-//!   keep the anchor's value, so `1H:MM:SS` from 09:22:45 carries `:22:45`.
-//! - **Filter** — `At` fields coarser than the driver restrict the grid to a
-//!   window: `09:30M:00` is every 30 minutes, but only during hour 9.
+//! - **Origin** — an anchor time with the fixed (`At` / `Values`) fields finer
+//!   than the driver applied. Fields finer than the driver that are `ForEach`
+//!   or `AsIs` keep the anchor's value, so `1H:MM:SS` from 09:22:45 carries
+//!   `:22:45`. A list there gives one grid per value: `HH:[00,30]:00` runs at
+//!   :00 and :30.
+//! - **Filter** — fixed fields coarser than the driver restrict the grid to a
+//!   window: `09:30M:00` is every 30 minutes, but only during hour 9;
+//!   `09-16:15M:00` is every 15 minutes from 09:00 to 16:45.
 //!
-//! The next occurrence is the first grid point after the cursor that passes
-//! the filter. A spec without a driver (`09:30:00`, `_:_:_`) names a single
-//! time of day.
+//! The next occurrence is the earliest grid point after the cursor that passes
+//! the filter. A spec without a driver (`09:30:00`, `[09,12,17]:00:00`,
+//! `_:_:_`) names fixed times of day.
 //!
 //! Specs have whole-second resolution: the origin drops any sub-second part of
 //! the anchor.
@@ -76,8 +79,8 @@ pub(super) fn step(spec: &Spec, driver: Unit) -> Duration {
 /// The earliest time strictly after `after` that `spec` produces, taking the
 /// grid's phase and carried fields from `anchor`.
 ///
-/// For a spec without a driver this is the named time of day on `after`'s
-/// date, or the next day's if it has passed.
+/// For a spec without a driver this is the first named time of day after
+/// `after` on its date, or the next day's first if they have all passed.
 pub(crate) fn next_after(spec: &Spec, anchor: NaiveDateTime, after: NaiveDateTime) -> Option<NaiveDateTime> {
     let anchor = anchor.with_nanosecond(0)?;
     let Some(driver) = driver(spec) else {
@@ -85,23 +88,45 @@ pub(crate) fn next_after(spec: &Spec, anchor: NaiveDateTime, after: NaiveDateTim
     };
     let step = step(spec, driver).num_nanoseconds()?;
 
-    let mut origin = anchor;
+    // One grid per combination of fixed values finer than the driver
+    // (`HH:[00,30]:00` is an hourly grid at :00 and another at :30).
+    let mut origins = vec![anchor];
     for (unit, cycle) in fields(spec) {
-        if let (true, Cycle::At(v)) = (unit < driver, cycle) {
-            origin = set(origin, unit, u32::from(*v))?;
+        if let (true, Some(values)) = (unit < driver, cycle.pinned()) {
+            origins = origins
+                .iter()
+                .flat_map(|o| values.iter().map(move |v| set(*o, unit, u32::from(*v))))
+                .collect::<Option<_>>()?;
         }
     }
 
-    // Window fields: `At` coarser than the driver.
-    let pinned = |unit: Unit| match fields(spec).into_iter().find(|(u, _)| *u == unit) {
-        Some((u, Cycle::At(v))) if u > driver => Some(u32::from(*v)),
-        _ => None,
+    // Window fields: fixed fields coarser than the driver.
+    let window = |unit: Unit| {
+        fields(spec)
+            .into_iter()
+            .find(|(u, _)| *u == unit && *u > driver)
+            .and_then(|(_, c)| c.pinned())
+            .map(|vs| vs.into_iter().map(u32::from).collect::<Vec<_>>())
     };
-    let (hour, minute) = (pinned(Unit::Hour), pinned(Unit::Minute));
+    let (hours, minutes) = (window(Unit::Hour), window(Unit::Minute));
 
+    origins
+        .into_iter()
+        .filter_map(|origin| next_on_grid(origin, step, after, hours.as_deref(), minutes.as_deref()))
+        .min()
+}
+
+/// The first point of `origin + k·step` after `after` inside the window.
+fn next_on_grid(
+    origin: NaiveDateTime,
+    step: i64,
+    after: NaiveDateTime,
+    hours: Option<&[u32]>,
+    minutes: Option<&[u32]>,
+) -> Option<NaiveDateTime> {
     let mut t = grid_after(origin, step, after, false)?;
     for _ in 0..MAX_SCAN {
-        match window_start(hour, minute, t)? {
+        match window_start(hours, minutes, t)? {
             None => return Some(t),
             Some(window) => t = grid_after(origin, step, window, true)?,
         }
@@ -120,38 +145,45 @@ fn grid_after(origin: NaiveDateTime, step: i64, bound: NaiveDateTime, inclusive:
     origin.checked_add_signed(Duration::nanoseconds(k.checked_mul(step)?))
 }
 
-/// `None` when `t` is inside the window the pinned hour / minute allow;
+/// `None` when `t` is inside the window the fixed hours / minutes allow;
 /// otherwise `Some(start of the next window at or after t)`.
-fn window_start(hour: Option<u32>, minute: Option<u32>, t: NaiveDateTime) -> Option<Option<NaiveDateTime>> {
-    if hour.is_none_or(|h| t.hour() == h) && minute.is_none_or(|m| t.minute() == m) {
+fn window_start(hours: Option<&[u32]>, minutes: Option<&[u32]>, t: NaiveDateTime) -> Option<Option<NaiveDateTime>> {
+    let allows = |values: Option<&[u32]>, v: u32| values.is_none_or(|vs| vs.contains(&v));
+    if allows(hours, t.hour()) && allows(minutes, t.minute()) {
         return Some(None);
     }
-    let hours = hour.map_or(0..=23, |h| h..=h);
+    let every_hour: Vec<u32> = (0..24).collect();
+    let hours = hours.unwrap_or(&every_hour);
+    let minutes = minutes.unwrap_or(&[0]);
     for date in [t.date(), t.date().succ_opt()?] {
-        for h in hours.clone() {
-            let start = date.and_hms_opt(h, minute.unwrap_or(0), 0)?;
-            if start >= t {
-                return Some(Some(start));
+        for h in hours {
+            for m in minutes {
+                let start = date.and_hms_opt(*h, *m, 0)?;
+                if start >= t {
+                    return Some(Some(start));
+                }
             }
         }
     }
     None
 }
 
-/// The single time of day named by a spec without a driver: `At` fields as
-/// given, `AsIs` fields from `anchor`.
+/// The times of day named by a spec without a driver: every combination of
+/// the fixed fields' values, with `AsIs` fields from `anchor`.
 fn fixed_time(spec: &Spec, anchor: NaiveDateTime, after: NaiveDateTime) -> Option<NaiveDateTime> {
-    let mut time = anchor.time();
+    let mut times = vec![after.date().and_time(anchor.time())];
     for (unit, cycle) in fields(spec) {
-        if let Cycle::At(v) = cycle {
-            time = set(after.date().and_time(time), unit, u32::from(*v))?.time();
+        if let Some(values) = cycle.pinned() {
+            times = times
+                .iter()
+                .flat_map(|t| values.iter().map(move |v| set(*t, unit, u32::from(*v))))
+                .collect::<Option<_>>()?;
         }
     }
-    let today = after.date().and_time(time);
-    if today > after {
-        Some(today)
-    } else {
-        Some(after.date().succ_opt()?.and_time(time))
+    times.sort();
+    match times.iter().find(|t| **t > after) {
+        Some(today) => Some(*today),
+        None => Some(after.date().succ_opt()?.and_time(times.first()?.time())),
     }
 }
 
@@ -195,6 +227,51 @@ mod tests {
     fn test_unaligned_cursor_snaps_to_grid() {
         assert_eq!(next("1H:00:00", at(9, 30, 0), at(9, 30, 0)), Some(at(10, 0, 0)));
         assert_eq!(next("2H:00:00", at(9, 15, 0), at(9, 15, 0)), Some(at(11, 0, 0)));
+    }
+
+    fn run(spec: &str, from: NaiveDateTime, n: usize) -> Vec<NaiveDateTime> {
+        let spec: Spec = spec.parse().unwrap();
+        let mut out = Vec::new();
+        let mut cur = from;
+        for _ in 0..n {
+            cur = next_after(&spec, from, cur).unwrap();
+            out.push(cur);
+        }
+        out
+    }
+
+    #[test]
+    fn test_hour_list_and_range_windows() {
+        let day2 = |h, m| at(h, m, 0) + Duration::days(1);
+        assert_eq!(
+            run("[09,12,17]:00:00", at(10, 0, 0), 4),
+            vec![at(12, 0, 0), at(17, 0, 0), day2(9, 0), day2(12, 0)]
+        );
+        let t = run("09-16:15M:00", at(8, 0, 0), 33);
+        assert_eq!(t[0], at(9, 0, 0));
+        assert_eq!(t[31], at(16, 45, 0));
+        assert_eq!(t[32], day2(9, 0));
+        assert_eq!(
+            run("[09,14]:30M:00", at(9, 0, 0), 4),
+            vec![at(9, 30, 0), at(14, 0, 0), at(14, 30, 0), day2(9, 0)]
+        );
+    }
+
+    #[test]
+    fn test_finer_list_gives_one_grid_per_value() {
+        assert_eq!(
+            run("HH:[00,30]:00", at(9, 10, 0), 3),
+            vec![at(9, 30, 0), at(10, 0, 0), at(10, 30, 0)]
+        );
+        assert_eq!(
+            run("09-10:[15,45]:00", at(0, 0, 0), 5),
+            vec![at(9, 15, 0), at(9, 45, 0), at(10, 15, 0), at(10, 45, 0), at(9, 15, 0) + Duration::days(1)]
+        );
+        // minute window when seconds drive
+        assert_eq!(
+            run("HH:[00,30]:20S", at(9, 0, 0), 4),
+            vec![at(9, 0, 20), at(9, 0, 40), at(9, 30, 0), at(9, 30, 20)]
+        );
     }
 
     #[test]

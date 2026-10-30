@@ -944,3 +944,55 @@ fn test_with_end_spec() {
         results.iter().map(|r| r.observed().format("%d %H").to_string()).collect();
     assert_eq!(ticks, ["15 09", "15 13", "15 17", "15 21", "16 01", "16 05", "16 09"]);
 }
+
+// ---------------------------------------------------------------------------
+// nth business day, and lists / ranges in the time part
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_nth_biz_day_with_time_list() {
+    let after = Utc.with_ymd_and_hms(2024, 12, 31, 12, 0, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-BD#3T[09,17]:00:00", WeekendSkipper::new(), after)
+        .build()
+        .unwrap()
+        .take(4)
+        .map(|o| Ok(*o.observed()))
+        .collect()
+        .unwrap();
+    let at = |m, d, h| Utc.with_ymd_and_hms(2025, m, d, h, 0, 0).unwrap();
+    assert_eq!(got, vec![at(1, 3, 9), at(1, 3, 17), at(2, 5, 9), at(2, 5, 17)]);
+}
+
+#[test]
+fn test_hour_range_window_on_weekdays() {
+    // Mon 2025-01-06 08:00
+    let after = Utc.with_ymd_and_hms(2025, 1, 6, 8, 0, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-[MON,WED]T09-16:30M:00", WeekendSkipper::new(), after)
+        .build()
+        .unwrap()
+        .take(17)
+        .map(|o| Ok(*o.observed()))
+        .collect()
+        .unwrap();
+    assert_eq!(got[0], Utc.with_ymd_and_hms(2025, 1, 6, 9, 0, 0).unwrap());
+    assert_eq!(got[15], Utc.with_ymd_and_hms(2025, 1, 6, 16, 30, 0).unwrap());
+    assert_eq!(got[16], Utc.with_ymd_and_hms(2025, 1, 8, 9, 0, 0).unwrap());
+}
+
+#[test]
+fn test_time_list_across_spring_forward() {
+    let tz = chrono_tz::America::New_York;
+    let after = tz.with_ymd_and_hms(2025, 3, 8, 12, 0, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-DDT[01,02,03]:30:00", WeekendSkipper::new(), after)
+        .build()
+        .unwrap()
+        .take(4)
+        .collect()
+        .unwrap();
+    let edt = |d, h| tz.with_ymd_and_hms(2025, 3, d, h, 30, 0).unwrap();
+    // 02:30 does not exist on Mar 9 and moves to 03:30, which then is not repeated.
+    assert_eq!(got[0], Occurrence::Exact(edt(9, 1)));
+    assert!(matches!(&got[1], Occurrence::AdjustedLater(_, shifted) if *shifted == edt(9, 3)), "{:?}", got[1]);
+    assert_eq!(got[2], Occurrence::Exact(edt(10, 1)));
+    assert_eq!(got[3], Occurrence::Exact(edt(10, 2)));
+}

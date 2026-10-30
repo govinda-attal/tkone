@@ -3,6 +3,10 @@
 A scheduling and recurrence library built on a flexible mini-language for dates, times, and
 combined datetimes. Supports business-day processing, timezone awareness, and fallible iteration.
 
+New to the schedule format? Read the [introduction](INTRODUCTION.md). It explains why the format
+exists, how it compares with cron, Quartz and iCalendar RRULE, and walks through the spec with
+real-world examples.
+
 ## Add to your project
 
 ```toml
@@ -117,6 +121,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | `nY`  | Every *n* years, aligned to the iterator start date |
 | `2025` | Exactly year 2025 |
 | `[2024,2025]` | Years 2024 or 2025 |
+| `[2024-2026]` | Years 2024 to 2026 (ranges work in every bracketed list) |
 
 ###### Months
 
@@ -127,6 +132,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | `nM`  | Every *n* months, aligned to the iterator start date |
 | `03`  | March only |
 | `[01,06,12]` | January, June, or December |
+| `[01-06]` | January to June |
 
 ###### Days
 
@@ -144,14 +150,20 @@ cargo run -p tkone-schedule --example time_recurrence
 | `nWD` | Advance *n* weekdays (Mon–Fri) |
 | `MON` / `TUE` / … | Every occurrence of that weekday in the month |
 | `[MON,FRI]` | Every Monday and Friday |
+| `[MON-FRI]` | Every weekday (a range runs Monday to Sunday and does not wrap) |
+| `[01-10,15]` | 1st to 10th, and 15th |
 | `WED#2` | 2nd Wednesday of the month |
 | `FRI#L` | Last Friday of the month |
 | `THU#2L` | 2nd-to-last Thursday of the month |
+| `BD#3` | 3rd business day of the month |
+| `BD#L` | Last business day of the month |
+| `BD#2L` | 2nd-to-last business day of the month |
+| `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) instead of business days |
 
 ###### Business Day Adjustment (`~`)
 
 Applied after the raw calendar date is resolved. Directional variants
-(`~NB`, `~PB`, `~B`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
+(`~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
 when the raw date is not already a business/week day. Numeric variants
 (`~nP`, `~nN`) are **unconditional** offsets.
 
@@ -159,6 +171,8 @@ when the raw date is not already a business/week day. Numeric variants
 |-------|---------|
 | `~NB` | Next business day (shift forward if not already a business day) |
 | `~PB` | Previous business day (shift back if not already a business day) |
+| `~MF` | Modified Following: next business day, unless that is in the next month — then previous |
+| `~MP` | Modified Preceding: previous business day, unless that is in the previous month — then next |
 | `~B`  | Nearest business day (shift to whichever direction is closer) |
 | `~NW` | Next weekday — Mon–Fri (shift forward if not already a weekday) |
 | `~PW` | Previous weekday — Mon–Fri (shift back if not already a weekday) |
@@ -182,10 +196,18 @@ when the raw date is not already a business/week day. Numeric variants
 | `_`   | AsIs second |
 | `nS`  | Every *n* seconds |
 | `00`  | At second 0 |
+| `[09,12,17]` | A list: any of these values (any field) |
+| `09-16` | A range, inclusive: hours 9 to 16 (any field) |
+| `[09-11,14]` | Lists can contain ranges |
 
 **ForEach driving rule**: when no `Every` component exists, the finest
 `ForEach` field becomes `Every(1)` for its unit; coarser `ForEach` fields
 carry their current value unchanged.
+
+**Lists and ranges** fix a field to several values. Coarser than the step
+they form a window (`09-16:15M:00` = every 15 minutes from 09:00 to 16:45);
+finer, one grid per value (`HH:[00,30]:00` = at :00 and :30); with no step,
+several times of day (`[09,12,17]:00:00`).
 
 ##### DateTime Spec — `<date_spec>T<time_spec>`
 
@@ -198,6 +220,25 @@ in the date spec are not confused with the separator.
 "YY-MM-DDT1H:00:00"      →  date="YY-MM-DD"         time="1H:00:00"
 "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 ```
+
+##### Union — `<spec> | <spec> | …`
+
+Any date, time or datetime spec can be a union of specs of the same kind,
+separated by `|`. The iterator yields the occurrences of every part in
+order of actual time. When two parts produce the same actual time, only the
+first listed part's occurrence is kept, so actual times still strictly
+increase.
+
+```text
+"YY-MM-BD#3 | YY-MM-L~PB"                     3rd and last business day of each month
+"09:[30,45]:00 | 10-15:15M:00 | 16:00:00"     every 15 minutes from 09:30 to 16:00
+"YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00"  different dates and times per part
+```
+
+Each part keeps its own cadence and phase from the start. Fixed times of
+day in a time-only union recur every day. Resuming a union needs the
+schedule's start; see [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
+`describe()` works on each part's spec type, not on the union string.
 
 ##### Checking a spec — `describe()`
 
@@ -279,6 +320,7 @@ Per schedule, store:
 | cursor | `occurrence.actual().to_rfc3339()` | resuming |
 | due at | `occurrence.observed()` | when to run the action |
 | end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
+| start (for unions) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec |
 
 ```rust
 struct Row {
@@ -348,9 +390,18 @@ Rules that keep resumed results exact:
   it is not available when resuming.
 - Cadences (`3M`, `2Y`, `1Y-3M`) and step rules (`7D`, `5BD`) stay aligned,
   because every stored occurrence lies on the cadence.
+- **A union spec (`A | B`) needs its start.** A stored occurrence belongs to
+  one part, and the other parts' cadences, steps and time grids are not
+  aligned to it. Store the start (the `new_with_start` start, or the first
+  occurrence's `actual`) and resume with
+  `resume_with_start(spec, bdp, tz, start, cursor)`, which positions every
+  part as if iterating from the start. `resume_after` on a union returns
+  [`Error::UnsupportedResume`], and so does a union in
+  [`IntervalMode::Elapsed`]. `resume_with_start` also works for plain specs,
+  with the same results as `resume_after`.
 
-The same `resume_after` exists on [`date::SpecIteratorBuilder`] and
-[`time::SpecIteratorBuilder`].
+The same `resume_after` and `resume_with_start` exist on
+[`date::SpecIteratorBuilder`] and [`time::SpecIteratorBuilder`].
 
 <!-- cargo-rdme end -->
 
@@ -392,10 +443,10 @@ Worked examples for each case: [Time spec](src/time/time-spec.md#daylight-saving
 
 | Component | Example tokens | Meaning |
 |-----------|---------------|---------|
-| Years | `YY` `nY` `2025` `[2024,2025]` | Every year / every n years / specific / enumerated |
-| Months | `MM` `nM` `06` `[01,06,12]` | Every month / every n months / specific / enumerated |
-| Days | `DD` `L` `15` `nD` `nBD` `MON` `FRI#L` | Every day / last / fixed / rolling / weekday patterns |
-| Adjustment | `~W` `~B` `~NW` `~PW` `~nN` `~nP` | Conditional or unconditional business-day shift |
+| Years | `YY` `nY` `2025` `[2024,2025]` `[2024-2026]` | Every year / every n years / specific / enumerated / range |
+| Months | `MM` `nM` `06` `[01,06,12]` `[01-06]` | Every month / every n months / specific / enumerated / range |
+| Days | `DD` `L` `15` `[01-10]` `nD` `nBD` `MON` `[MON-FRI]` `FRI#L` `BD#3` `BD#L` | Every day / last / fixed / rolling / weekday patterns / nth business day |
+| Adjustment | `~W` `~B` `~NB` `~PB` `~MF` `~MP` `~NW` `~PW` `~nN` `~nP` | Conditional or unconditional business-day shift (incl. Modified Following / Preceding) |
 
 Full syntax with all tokens and worked examples:
 **[Date Spec Reference →](src/date/date-spec.md)**
@@ -406,16 +457,23 @@ Full syntax with all tokens and worked examples:
 |------------|----------|---------|
 | `Every(n)` | `1H` `30M` `15S` | Advance by n units each tick |
 | `At(v)` | `09` `30` `00` | Pin to exact value |
+| `Values` | `[09,12,17]` `09-16` `[09-11,14]` | Pin to any of a list / inclusive range |
 | `ForEach` | `HH` `MM` `SS` | Carry (when `Every` present) or drive by 1 unit (finest wildcard) |
 | `AsIs` | `_` | No-op; preserve current value |
 
 Full syntax, semantics, and worked examples:
 **[Time Spec Reference →](src/time/time-spec.md)**
 
+### Union — `<spec> | <spec> | …`
+
+Any date, time or datetime spec can combine several specs of the same kind with `|`; results
+from all parts are merged in time order (`"09:[30,45]:00 | 10-15:15M:00 | 16:00:00"` = every 15
+minutes from 09:30 to 16:00).
+
 ### DateTime spec — `<date_spec>T<time_spec>`
 
-The `T` separator is detected by what immediately follows it (`HH:`, `nH:`, `_:`, or a
-two-digit clock hour), so weekday tokens like `TUE` and `THU` in the date part are never
+The `T` separator is detected by what immediately follows it (`HH:`, `nH:`, `_:`, a
+two-digit clock hour, an hour range `09-16:` or an hour list `[09,12]:`), so weekday tokens like `TUE` and `THU` in the date part are never
 misidentified.
 
 ```
@@ -434,13 +492,15 @@ Full combining semantics, tick-per-day rules, and edge cases:
 | `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound; nothing is invented at the boundary |
 | `.with_dst_policy(…)` | all | `Adjust` | `Strict` turns DST gaps and overlaps into errors |
 | `.with_interval_mode(…)` | time, datetime | `WallClock` | `Elapsed` measures steps in real time across DST |
-| `.with_time_anchor(…)` | datetime | `Start` | `Midnight` restarts each date's times from 00:00 instead of following the start's time of day |
+| `.with_time_anchor(…)` | datetime, time | `Start` | `Midnight` counts steps from each day's 00:00 (clock-aligned, like cron) instead of from the start's time of day |
 
 `new_with_start(start)` always yields `start` first, unchanged and as `Exact`, even if it does
 not match the spec. That lets you feed an already-adjusted (observed) date back in as the start.
 
 To continue a schedule stored in a database, use `resume_after(spec, …, tz, last_actual)` with
-the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end — see
+the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end. A union
+spec (`A | B`) must be resumed with `resume_with_start(spec, …, tz, start, last_actual)`, which
+also needs the schedule's stored start — see
 [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
 
 ## Runnable examples

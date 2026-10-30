@@ -5,10 +5,12 @@ use std::sync::LazyLock;
 use crate::prelude::*;
 
 /// Matches the `T` separator between a date spec and a time spec.
-/// The time spec always starts with: `HH:`, `<n>H:`, or a two-digit hour `<dd>:`.
+/// The time spec always starts with: `HH:`, `_:`, `<n>H:`, a two-digit hour `<dd>:`, an hour
+/// range `<dd>-<dd>:`, or an hour list `[…]:`.
 /// This deliberately does NOT match `T` inside weekday names like `TUE` or `THU`.
-static DATE_TIME_SEP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"T(?:HH|_|[0-9]{1,2}H|[0-2]?[0-9]):").unwrap());
+static DATE_TIME_SEP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"T(?:HH|_|\[[0-9,\-]+\]|[0-9]{1,2}H|[0-2]?[0-9](?:-[0-2]?[0-9])?):").unwrap()
+});
 
 /// Combined date + time recurrence specification.
 ///
@@ -110,6 +112,19 @@ mod tests {
         let spec = "YY-MM-TUET11:00:00".parse::<Spec>().unwrap();
         assert_eq!(spec.date_spec, "YY-MM-TUE");
         assert_eq!(spec.time_spec, "11:00:00");
+    }
+
+    #[test]
+    fn test_time_lists_and_ranges() {
+        for (s, date, time) in [
+            ("YY-MM-DDT[09,12,17]:00:00", "YY-MM-DD", "[09,12,17]:00:00"),
+            ("YY-MM-[MON,THU]T09-16:15M:00", "YY-MM-[MON,THU]", "09-16:15M:00"),
+            ("YY-MM-BD#3T[09-11,14]:00:00", "YY-MM-BD#3", "[09-11,14]:00:00"),
+            ("YY-MM-SATT9-16:00:00", "YY-MM-SAT", "9-16:00:00"),
+        ] {
+            let spec = s.parse::<Spec>().unwrap();
+            assert_eq!((spec.date_spec.as_str(), spec.time_spec.as_str()), (date, time), "{s}");
+        }
     }
 
     #[test]

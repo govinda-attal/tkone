@@ -9,8 +9,9 @@
 //! Day rules come in two kinds:
 //!
 //! - *Calendar* rules (`DD`, `15`, `[01,15]`, `L`, `31L`, `31N`, `31O`, `MON`,
-//!   `[MON,FRI]`, `WED#2`, `FRI#L`) are a pure function of the period: list the
-//!   matching days and take the first one after the cursor.
+//!   `[MON,FRI]`, `WED#2`, `FRI#L`, `BD#3`, `BD#L`) are a function of the period
+//!   (and, for `BD#`, the business day calendar): list the matching days and
+//!   take the first one after the cursor.
 //! - *Step* rules (`nD`, `nBD`, `nWD`) advance from the previous occurrence.
 //!   With an `nM` month cadence the month step and the day step compose into a
 //!   single clock (`YY-1M-7D` = +1 month and +7 days per tick). Otherwise the
@@ -24,9 +25,10 @@
 
 use chrono::{Datelike, Days, Months, NaiveDate, NaiveDateTime, NaiveTime};
 
-use crate::biz_day::{BizDayProcessor, WeekendSkipper};
+use crate::biz_day::{BizDayProcessor, Direction, WeekendSkipper};
 use crate::date::spec::{
-    BizDayAdjustment, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec, WeekdayOption,
+    BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
+    WeekdayOption,
 };
 use crate::utils::WeekdayStartingMonday;
 use crate::{prelude::*, Occurrence};
@@ -62,7 +64,7 @@ pub(super) fn next_after<BDP: BizDayProcessor>(
 ///
 /// `~nP` / `~nN` shift unconditionally. The directional variants only shift
 /// when the observed date is not already a weekday (`~W`, `~NW`, `~PW`) or a
-/// business day (`~B`, `~NB`, `~PB`).
+/// business day (`~B`, `~NB`, `~PB`, `~MF`, `~MP`).
 pub(super) fn adjust<BDP: BizDayProcessor>(
     spec: &Spec,
     raw: Occurrence<NaiveDateTime>,
@@ -95,6 +97,22 @@ pub(super) fn adjust<BDP: BizDayProcessor>(
                 return Ok(raw);
             }
             bdp.find_biz_day(&observed, dir.clone())?
+        }
+        BizDayAdjustment::ModifiedFollowing | BizDayAdjustment::ModifiedPreceding => {
+            if bdp.is_biz_day(&observed)? {
+                return Ok(raw);
+            }
+            let (first, fallback) = match adj {
+                BizDayAdjustment::ModifiedFollowing => (Direction::Next, Direction::Prev),
+                _ => (Direction::Prev, Direction::Next),
+            };
+            // Stay in the observed date's month.
+            let rolled = bdp.find_biz_day(&observed, first)?;
+            if (rolled.year(), rolled.month()) == (observed.year(), observed.month()) {
+                rolled
+            } else {
+                bdp.find_biz_day(&observed, fallback)?
+            }
         }
     };
     Ok(if adjusted > actual {
@@ -272,7 +290,7 @@ fn next_calendar<BDP: BizDayProcessor>(
         let Some(p) = next_period(spec, from, anchor)? else {
             return Ok(None);
         };
-        let found = calendar_days(days, p, ctx.anchor.date())
+        let found = calendar_days(days, p, ctx)?
             .into_iter()
             .find(|occ| *occ.actual() > after.date());
         if let Some(occ) = found {
@@ -291,13 +309,18 @@ fn next_calendar<BDP: BizDayProcessor>(
 /// A day beyond the end of the month is dropped (no suffix), clamped to the
 /// last day (`L`), or reported as `AdjustedLater(last_day, observed)` with
 /// `observed` in the next month (`N`, `O`).
-fn calendar_days(days: &DayCycle, p: Period, anchor: NaiveDate) -> Vec<Occurrence<NaiveDate>> {
+fn calendar_days<BDP: BizDayProcessor>(
+    days: &DayCycle,
+    p: Period,
+    ctx: &IterContext<BDP>,
+) -> Result<Vec<Occurrence<NaiveDate>>> {
     let (Some(first), Some(last)) = (p.first_day(), p.last_day()) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    let anchor = ctx.anchor.date();
     let month = || first.iter_days().take_while(move |d| *d <= last);
 
-    match days {
+    Ok(match days {
         DayCycle::ForEach => month().map(Occurrence::Exact).collect(),
         DayCycle::AsIs => vec![Occurrence::Exact(
             first.with_day(anchor.day()).unwrap_or(last),
@@ -351,8 +374,28 @@ fn calendar_days(days: &DayCycle, p: Period, anchor: NaiveDate) -> Vec<Occurrenc
             dates.sort();
             dates.into_iter().map(Occurrence::Exact).collect()
         }
+        DayCycle::NthBizDay { calendar, option } => {
+            let ws = WeekendSkipper::new();
+            let mut biz = Vec::new();
+            for day in month() {
+                let dtm = day.and_time(NaiveTime::MIN);
+                let counts = match calendar {
+                    BizDayCalendar::BizDay => ctx.bd_processor.is_biz_day(&dtm)?,
+                    BizDayCalendar::WeekDay => ws.is_biz_day(&dtm)?,
+                };
+                if counts {
+                    biz.push(day);
+                }
+            }
+            let index = match option {
+                WeekdayOption::Starting(n) => usize::from(n.unwrap_or(1)).checked_sub(1),
+                WeekdayOption::Ending(n) => biz.len().checked_sub(usize::from(n.unwrap_or(1))),
+                WeekdayOption::NA => Some(0),
+            };
+            index.and_then(|i| biz.get(i)).map(|d| Occurrence::Exact(*d)).into_iter().collect()
+        }
         DayCycle::NextNth(..) => Vec::new(),
-    }
+    })
 }
 
 /// The `n`th-to-last `weekday` between `first` and `last` (`n = 1` is the last).

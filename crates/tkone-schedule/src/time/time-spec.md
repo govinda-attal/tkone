@@ -20,8 +20,9 @@ All three components are required. Each component is one of: a wildcard (`ForEac
 | `_` | AsIs | Keep current hour unchanged |
 | `nH` | Every | Advance by *n* hours each tick (e.g. `1H`, `2H`, `4H`, `12H`) |
 | `hh` (2-digit) | At | Pin to an exact hour (e.g. `09`, `13`, `17`) |
+| `[hh,…]` / `hh-hh` | Values | Any of a list or inclusive range of hours (e.g. `[09,12,17]`, `09-16`, `[09-11,14]`) |
 
-Valid ranges: `00`–`23` for At; `1H`–`23H` for Every.
+Valid ranges: `00`–`23` for At and Values; `1H`–`23H` for Every.
 
 ### Minutes
 
@@ -31,8 +32,9 @@ Valid ranges: `00`–`23` for At; `1H`–`23H` for Every.
 | `_` | AsIs | Keep current minute unchanged |
 | `nM` | Every | Advance by *n* minutes each tick (e.g. `5M`, `15M`, `30M`) |
 | `mm` (2-digit) | At | Pin to an exact minute (e.g. `00`, `15`, `30`, `45`) |
+| `[mm,…]` / `mm-mm` | Values | Any of a list or inclusive range of minutes (e.g. `[00,30]`, `00-14`) |
 
-Valid ranges: `00`–`59` for At; `1M`–`59M` for Every.
+Valid ranges: `00`–`59` for At and Values; `1M`–`59M` for Every.
 
 ### Seconds
 
@@ -42,8 +44,12 @@ Valid ranges: `00`–`59` for At; `1M`–`59M` for Every.
 | `_` | AsIs | Keep current second unchanged |
 | `nS` | Every | Advance by *n* seconds each tick (e.g. `15S`, `30S`) |
 | `ss` (2-digit) | At | Pin to an exact second (e.g. `00`, `15`, `30`) |
+| `[ss,…]` / `ss-ss` | Values | Any of a list or inclusive range of seconds (e.g. `[00,30]`) |
 
-Valid ranges: `00`–`59` for At; `1S`–`59S` for Every.
+Valid ranges: `00`–`59` for At and Values; `1S`–`59S` for Every.
+
+A list or range with a single value (`[09]`, `09-09`) is the same as `At`. Lists may mix values
+and ranges, and are kept in ascending order (`[14,09-11]` is `[09-11,14]`).
 
 ---
 
@@ -56,15 +62,21 @@ after the previous one (or after the `new_after` cursor):
   finest `ForEach` field when there is no `Every` (`HH:MM:00` = every minute). The unit of that
   field is the *driver*.
 - **Phase** — the grid passes through the start (or `new_after` cursor) with the fixed fields
-  finer than the driver applied: `1H:30:00` from 09:10 runs at 09:30, 10:30, …
+  finer than the driver applied: `1H:30:00` from 09:10 runs at 09:30, 10:30, … A list there
+  gives one grid per value: `HH:[00,30]:00` runs at :00 and :30 of every hour.
 - **Window** — fixed fields **coarser** than the driver limit the grid to a window:
-  `09:30M:00` is every 30 minutes during hour 9 only (09:00, 09:30, then 09:00 the next day).
+  `09:30M:00` is every 30 minutes during hour 9 only (09:00, 09:30, then 09:00 the next day);
+  `09-16:15M:00` is every 15 minutes from 09:00 to 16:45. Ranges cover whole hours, so the last
+  tick of `09-16` is in hour 16.
 
 Per field:
 
 - **`Every(n)`** contributes *n* units to the step.
 - **`At(v)`** fixes the field to *v*: finer than the driver it sets the grid's phase, coarser it
   opens a window.
+- **`Values`** (`[09,12,17]`, `09-16`) fixes the field to any of several values, in the same two
+  roles. With no step, each combination of values is a time of day: `[09,17]:[00,30]:00` is
+  09:00, 09:30, 17:00 and 17:30.
 - **`AsIs`** (`_`) keeps the start's value when finer than the driver; coarser, it is free like
   `ForEach`. Useful primarily in combined datetime specs (e.g. `YY-1M-31T_:_:_`).
 - **`ForEach`** (`HH`/`MM`/`SS`) behaves differently depending on whether any `Every` component is present:
@@ -88,10 +100,12 @@ The rule: find the rightmost (finest) `ForEach` component; it advances by 1 of i
 To check how a spec is read, call [`Spec::describe`](crate::time::Spec::describe):
 
 ```text
-HH:MM:00   →  every minute, at second 00
-1H:MM:00   →  every hour, at the start's minute and second 00
-HH:30M:00  →  every 30 minutes, at second 00, counted from the start
-09:30M:00  →  every 30 minutes, at second 00, counted from the start, only during the 09:00 hour
+HH:MM:00         →  every minute, at second 00
+1H:MM:00         →  every hour, at the start's minute and second 00
+HH:30M:00        →  every 30 minutes, at second 00, counted from the start
+09:30M:00        →  every 30 minutes, at second 00, counted from the start, only during 09:00–09:59
+09-16:15M:00     →  every 15 minutes, at second 00, counted from the start, only during 09:00–16:59
+[09,12,17]:00:00 →  at 09:00:00, 12:00:00 and 17:00:00
 ```
 
 ---
@@ -608,6 +622,59 @@ Contrast with `HH:00:00`: that spec pins minutes to `00`; this one preserves the
 
 ---
 
+### 27. `[09,12,17]:00:00` — Fixed times of day from a list
+
+**Context:** `YY-MM-DDT[09,12,17]:00:00` (every day at 09:00, 12:00 and 17:00)
+
+No step: each listed hour is a time of day. In a combined spec every date gets all three. As a
+pure time iterator only the times remaining on the current day are yielded (see
+[All-`At` specs](#hhmmss-all-at-used-as-an-iterator)).
+
+```text
+1.  2025-01-01 09:00:00
+2.  2025-01-01 12:00:00
+3.  2025-01-01 17:00:00
+4.  2025-01-02 09:00:00
+5.  2025-01-02 12:00:00
+6.  2025-01-02 17:00:00
+```
+
+---
+
+### 28. `09-16:15M:00` — Every 15 minutes within an hour range
+
+**Start:** 09:00:00
+
+`Every(15)` drives; hours `09-16` is a window, so ticks run from 09:00 through 16:45 and resume at
+09:00 the next day.
+
+```text
+ 1.  09:00:00
+ 2.  09:15:00
+ …
+31.  16:30:00
+32.  16:45:00
+33.  09:00:00 (next day)
+```
+
+---
+
+### 29. `HH:[00,30]:00` — At :00 and :30 of every hour
+
+**Start:** 09:10:00
+
+No `Every`; `HH` drives by 1 hour, and the minute list gives one hourly grid at :00 and another at
+:30. Unlike `HH:30M:00`, the times stay on :00 and :30 whatever the start.
+
+```text
+1.  09:30:00
+2.  10:00:00
+3.  10:30:00
+4.  11:00:00
+```
+
+---
+
 ## end_spec Usage
 
 An end spec is a time spec string evaluated **once from the start datetime**: its first
@@ -641,17 +708,47 @@ so a non-aligned cursor snaps to the grid:
 - `HH:30:00` from 10:00:00 → **10:30:00** (the current hour's :30 is not skipped)
 - `HH:MM:30` from 10:00:00 → **10:00:30**
 
+### Clock alignment — `TimeAnchor::Midnight`
+
+By default a step is counted from the start: `HH:15M:00` started at 09:07 runs at 09:22, 09:37, …
+For cron-like alignment, build with `.with_time_anchor(TimeAnchor::Midnight)`: steps and carried
+fields are then counted from each day's midnight.
+
+| Spec | From | Default (`Start`) | `Midnight` |
+|------|------|-------------------|------------|
+| `HH:15M:00` | 09:07 | 09:22, 09:37, 09:52 | 09:15, 09:30, 09:45 |
+| `1H:MM:SS` | 09:22:45 | 10:22:45, 11:22:45 | 10:00:00, 11:00:00 |
+| `5H:00:00` | 18:00 | 23:00, 04:00 (next day) | 20:00, 00:00 (next day), 05:00 |
+
+With `Midnight` every day restarts from its own midnight, so a step that does not divide 24 hours
+(`5H`) does not run continuously across days. Fixed times (`09:30:00`, `[09,17]:00:00`) are the
+same either way. A resumed schedule must use the same anchor.
+
 ### Day boundary crossing
 
 The spec is applied to the wall-clock (local) time using `chrono::Duration` arithmetic. Day boundaries are crossed transparently. There is no built-in "end of day" concept; the spec produces results indefinitely until an end boundary is set or the caller stops consuming results. For what happens across DST changes, see [Daylight Saving Time](#daylight-saving-time).
+
+### Union of time specs
+
+`09:[30,45]:00 | 10-15:15M:00 | 16:00:00` yields the times of every part in order: every 15
+minutes from 09:30 to 16:00. Each part keeps its own grid, counted from the start (or from
+midnight with `TimeAnchor::Midnight`). Fixed-time parts such as `16:00:00` recur every day in a
+union. When two parts produce the same instant it is yielded once.
 
 ### Resuming a stored schedule
 
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, tz, last_actual)`, where `last_actual` is the
 stored `time` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
-same options; add `.with_end(end)` if the schedule has a stored end. The crate docs' section *Persisting and resuming a schedule* has the full
-pattern and the rules that keep resumed results identical to a continuous iterator.
+same options; add `.with_end(end)` if the schedule has a stored end. A union must be resumed
+with `resume_with_start(spec, tz, start, last)`, which also takes the stored start. The crate
+docs' section *Persisting and resuming a schedule* has the full pattern and the rules that keep
+resumed results identical to a continuous iterator.
+
+A time-only iterator yields plain instants, so a time moved by a spring-forward gap is stored as
+its moved time (03:30 EDT, not 02:30 EST). Resuming a *union* right after such a time can then
+miss another part's time that was also moved past it. Use a datetime spec, whose `actual` keeps
+the scheduled wall-clock time, when that matters.
 
 ### Sub-second precision
 
@@ -754,8 +851,9 @@ results. They are documented here for clarity.
 
 **Examples:** `09:30:00`, `13:00:00`
 
-**Behaviour:** A spec with no step names one time of day. As a time iterator it yields that time
-**at most once, on the current day**, then terminates.
+**Behaviour:** A spec with no step names one time of day (or, with lists, a few). As a time
+iterator it yields those times **on the current day only**, then terminates:
+`[09,12,17]:00:00` from 10:00 yields 12:00 and 17:00.
 
 - `new_with_start` from `09:30:00` → yields `09:30:00` (passthrough) then terminates.
 - `new_after` from `09:30:00` → yields nothing (09:30 today is not after the cursor).
@@ -796,7 +894,8 @@ in the nom parser.  These specs cannot be constructed.
 **Examples:** `24:00:00`, `HH:60:00`, `HH:MM:60`
 
 **Result:** **Parse error** (`Error::InvalidTimeSpec`). Fixed hours must be 0–23, fixed minutes
-and seconds 0–59. Steps are not limited this way: `25H:00:00` and `HH:90M:00` are valid.
+and seconds 0–59, in lists and ranges too (`[09,24]:00:00`). A range must not run backwards
+(`16-09:00:00`). Steps are not limited this way: `25H:00:00` and `HH:90M:00` are valid.
 
 ---
 

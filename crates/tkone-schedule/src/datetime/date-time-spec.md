@@ -12,7 +12,8 @@ Both parts are required. Refer to those documents for the full syntax of each co
 ### Separator detection
 
 The `T` character is only treated as the separator when it is immediately followed by a
-time-like token: `HH:`, `_:`, a bare `<n>H:`, or a two-digit leading hour `<0–2><0–9>:`.
+time-like token: `HH:`, `_:`, a bare `<n>H:`, a two-digit leading hour `<0–2><0–9>:`, an hour
+range `09-16:`, or an hour list `[09,12]:`.
 This prevents weekday names like `TUE` and `THU` from being confused with the separator.
 
 ```text
@@ -20,6 +21,8 @@ YY-MM-THUT11:00:00  →  date="YY-MM-THU"  time="11:00:00"   ✓ THU not confuse
 YY-MM-TUET11:00:00  →  date="YY-MM-TUE"  time="11:00:00"   ✓ TUE not confused
 YY-MM-DDTHH:30M:00  →  date="YY-MM-DD"   time="HH:30M:00"  ✓ HH: recognised
 YY-MM-DDT_:_:_      →  date="YY-MM-DD"   time="_:_:_"       ✓ _: recognised
+YY-MM-BD#3T[09,17]:00:00  →  date="YY-MM-BD#3"  time="[09,17]:00:00"  ✓ list recognised
+YY-MM-[MON,WED]T09-16:30M:00  →  date="YY-MM-[MON,WED]"  time="09-16:30M:00"  ✓ range recognised
 ```
 
 ---
@@ -107,7 +110,9 @@ boundary.
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, bdp, tz, last_actual)`, where `last_actual` is the
 stored ``actual()`` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
-same options; add `.with_end(end)` if the schedule has a stored end. The crate docs' section *Persisting and resuming a schedule* has the full
+same options; add `.with_end(end)` if the schedule has a stored end. A union spec
+(`YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00`) needs `resume_with_start(spec, bdp, tz, start,
+last_actual)`, with the schedule's stored start, so every part keeps its own dates and times. The crate docs' section *Persisting and resuming a schedule* has the full
 pattern and the rules that keep resumed results identical to a continuous iterator.
 
 ---

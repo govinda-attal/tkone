@@ -111,6 +111,9 @@ fn test_resume_date_specs() {
         ("YY-1M-31O", ny(2024, 12, 31, 0, 0)),
         ("YY-1M-L~2N", ny(2025, 1, 31, 0, 0)),
         ("YY-MM-FRI#L", ny(2025, 1, 31, 0, 0)),
+        ("YY-MM-BD#3", ny(2025, 1, 3, 0, 0)),
+        ("YY-[03,06]-BD#2L", ny(2025, 3, 28, 0, 0)),
+        ("YY-MM-WD#1~1N", ny(2025, 1, 1, 0, 0)),
     ] {
         check_date(spec, start);
     }
@@ -144,6 +147,10 @@ fn test_resume_datetime_specs() {
         ("YY-MM-DDT1H:00:00", ny(2025, 11, 2, 0, 0), WallClock, Start), // fall-back
         ("YY-MM-DDT1H:00:00", ny(2025, 11, 2, 0, 0), Elapsed, Start),
         ("YY-MM-DDTHH:30M:00", ny(2025, 3, 9, 1, 0), Elapsed, Midnight),
+        ("YY-MM-BD#3T[09,17]:00:00", ny(2025, 1, 3, 9, 0), WallClock, Start),
+        ("YY-MM-DDT09-16:30M:00", ny(2025, 1, 15, 9, 0), WallClock, Midnight),
+        ("YY-MM-DDT[01,02,03]:30:00", ny(2025, 3, 8, 1, 30), WallClock, Start), // spring-forward
+        ("YY-MM-DDTHH:[00,30]:00", ny(2025, 11, 2, 0, 0), WallClock, Start), // fall-back
     ] {
         check_datetime(spec, start, mode, anchor);
     }
@@ -160,8 +167,44 @@ fn test_resume_time_specs() {
         ("6H:00:00", ny(2025, 3, 8, 6, 0), Elapsed),
         ("1H:MM:SS", ny(2025, 1, 1, 9, 22), WallClock),
         ("09:30M:00", ny(2025, 1, 1, 9, 0), WallClock),
+        ("09-16:15M:00", ny(2025, 1, 1, 9, 0), WallClock),
+        ("HH:[00,30]:00", ny(2025, 3, 9, 0, 0), WallClock),
+        ("[09-11,14]:20M:00", ny(2025, 1, 1, 9, 0), WallClock),
     ] {
         check_time(spec, start, mode);
+    }
+}
+
+/// Clock-aligned time specs resume onto the same clock grid, whatever the
+/// stored time.
+#[test]
+fn test_resume_time_specs_with_midnight_anchor() {
+    for (spec, start) in [
+        ("HH:15M:00", ny(2025, 1, 1, 9, 7)),
+        ("5H:00:00", ny(2025, 1, 1, 18, 0)),
+        ("HH:30M:00", ny(2025, 3, 9, 1, 10)),
+        ("1H:00:00", ny(2025, 11, 2, 0, 10)),
+        ("09-16:20M:00", ny(2025, 1, 1, 16, 50)),
+    ] {
+        let build = |b: time::SpecIteratorBuilder<Tz, _, _, _>| b.with_time_anchor(TimeAnchor::Midnight);
+        let continuous: Vec<DateTime<Tz>> = build(time::SpecIteratorBuilder::new_after(spec, start))
+            .build()
+            .unwrap()
+            .take(N)
+            .collect()
+            .unwrap();
+        let mut resumed = vec![continuous[0]];
+        while resumed.len() < continuous.len() {
+            let last = stored(resumed.last().unwrap());
+            let next = build(time::SpecIteratorBuilder::resume_after(spec, start.timezone(), last))
+                .build()
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap();
+            resumed.push(next);
+        }
+        assert_eq!(resumed, continuous, "time spec {spec} (Midnight)");
     }
 }
 

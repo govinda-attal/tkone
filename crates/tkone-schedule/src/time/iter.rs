@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
 
-use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
 
 use fallible_iterator::FallibleIterator;
 
 use super::{engine, spec::Spec};
+use crate::merge::{union_parts, Merge};
 use crate::utils::resolve_local;
-use crate::{prelude::*, DstPolicy, IntervalMode};
+use crate::{prelude::*, DstPolicy, IntervalMode, TimeAnchor};
 
 pub struct StartDateTime<Tz: TimeZone>(DateTime<Tz>);
 pub struct NoStart;
@@ -32,7 +33,9 @@ pub struct NotSealed;
 /// it by another time spec.
 ///
 /// Any builder can also take `.with_dst_policy(…)` and `.with_interval_mode(…)`
-/// to control behaviour across DST changes; see [`crate::IntervalMode`].
+/// to control behaviour across DST changes (see [`crate::IntervalMode`]), and
+/// `.with_time_anchor(TimeAnchor::Midnight)` to align steps to the clock
+/// instead of the start (see [`crate::TimeAnchor`]).
 pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     timezone: Tz,
     dtm: DateTime<Tz>,
@@ -41,8 +44,11 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     end: END,
     dst_policy: DstPolicy,
     interval_mode: IntervalMode,
+    time_anchor: TimeAnchor,
     /// Wall-clock cursor given to `resume_after`; `None` means `dtm`.
     local: Option<NaiveDateTime>,
+    /// Wall-clock start given to `resume_with_start`.
+    anchor: Option<NaiveDateTime>,
     marker_sealed: PhantomData<S>,
 }
 
@@ -62,6 +68,14 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
     /// Defaults to [`IntervalMode::WallClock`].
     pub fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
         self.interval_mode = mode;
+        self
+    }
+
+    /// Choose where steps and carried fields are counted from: the start
+    /// (default) or each day's midnight, which aligns steps to the clock
+    /// (`HH:15M:00` at :00, :15, :30, :45 whatever the start).
+    pub fn with_time_anchor(mut self, anchor: TimeAnchor) -> Self {
+        self.time_anchor = anchor;
         self
     }
 }
@@ -85,7 +99,9 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             end: NoEnd,
             dst_policy: DstPolicy::default(),
             interval_mode: IntervalMode::default(),
+            time_anchor: TimeAnchor::default(),
             local: None,
+            anchor: None,
             marker_sealed: PhantomData,
         }
     }
@@ -106,15 +122,28 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
         builder
     }
 
+    /// Resume a stored schedule from its original `start`: times strictly
+    /// after `last`, on the grid counted from `start`.
+    ///
+    /// Required for a union spec (`A | B`), whose parts would otherwise count
+    /// their steps from another part's time. For a plain spec it gives the
+    /// same results as [`resume_after`](Self::resume_after). A union in
+    /// [`IntervalMode::Elapsed`] cannot be resumed
+    /// ([`Error::UnsupportedResume`]).
+    pub fn resume_with_start(
+        spec: &str,
+        tz: Tz,
+        start: DateTime<FixedOffset>,
+        last: DateTime<FixedOffset>,
+    ) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+        let mut builder = Self::resume_after(spec, tz, last);
+        builder.anchor = Some(start.naive_local());
+        builder
+    }
+
     pub fn build(self) -> Result<SpecIterator<Tz>> {
-        let mut iter = SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)?
-            .with_interval_mode(self.interval_mode);
-        // Elapsed steps continue from the instant, so they keep its own
-        // local time; wall-clock steps continue from the stored wall clock.
-        if let (Some(local), IntervalMode::WallClock) = (self.local, self.interval_mode) {
-            iter.local = local;
-        }
-        Ok(iter)
+        let iter = SpecIterator::new_after(&self.spec, self.dtm, self.dst_policy)?;
+        resumed(iter, &self.spec, self.interval_mode, self.time_anchor, self.local, self.anchor)
     }
 
     /// Bound the iterator by an explicit end datetime (inclusive).
@@ -133,7 +162,9 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
+            time_anchor: self.time_anchor,
             local: self.local,
+            anchor: self.anchor,
             marker_sealed: PhantomData,
         }
     }
@@ -142,13 +173,45 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, EndDateTime<Tz>, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
         let end = self.end.0.with_timezone(&self.dtm.timezone());
-        let mut iter = SpecIterator::new(&self.spec, self.dtm, None, Some(end), self.dst_policy)?
-            .with_interval_mode(self.interval_mode);
-        if let (Some(local), IntervalMode::WallClock) = (self.local, self.interval_mode) {
-            iter.local = local;
-        }
-        Ok(iter)
+        let iter = SpecIterator::new(&self.spec, self.dtm, None, Some(end), self.dst_policy)?;
+        resumed(iter, &self.spec, self.interval_mode, self.time_anchor, self.local, self.anchor)
     }
+}
+
+/// Apply the options and any `resume_after` / `resume_with_start` cursor.
+fn resumed<Tz: TimeZone>(
+    iter: SpecIterator<Tz>,
+    spec: &str,
+    mode: IntervalMode,
+    time_anchor: TimeAnchor,
+    local: Option<NaiveDateTime>,
+    anchor: Option<NaiveDateTime>,
+) -> Result<SpecIterator<Tz>> {
+    let union = union_parts(spec).is_some();
+    match (anchor, local) {
+        (None, Some(_)) if union => {
+            return Err(Error::UnsupportedResume(
+                "a union spec must be resumed with `resume_with_start`".into(),
+            ))
+        }
+        (Some(_), _) if union && mode == IntervalMode::Elapsed => {
+            return Err(Error::UnsupportedResume("a union spec in `IntervalMode::Elapsed`".into()))
+        }
+        _ => {}
+    }
+    let mut iter = iter.with_interval_mode(mode).with_time_anchor(time_anchor);
+    // Elapsed steps continue from the instant, so they keep its own local
+    // time; wall-clock steps continue from the stored wall clock, on the grid
+    // counted from the stored start if there is one.
+    if mode == IntervalMode::WallClock {
+        iter.each_part(|part| {
+            if let Some(local) = local {
+                part.local = local;
+            }
+            part.anchor = anchor;
+        });
+    }
+    Ok(iter)
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
@@ -166,7 +229,9 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             end: NoEnd,
             dst_policy: DstPolicy::default(),
             interval_mode: IntervalMode::default(),
+            time_anchor: TimeAnchor::default(),
             local: None,
+            anchor: None,
             marker_sealed: PhantomData,
         }
     }
@@ -186,7 +251,9 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
+            time_anchor: self.time_anchor,
             local: self.local,
+            anchor: self.anchor,
             marker_sealed: PhantomData,
         }
     }
@@ -207,21 +274,25 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             end: EndSpec(end_spec.into()),
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
+            time_anchor: self.time_anchor,
             local: self.local,
+            anchor: self.anchor,
             marker_sealed: PhantomData,
         }
     }
 
     pub fn build(self) -> Result<SpecIterator<Tz>> {
         Ok(SpecIterator::new_with_start(&self.spec, self.dtm, self.dst_policy)?
-            .with_interval_mode(self.interval_mode))
+            .with_interval_mode(self.interval_mode)
+            .with_time_anchor(self.time_anchor))
     }
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
         Ok(SpecIterator::new_with_end(&self.spec, self.dtm, self.end.0, self.dst_policy)?
-            .with_interval_mode(self.interval_mode))
+            .with_interval_mode(self.interval_mode)
+            .with_time_anchor(self.time_anchor))
     }
 }
 
@@ -229,7 +300,8 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndSpec, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz>> {
         Ok(
             SpecIterator::new_with_end_spec(&self.spec, self.dtm, &self.end.0, self.dst_policy)?
-                .with_interval_mode(self.interval_mode),
+                .with_interval_mode(self.interval_mode)
+            .with_time_anchor(self.time_anchor),
         )
     }
 }
@@ -266,9 +338,13 @@ pub struct SpecIterator<Tz: TimeZone> {
     spec: Spec,
     dst_policy: DstPolicy,
     interval_mode: IntervalMode,
+    time_anchor: TimeAnchor,
     /// Local time of the last result (or the initial cursor). The next result
-    /// is searched for after it, and it anchors the grid's phase.
+    /// is searched for after it, and it anchors the grid's phase unless
+    /// `anchor` is set.
     local: NaiveDateTime,
+    /// The stored start of a `resume_with_start` schedule: the grid's phase.
+    anchor: Option<NaiveDateTime>,
     /// The last yielded instant, or the initial cursor. Results must be
     /// strictly later.
     cursor: DateTime<Tz>,
@@ -277,6 +353,15 @@ pub struct SpecIterator<Tz: TimeZone> {
     /// Inclusive upper bound.
     end: Option<DateTime<Tz>>,
     done: bool,
+    /// For a union spec (`A | B`), its parts; the other fields are unused.
+    union: Option<Box<Merge<SpecIterator<Tz>, DateTime<Tz>>>>,
+    /// A union part: fixed times of day recur every day instead of only on
+    /// the current day.
+    daily: bool,
+}
+
+fn instant<Tz: TimeZone>(t: &DateTime<Tz>) -> DateTime<Tz> {
+    t.clone()
 }
 
 impl<Tz: TimeZone> SpecIterator<Tz> {
@@ -287,16 +372,32 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         end: Option<DateTime<Tz>>,
         dst_policy: DstPolicy,
     ) -> Result<Self> {
+        if let Some(parts) = union_parts(spec) {
+            let parts = parts
+                .into_iter()
+                .map(|part| {
+                    let part = Self::new(part, cursor.clone(), start.clone(), end.clone(), dst_policy)?;
+                    Ok(Self { daily: true, ..part })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let mut outer = parts[0].clone();
+            outer.union = Some(Box::new(Merge::new(parts, instant)));
+            return Ok(outer);
+        }
         Ok(Self {
             tz: cursor.timezone(),
             spec: spec.parse()?,
             dst_policy,
             interval_mode: IntervalMode::default(),
+            time_anchor: TimeAnchor::default(),
             local: cursor.naive_local(),
+            anchor: None,
             cursor,
             start,
             end,
             done: false,
+            union: None,
+            daily: false,
         })
     }
 
@@ -327,14 +428,51 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         dst_policy: DstPolicy,
     ) -> Result<Self> {
         let local = start.naive_local();
-        let end = engine::next_after(&end_spec.parse()?, local, local).ok_or(Error::InvalidEndSpec)?;
+        let mut end = None;
+        for part in union_parts(end_spec).unwrap_or_else(|| vec![end_spec]) {
+            let next = engine::next_after(&part.parse()?, local, local).ok_or(Error::InvalidEndSpec)?;
+            end = Some(end.map_or(next, |e: NaiveDateTime| e.min(next)));
+        }
+        let end = end.ok_or(Error::InvalidEndSpec)?;
         let end = resolve_local(&start.timezone(), end, dst_policy)?;
         Self::new(spec, start.clone(), Some(start), Some(end), dst_policy)
     }
 
+    /// Apply `f` to this iterator, or to each part of a union.
+    fn each_part(&mut self, f: impl Fn(&mut Self)) {
+        match &mut self.union {
+            Some(union) => union.parts_mut().iter_mut().for_each(f),
+            None => f(self),
+        }
+    }
+
     fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
-        self.interval_mode = mode;
+        self.each_part(|part| part.interval_mode = mode);
         self
+    }
+
+    fn with_time_anchor(mut self, anchor: TimeAnchor) -> Self {
+        self.each_part(|part| part.time_anchor = anchor);
+        self
+    }
+
+    /// The next wall-clock time after `self.local`. With `TimeAnchor::Midnight`
+    /// each day's times come from a grid that starts at that day's midnight.
+    fn next_local(&self) -> Option<NaiveDateTime> {
+        if self.time_anchor == TimeAnchor::Start {
+            return engine::next_after(&self.spec, self.anchor.unwrap_or(self.local), self.local);
+        }
+        let (mut day, mut after) = (self.local.date(), self.local);
+        // Every day has the same grid, so a day without a time means none ever.
+        for _ in 0..2 {
+            let next = engine::next_after(&self.spec, day.and_time(NaiveTime::MIN), after)?;
+            if next.date() == day {
+                return Some(next);
+            }
+            day = day.succ_opt()?;
+            after = day.and_time(NaiveTime::MIN) - Duration::nanoseconds(1);
+        }
+        None
     }
 }
 
@@ -343,6 +481,9 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
+        if let Some(union) = &mut self.union {
+            return union.next();
+        }
         if self.done {
             return Ok(None);
         }
@@ -355,13 +496,13 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
         }
 
         loop {
-            let Some(next) = engine::next_after(&self.spec, self.local, self.local) else {
+            let Some(next) = self.next_local() else {
                 self.done = true;
                 return Ok(None);
             };
-            // A spec without a step names one time of day; as an iterator it
-            // yields that time at most once, on the current day.
-            if !engine::has_step(&self.spec) && next.date() != self.local.date() {
+            // A spec without a step names fixed times of day; on its own it
+            // yields them on the current day only. In a union they recur.
+            if !self.daily && !engine::has_step(&self.spec) && next.date() != self.local.date() {
                 self.done = true;
                 return Ok(None);
             }

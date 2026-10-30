@@ -5,7 +5,8 @@
 use chrono::Weekday;
 
 use super::spec::{
-    BizDayAdjustment, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec, WeekdayOption,
+    BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
+    WeekdayOption,
 };
 use crate::biz_day::Direction;
 use crate::utils::join;
@@ -28,6 +29,26 @@ fn ordinal(n: u32) -> String {
 
 fn count(n: u32, unit: &str) -> String {
     if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") }
+}
+
+/// Like [`join`], but three or more consecutive keys read as a range:
+/// `"Monday to Friday"`, `"1st to 10th and 15th"`.
+fn join_runs(items: impl IntoIterator<Item = (u32, String)>) -> String {
+    let mut runs: Vec<Vec<(u32, String)>> = Vec::new();
+    for (key, label) in items {
+        match runs.last_mut() {
+            Some(run) if run.last().is_some_and(|(k, _)| k + 1 == key) => run.push((key, label)),
+            _ => runs.push(vec![(key, label)]),
+        }
+    }
+    let parts: Vec<String> = runs
+        .into_iter()
+        .flat_map(|run| match run.as_slice() {
+            [(_, first), .., (_, last)] if run.len() >= 3 => vec![format!("{first} to {last}")],
+            _ => run.into_iter().map(|(_, label)| label).collect(),
+        })
+        .collect();
+    join(&parts)
 }
 
 fn weekday(wd: Weekday) -> &'static str {
@@ -55,9 +76,7 @@ fn months(spec: &Spec) -> Months {
         (Cycle::NextNth(ny), Cycle::NextNth(nm)) => Months::Stride(12 * ny + nm),
         (_, Cycle::NextNth(nm)) => Months::Stride(*nm),
         (_, Cycle::Values(ms)) => {
-            let names: Vec<String> =
-                ms.iter().map(|m| MONTHS[(*m - 1) as usize].to_string()).collect();
-            Months::In(join(&names))
+            Months::In(join_runs(ms.iter().map(|m| (*m, MONTHS[(*m - 1) as usize].to_string()))))
         }
         _ => Months::All,
     }
@@ -67,8 +86,7 @@ fn months(spec: &Spec) -> Months {
 fn years(spec: &Spec) -> String {
     match (&spec.years, &spec.months) {
         (Cycle::Values(ys), _) => {
-            let ys: Vec<String> = ys.iter().map(u32::to_string).collect();
-            format!(", in {}", join(&ys))
+            format!(", in {}", join_runs(ys.iter().map(|y| (*y, y.to_string()))))
         }
         // With an `nM` cadence the year step is part of the month stride.
         (Cycle::NextNth(n), m) if *n > 1 && !matches!(m, Cycle::NextNth(_)) => {
@@ -99,7 +117,6 @@ fn calendar_days(days: &DayCycle) -> Days {
         ),
         DayCycle::OnDays { days, .. } if days.is_empty() => Days::On("on the last day".into(), None),
         DayCycle::OnDays { days, option } => {
-            let ds: Vec<String> = days.iter().map(|d| ordinal(*d)).collect();
             let note = match option {
                 LastDayOption::NA if days.iter().any(|d| *d > 28) => Some("skipped in shorter months"),
                 LastDayOption::NA => None,
@@ -107,11 +124,12 @@ fn calendar_days(days: &DayCycle) -> Days {
                 LastDayOption::NextMonthFirstDay => Some("or the 1st of the next month, in shorter months"),
                 LastDayOption::NextMonthOverflow => Some("overflowing into the next month, in shorter months"),
             };
-            Days::On(format!("on the {}", join(&ds)), note)
+            Days::On(format!("on the {}", join_runs(days.iter().map(|d| (*d, ordinal(*d))))), note)
         }
         DayCycle::OnWeekDays { weekdays, option } => {
-            let names: Vec<String> = weekdays.iter().map(|w| weekday(w.0).to_string()).collect();
-            let names = join(&names);
+            let names = join_runs(
+                weekdays.iter().map(|w| (w.0.num_days_from_monday(), weekday(w.0).to_string())),
+            );
             match option {
                 WeekdayOption::NA => Days::Every(format!("every {names}")),
                 WeekdayOption::Starting(n) => {
@@ -122,6 +140,19 @@ fn calendar_days(days: &DayCycle) -> Days {
                     Days::On(format!("on the {}-to-last {names}", ordinal(u32::from(*n))), None)
                 }
             }
+        }
+        DayCycle::NthBizDay { calendar, option } => {
+            let unit = match calendar {
+                BizDayCalendar::BizDay => "business day",
+                BizDayCalendar::WeekDay => "weekday",
+            };
+            let which = match option {
+                WeekdayOption::Ending(None | Some(1)) => "last".to_string(),
+                WeekdayOption::Ending(Some(n)) => format!("{}-to-last", ordinal(u32::from(*n))),
+                WeekdayOption::Starting(n) => ordinal(u32::from(n.unwrap_or(1))),
+                WeekdayOption::NA => ordinal(1),
+            };
+            Days::On(format!("on the {which} {unit}"), None)
         }
         DayCycle::NextNth(..) => unreachable!("step rules are described separately"),
     }
@@ -171,6 +202,12 @@ fn adjustment(adj: &BizDayAdjustment) -> String {
         BizDayAdjustment::BizDay(d) => {
             format!(", moved to the {} business day when it is not one", dir(d))
         }
+        BizDayAdjustment::ModifiedFollowing => ", moved to the next business day when it is not one, \
+             or to the previous one if that is in the next month"
+            .to_string(),
+        BizDayAdjustment::ModifiedPreceding => ", moved to the previous business day when it is not one, \
+             or to the next one if that is in the previous month"
+            .to_string(),
         BizDayAdjustment::Prev(n) => format!(", moved {} earlier", count(*n, "business day")),
         BizDayAdjustment::Next(n) => format!(", moved {} later", count(*n, "business day")),
     }
@@ -225,10 +262,19 @@ mod tests {
             ("YY-MM-31N", "on the 31st of every month (or the 1st of the next month, in shorter months)"),
             ("YY-MM-31O", "on the 31st of every month (overflowing into the next month, in shorter months)"),
             ("YY-MM-MON", "every Monday"),
+            ("YY-MM-[MON-FRI]", "every Monday to Friday"),
+            ("YY-MM-[MON-WED,FRI]", "every Monday to Wednesday and Friday"),
+            ("YY-MM-[SAT-SUN]", "every Saturday and Sunday"),
+            ("YY-[01-06]-[01-10,15]", "on the 1st to 10th and 15th of January to June"),
+            ("[2025-2027]-12-L", "on the last day of December, in 2025 to 2027"),
             ("YY-[03,09]-[MON,FRI]", "every Monday and Friday in March and September"),
             ("YY-MM-WED#2", "on the 2nd Wednesday of every month"),
             ("YY-MM-FRI#L", "on the last Friday of every month"),
             ("YY-MM-FRI#2L", "on the 2nd-to-last Friday of every month"),
+            ("YY-MM-BD#3", "on the 3rd business day of every month"),
+            ("YY-MM-BD#L", "on the last business day of every month"),
+            ("YY-[03,06,09,12]-BD#2L", "on the 2nd-to-last business day of March, June, September and December"),
+            ("YY-MM-WD#1", "on the 1st weekday of every month"),
             ("YY-MM-1D", "every day"),
             ("YY-MM-7D", "every 7 days, counted from the start"),
             ("YY-MM-5BD", "every 5 business days, counted from the start"),
@@ -241,6 +287,11 @@ mod tests {
             ("YY-MM-DD~NB", "every day, moved to the next business day when it is not one"),
             ("YY-1M-L~W", "on the last day of every month, moved to the nearest weekday when it falls on a weekend"),
             ("YY-MM-L~2P", "on the last day of every month, moved 2 business days earlier"),
+            (
+                "YY-MM-31L~MF",
+                "on the 31st of every month (or the last day, in shorter months), moved to the next business day \
+                 when it is not one, or to the previous one if that is in the next month",
+            ),
             ("YY-MM-11~1N", "on the 11th of every month, moved 1 business day later"),
         ] {
             let parsed: Spec = spec.parse().unwrap();

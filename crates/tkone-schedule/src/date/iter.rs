@@ -1,4 +1,5 @@
-use super::{engine, spec::Spec};
+use super::{engine, spec::{DayCycle, Spec}};
+use crate::merge::{union_parts, Merge};
 use crate::utils::next_result_to_tz;
 use crate::{biz_day::BizDayProcessor, prelude::*, DstPolicy, Occurrence};
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone, Utc};
@@ -67,6 +68,8 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
     dst_policy: DstPolicy,
     /// Wall-clock cursor given to `resume_after`; `None` means `dtm`.
     local: Option<NaiveDateTime>,
+    /// Wall-clock start given to `resume_with_start`.
+    anchor: Option<NaiveDateTime>,
     marker_sealed: PhantomData<S>,
 }
 
@@ -114,6 +117,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
             end: NoEnd,
             dst_policy: DstPolicy::default(),
             local: None,
+            anchor: None,
             marker_sealed: PhantomData,
         }
     }
@@ -138,20 +142,58 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
         builder
     }
 
-    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        Ok(SpecIterator {
-            tz: self.dtm.timezone(),
-            // Results must be after `dtm` as an instant too, so a DST-shifted
-            // occurrence equal to it is not repeated.
-            last: Some(self.dtm.clone()),
-            dst_policy: self.dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new_after(
-                &self.spec,
-                self.bd_processor,
-                self.local.unwrap_or_else(|| self.dtm.naive_local()),
-            )?,
-        })
+    /// Resume a stored schedule from its original `start`: occurrences
+    /// strictly after `last_actual`, positioned as if iterating from `start`.
+    ///
+    /// Required for a union spec (`A | B`), whose parts would otherwise take
+    /// their cadence or step from another part's occurrence. For a plain spec
+    /// it gives the same results as [`resume_after`](Self::resume_after).
+    /// Pass both datetimes as stored, with their UTC offsets.
+    pub fn resume_with_start(
+        spec: &str,
+        bdp: BDP,
+        tz: Tz,
+        start: DateTime<FixedOffset>,
+        last_actual: DateTime<FixedOffset>,
+    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+        let mut builder = Self::resume_after(spec, bdp, tz, last_actual);
+        builder.anchor = Some(start.naive_local());
+        builder
     }
+
+    pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
+        build_after(self.spec, self.bd_processor, self.dtm, self.local, self.anchor, None, self.dst_policy)
+    }
+}
+
+/// Build a `new_after` / `resume_after` / `resume_with_start` iterator.
+fn build_after<Tz: TimeZone, BDP: BizDayProcessor>(
+    spec: String,
+    bdp: BDP,
+    dtm: DateTime<Tz>,
+    local: Option<NaiveDateTime>,
+    anchor: Option<NaiveDateTime>,
+    end: Option<NaiveDateTime>,
+    dst_policy: DstPolicy,
+) -> Result<SpecIterator<Tz, BDP>> {
+    let cursor = local.unwrap_or_else(|| dtm.naive_local());
+    let naive_spec_iter = match anchor {
+        Some(start) => NaiveSpecIterator::resumed(&spec, bdp, start, cursor, end)?,
+        None if local.is_some() && union_parts(&spec).is_some() => {
+            return Err(Error::UnsupportedResume(
+                "a union spec must be resumed with `resume_with_start`".into(),
+            ))
+        }
+        None => NaiveSpecIterator::new(&spec, bdp, cursor, cursor, None, end)?,
+    };
+    Ok(SpecIterator {
+        tz: dtm.timezone(),
+        // Results must be after `dtm` as an instant too, so a DST-shifted
+        // occurrence equal to it is not repeated.
+        last: Some(dtm),
+        dst_policy,
+        naive_spec_iter,
+    })
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
@@ -171,6 +213,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
             local: self.local,
+            anchor: self.anchor,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -181,21 +224,8 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
     SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed>
 {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
-        let local = self.local.unwrap_or_else(|| self.dtm.naive_local());
         let end = self.end.0.with_timezone(&self.dtm.timezone()).naive_local();
-        Ok(SpecIterator {
-            tz: self.dtm.timezone(),
-            last: Some(self.dtm.clone()),
-            dst_policy: self.dst_policy,
-            naive_spec_iter: NaiveSpecIterator::new(
-                &self.spec,
-                self.bd_processor,
-                local,
-                local,
-                None,
-                Some(end),
-            )?,
-        })
+        build_after(self.spec, self.bd_processor, self.dtm, self.local, self.anchor, Some(end), self.dst_policy)
     }
 }
 
@@ -294,6 +324,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             end: NoEnd,
             dst_policy: DstPolicy::default(),
             local: None,
+            anchor: None,
             marker_sealed: PhantomData,
         }
     }
@@ -317,6 +348,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             end: EndSpec(end_spec.into()),
             dst_policy: self.dst_policy,
             local: self.local,
+            anchor: self.anchor,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -339,6 +371,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor>
             end: EndDateTime(end),
             dst_policy: self.dst_policy,
             local: self.local,
+            anchor: self.anchor,
             marker_sealed: PhantomData,
             timezone: self.timezone,
         }
@@ -467,6 +500,12 @@ pub struct NaiveSpecIterator<BDP: BizDayProcessor> {
     index: usize,
     start: Option<NaiveDateTime>,
     end: Option<NaiveDateTime>,
+    /// For a union spec (`A | B`), its parts; the other fields are unused.
+    union: Option<Box<Merge<NaiveSpecIterator<BDP>, NaiveDateTime>>>,
+}
+
+fn actual(occurrence: &Occurrence<NaiveDateTime>) -> NaiveDateTime {
+    *occurrence.actual()
 }
 
 impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
@@ -478,6 +517,13 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         start: Option<NaiveDateTime>,
         end: Option<NaiveDateTime>,
     ) -> Result<Self> {
+        if let Some(parts) = union_parts(spec) {
+            let parts = parts
+                .into_iter()
+                .map(|part| Self::new(part, bdp.clone(), dtm, anchor, start, end))
+                .collect::<Result<Vec<_>>>()?;
+            return Ok(Self::union_of(parts));
+        }
         Ok(Self {
             spec: spec.parse()?,
             dtm,
@@ -488,7 +534,57 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
             index: 0,
             start,
             end,
+            union: None,
         })
+    }
+
+    fn union_of(parts: Vec<Self>) -> Self {
+        let mut outer = parts[0].clone();
+        outer.union = Some(Box::new(Merge::new(parts, actual)));
+        outer
+    }
+
+    /// Occurrences strictly after `last`, positioned as if iterating from
+    /// `start` (which is yielded first if it is after `last`) up to `end`.
+    pub(crate) fn resumed(
+        spec: &str,
+        bdp: BDP,
+        start: NaiveDateTime,
+        last: NaiveDateTime,
+        end: Option<NaiveDateTime>,
+    ) -> Result<Self> {
+        if let Some(parts) = union_parts(spec) {
+            let parts = parts
+                .into_iter()
+                .map(|part| Self::resumed(part, bdp.clone(), start, last, end))
+                .collect::<Result<Vec<_>>>()?;
+            return Ok(Self::union_of(parts));
+        }
+        let mut iter = Self::new(spec, bdp, start, start, Some(start), end)?;
+        if last < start {
+            // The start itself is still ahead (a datetime resumed on its
+            // start's date): yield it first, as a continuous iterator would.
+            return Ok(iter);
+        }
+        if !matches!(iter.spec.days, DayCycle::NextNth(..)) {
+            // Calendar rules depend only on the position and the anchor.
+            iter.index = 1;
+            iter.dtm = last;
+            return Ok(iter);
+        }
+        // Step rules advance from the previous occurrence: replay from the
+        // start, then step back so the first result after `last` is next.
+        loop {
+            let before = iter.dtm;
+            match iter.next()? {
+                Some(occurrence) if *occurrence.actual() <= last => continue,
+                Some(_) => {
+                    iter.dtm = before;
+                    return Ok(iter);
+                }
+                None => return Ok(iter),
+            }
+        }
     }
 
     /// Iterate occurrences strictly after `dtm`; `nY` / `nM` cadences align to `dtm`.
@@ -544,6 +640,9 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
     type Error = Error;
 
     fn next(&mut self) -> Result<Option<Self::Item>> {
+        if let Some(union) = &mut self.union {
+            return union.next();
+        }
         if let Some(end) = &self.end {
             if &self.dtm >= end {
                 return Ok(None);

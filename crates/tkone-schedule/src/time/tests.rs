@@ -810,3 +810,82 @@ fn test_end_spec_rolls_to_next_day() {
     assert_eq!(results.len(), 4); // 22:00, 23:00, 00:00, 01:00
     assert_eq!(*results.last().unwrap(), Utc.with_ymd_and_hms(2025, 1, 16, 1, 0, 0).unwrap());
 }
+
+#[test]
+fn test_time_list_iterates_the_current_day() {
+    let after = Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("[09,12,17]:00:00", after)
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    let at = |h| Utc.with_ymd_and_hms(2025, 1, 1, h, 0, 0).unwrap();
+    assert_eq!(got, vec![at(12), at(17)]);
+}
+
+#[test]
+fn test_hour_range_with_step() {
+    let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_with_start("09-16:15M:00", start)
+        .build()
+        .unwrap()
+        .take(33)
+        .collect()
+        .unwrap();
+    assert_eq!(got[31], Utc.with_ymd_and_hms(2025, 1, 1, 16, 45, 0).unwrap());
+    assert_eq!(got[32], Utc.with_ymd_and_hms(2025, 1, 2, 9, 0, 0).unwrap());
+    assert_eq!("09-16:15M:00".parse::<Spec>().unwrap().minutes, Cycle::Every(15));
+}
+
+#[test]
+fn test_midnight_anchor_aligns_steps_to_the_clock() {
+    use crate::TimeAnchor;
+    let at = |d, h, m, s| Utc.with_ymd_and_hms(2025, 1, d, h, m, s).unwrap();
+    let take = |spec: &str, after, anchor, n| -> Vec<DateTime<Utc>> {
+        SpecIteratorBuilder::new_after(spec, after)
+            .with_time_anchor(anchor)
+            .build()
+            .unwrap()
+            .take(n)
+            .collect()
+            .unwrap()
+    };
+    // Counted from the start by default; from midnight (the clock) on request.
+    assert_eq!(take("HH:15M:00", at(1, 9, 7, 0), TimeAnchor::Start, 2), vec![at(1, 9, 22, 0), at(1, 9, 37, 0)]);
+    assert_eq!(
+        take("HH:15M:00", at(1, 9, 7, 0), TimeAnchor::Midnight, 4),
+        vec![at(1, 9, 15, 0), at(1, 9, 30, 0), at(1, 9, 45, 0), at(1, 10, 0, 0)]
+    );
+    // Carried fields come from midnight: zero.
+    assert_eq!(take("1H:MM:SS", at(1, 9, 22, 45), TimeAnchor::Midnight, 2), vec![at(1, 10, 0, 0), at(1, 11, 0, 0)]);
+    // Each day restarts from its own midnight.
+    assert_eq!(
+        take("5H:00:00", at(1, 18, 0, 0), TimeAnchor::Midnight, 3),
+        vec![at(1, 20, 0, 0), at(2, 0, 0, 0), at(2, 5, 0, 0)]
+    );
+    assert_eq!(take("5H:00:00", at(1, 18, 0, 0), TimeAnchor::Start, 2), vec![at(1, 23, 0, 0), at(2, 4, 0, 0)]);
+    // Windows and lists work the same way.
+    assert_eq!(
+        take("09-16:20M:00", at(1, 16, 50, 0), TimeAnchor::Midnight, 2),
+        vec![at(2, 9, 0, 0), at(2, 9, 20, 0)]
+    );
+    // Fixed times are unaffected.
+    assert_eq!(take("[09,17]:00:00", at(1, 10, 0, 0), TimeAnchor::Midnight, 5), vec![at(1, 17, 0, 0)]);
+}
+
+#[test]
+fn test_midnight_anchor_across_spring_forward() {
+    use crate::TimeAnchor;
+    let tz = chrono_tz::America::New_York;
+    let after = tz.with_ymd_and_hms(2025, 3, 9, 1, 10, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("HH:30M:00", after)
+        .with_time_anchor(TimeAnchor::Midnight)
+        .build()
+        .unwrap()
+        .take(4)
+        .collect()
+        .unwrap();
+    let edt = |h, m| tz.with_ymd_and_hms(2025, 3, 9, h, m, 0).unwrap();
+    // 02:00 and 02:30 do not exist and move an hour later; 03:00 and 03:30 are not repeated.
+    assert_eq!(got, vec![edt(1, 30), edt(3, 0), edt(3, 30), edt(4, 0)]);
+}

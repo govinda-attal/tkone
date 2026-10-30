@@ -109,6 +109,7 @@
 //! | `nY`  | Every *n* years, aligned to the iterator start date |
 //! | `2025` | Exactly year 2025 |
 //! | `[2024,2025]` | Years 2024 or 2025 |
+//! | `[2024-2026]` | Years 2024 to 2026 (ranges work in every bracketed list) |
 //!
 //! #### Months
 //!
@@ -119,6 +120,7 @@
 //! | `nM`  | Every *n* months, aligned to the iterator start date |
 //! | `03`  | March only |
 //! | `[01,06,12]` | January, June, or December |
+//! | `[01-06]` | January to June |
 //!
 //! #### Days
 //!
@@ -136,14 +138,20 @@
 //! | `nWD` | Advance *n* weekdays (Mon–Fri) |
 //! | `MON` / `TUE` / … | Every occurrence of that weekday in the month |
 //! | `[MON,FRI]` | Every Monday and Friday |
+//! | `[MON-FRI]` | Every weekday (a range runs Monday to Sunday and does not wrap) |
+//! | `[01-10,15]` | 1st to 10th, and 15th |
 //! | `WED#2` | 2nd Wednesday of the month |
 //! | `FRI#L` | Last Friday of the month |
 //! | `THU#2L` | 2nd-to-last Thursday of the month |
+//! | `BD#3` | 3rd business day of the month |
+//! | `BD#L` | Last business day of the month |
+//! | `BD#2L` | 2nd-to-last business day of the month |
+//! | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) instead of business days |
 //!
 //! #### Business Day Adjustment (`~`)
 //!
 //! Applied after the raw calendar date is resolved. Directional variants
-//! (`~NB`, `~PB`, `~B`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
+//! (`~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
 //! when the raw date is not already a business/week day. Numeric variants
 //! (`~nP`, `~nN`) are **unconditional** offsets.
 //!
@@ -151,6 +159,8 @@
 //! |-------|---------|
 //! | `~NB` | Next business day (shift forward if not already a business day) |
 //! | `~PB` | Previous business day (shift back if not already a business day) |
+//! | `~MF` | Modified Following: next business day, unless that is in the next month — then previous |
+//! | `~MP` | Modified Preceding: previous business day, unless that is in the previous month — then next |
 //! | `~B`  | Nearest business day (shift to whichever direction is closer) |
 //! | `~NW` | Next weekday — Mon–Fri (shift forward if not already a weekday) |
 //! | `~PW` | Previous weekday — Mon–Fri (shift back if not already a weekday) |
@@ -174,10 +184,18 @@
 //! | `_`   | AsIs second |
 //! | `nS`  | Every *n* seconds |
 //! | `00`  | At second 0 |
+//! | `[09,12,17]` | A list: any of these values (any field) |
+//! | `09-16` | A range, inclusive: hours 9 to 16 (any field) |
+//! | `[09-11,14]` | Lists can contain ranges |
 //!
 //! **ForEach driving rule**: when no `Every` component exists, the finest
 //! `ForEach` field becomes `Every(1)` for its unit; coarser `ForEach` fields
 //! carry their current value unchanged.
+//!
+//! **Lists and ranges** fix a field to several values. Coarser than the step
+//! they form a window (`09-16:15M:00` = every 15 minutes from 09:00 to 16:45);
+//! finer, one grid per value (`HH:[00,30]:00` = at :00 and :30); with no step,
+//! several times of day (`[09,12,17]:00:00`).
 //!
 //! ### DateTime Spec — `<date_spec>T<time_spec>`
 //!
@@ -190,6 +208,25 @@
 //! "YY-MM-DDT1H:00:00"      →  date="YY-MM-DD"         time="1H:00:00"
 //! "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 //! ```
+//!
+//! ### Union — `<spec> | <spec> | …`
+//!
+//! Any date, time or datetime spec can be a union of specs of the same kind,
+//! separated by `|`. The iterator yields the occurrences of every part in
+//! order of actual time. When two parts produce the same actual time, only the
+//! first listed part's occurrence is kept, so actual times still strictly
+//! increase.
+//!
+//! ```text
+//! "YY-MM-BD#3 | YY-MM-L~PB"                     3rd and last business day of each month
+//! "09:[30,45]:00 | 10-15:15M:00 | 16:00:00"     every 15 minutes from 09:30 to 16:00
+//! "YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00"  different dates and times per part
+//! ```
+//!
+//! Each part keeps its own cadence and phase from the start. Fixed times of
+//! day in a time-only union recur every day. Resuming a union needs the
+//! schedule's start; see [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
+//! `describe()` works on each part's spec type, not on the union string.
 //!
 //! ### Checking a spec — `describe()`
 //!
@@ -271,6 +308,7 @@
 //! | cursor | `occurrence.actual().to_rfc3339()` | resuming |
 //! | due at | `occurrence.observed()` | when to run the action |
 //! | end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
+//! | start (for unions) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec |
 //!
 //! ```rust
 //! # use tkone_schedule::biz_day::WeekendSkipper;
@@ -349,9 +387,18 @@
 //!   it is not available when resuming.
 //! - Cadences (`3M`, `2Y`, `1Y-3M`) and step rules (`7D`, `5BD`) stay aligned,
 //!   because every stored occurrence lies on the cadence.
+//! - **A union spec (`A | B`) needs its start.** A stored occurrence belongs to
+//!   one part, and the other parts' cadences, steps and time grids are not
+//!   aligned to it. Store the start (the `new_with_start` start, or the first
+//!   occurrence's `actual`) and resume with
+//!   `resume_with_start(spec, bdp, tz, start, cursor)`, which positions every
+//!   part as if iterating from the start. `resume_after` on a union returns
+//!   [`Error::UnsupportedResume`], and so does a union in
+//!   [`IntervalMode::Elapsed`]. `resume_with_start` also works for plain specs,
+//!   with the same results as `resume_after`.
 //!
-//! The same `resume_after` exists on [`date::SpecIteratorBuilder`] and
-//! [`time::SpecIteratorBuilder`].
+//! The same `resume_after` and `resume_with_start` exist on
+//! [`date::SpecIteratorBuilder`] and [`time::SpecIteratorBuilder`].
 
 /// The `biz_day` module contains the [`biz_day::BizDayProcessor`] trait and
 /// built-in implementations for business day calculations.
@@ -367,11 +414,14 @@ pub mod datetime;
 pub mod time;
 
 mod error;
+mod merge;
 mod prelude;
 mod utils;
 
 #[cfg(test)]
 mod resume_tests;
+#[cfg(test)]
+mod union_tests;
 
 pub use error::{Error, Result};
 
@@ -434,9 +484,11 @@ pub enum IntervalMode {
     Elapsed,
 }
 
-/// Which times a combined datetime spec produces on each date.
+/// Where a time spec's steps and carried fields are counted from.
 ///
-/// Configure via `.with_time_anchor(…)` on [`datetime::SpecIteratorBuilder`].
+/// Configure via `.with_time_anchor(…)` on [`datetime::SpecIteratorBuilder`]
+/// or [`time::SpecIteratorBuilder`]. `Midnight` gives cron-like clock
+/// alignment: `HH:15M:00` runs at :00, :15, :30 and :45 whatever the start.
 ///
 /// Starting 2025-01-15 09:22:45:
 ///
@@ -446,7 +498,10 @@ pub enum IntervalMode {
 /// | `2H:00:00` | 01:00, 03:00, …, 23:00 | 00:00, 02:00, …, 22:00 |
 /// | `_:_:_` | 09:22:45 | 00:00:00 |
 ///
-/// On the start date itself only times after the start are produced.
+/// On the start date itself only times after the start are produced. A
+/// time-only iterator with `Midnight` behaves the same way across days: each
+/// day's times restart from that day's midnight (`5H:00:00` gives 00:00,
+/// 05:00, … 20:00, then 00:00 the next day).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TimeAnchor {
     /// Every date follows the start's time of day: steps keep its phase and

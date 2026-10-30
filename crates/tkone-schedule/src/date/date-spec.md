@@ -20,6 +20,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 | `nY` | Every *n* years from the start year (e.g. `1Y`, `2Y`, `3Y`) |
 | `YYYY` | Specific year only (e.g. `2025`) |
 | `[Y1,Y2,...]` | Enumerated years only (e.g. `[2025,2026]`) |
+| `[Y1-Y2,...]` | Inclusive ranges inside a list (e.g. `[2025-2027]`, `[2025-2027,2030]`) |
 
 ### Month
 
@@ -29,6 +30,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 | `nM` | Every *n* months from the start month (e.g. `1M`, `3M`, `6M`) |
 | `MM` (2-digit) | Specific month only (e.g. `01`, `06`, `12`) |
 | `[M1,M2,...]` | Enumerated months only (e.g. `[01,06]`, `[03,09]`) |
+| `[M1-M2,...]` | Inclusive ranges inside a list (e.g. `[01-06]`, `[01-03,10-12]`) |
 
 ### Day
 
@@ -43,12 +45,22 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 | `DDN` | Fixed day; roll to 1st of next month on overflow (e.g. `31N`) |
 | `DDO` | Fixed day; overflow into next month by remainder days (e.g. `31O`) |
 | `L` | Last day of month |
-| `WD` | Every occurrence of weekday (e.g. `MON`, `FRI`) |
-| `[WD,WD,...]` | Every occurrence of any listed weekday (e.g. `[MON,WED,FRI]`) |
-| `WD#N` | *N*th weekday of month (e.g. `MON#1`, `WED#2`) |
-| `WD#L` | Last weekday of month (e.g. `FRI#L`) |
-| `WD#NL` | *N*th-from-last weekday of month (e.g. `WED#2L`) |
+| `DAY` | Every occurrence of a weekday, where `DAY` is `MON` … `SUN` (e.g. `MON`, `FRI`) |
+| `[DAY,DAY,...]` | Every occurrence of any listed weekday (e.g. `[MON,WED,FRI]`) |
+| `[DAY-DAY,...]` | Weekday ranges, Monday to Sunday, no wrap-around (e.g. `[MON-FRI]`, `[MON-WED,FRI]`) |
+| `DAY#N` | *N*th occurrence of a weekday in the month (e.g. `MON#1`, `WED#2`) |
+| `DAY#L` | Last occurrence of a weekday in the month (e.g. `FRI#L`) |
+| `DAY#NL` | *N*th-from-last occurrence of a weekday in the month (e.g. `WED#2L`) |
+| `BD#N` | *N*th business day of the month, using the configured processor (e.g. `BD#1`, `BD#3`) |
+| `BD#L` | Last business day of the month |
+| `BD#NL` | *N*th-from-last business day of the month (e.g. `BD#2L`) |
+| `WD#N` / `WD#L` / `WD#NL` | Same as `BD#…`, counting weekdays (Mon–Fri) and ignoring holidays |
 | `[D1,D2,...]` | Enumerated days of month (e.g. `[01,15]`, `[01,10,20,25]`) |
+| `[D1-D2,...]` | Day ranges inside a list (e.g. `[01-10]`, `[01-05,15]`) |
+
+Ranges are only written inside brackets, because `-` also separates the year, month and day.
+They are inclusive and must run forwards (`[06-01]` and `[FRI-MON]` are rejected). A spec shows
+them expanded: `YY-MM-[MON-FRI]` displays as `YY-MM-[MON,TUE,WED,THU,FRI]`.
 
 ### Business Day Adjustment (optional)
 
@@ -60,12 +72,21 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 | `~NB` | If result is not a biz day, move to **next** biz day (configured processor) |
 | `~PB` | If result is not a biz day, move to **previous** biz day (configured processor) |
 | `~B`  | If result is not a biz day, move to **nearest** biz day (configured processor) |
+| `~MF` | **Modified Following**: if not a biz day, move to the **next** biz day, unless that is in the next month — then the **previous** one |
+| `~MP` | **Modified Preceding**: if not a biz day, move to the **previous** biz day, unless that is in the previous month — then the **next** one |
 | `~nN` | **Unconditional**: add *n* biz days (e.g. `~2N`) |
 | `~nP` | **Unconditional**: subtract *n* biz days (e.g. `~3P`) |
 
 `~NW`/`~PW`/`~W` always use the built-in WeekendSkipper (Sat/Sun only).  
 `~NB`/`~PB`/`~B` use the configured `BizDayProcessor` and can account for custom holidays.  
 `~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.
+
+### Union (optional)
+
+`<spec> | <spec> | …` yields the dates of every part, in order: `YY-MM-BD#3 | YY-MM-L~PB` is the
+3rd and the last business day of each month. A date produced by two parts is yielded once (the
+first listed part's occurrence). Each part keeps its own cadence from the start, so resume a
+union with `resume_with_start`, which also takes the schedule's start.
 
 ---
 
@@ -889,6 +910,85 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 ---
 
+### 33. `YY-MM-BD#3` — 3rd business day of every month
+
+Counts the business days of each month with the configured processor and picks the 3rd. Unlike
+`YY-MM-01~2N`, this is right whether or not the 1st is a business day. (`WeekendSkipper`
+shown; with a holiday calendar, holidays are not counted.)
+
+**Start:** 2025-01-03 (Friday)
+
+```text
+ 1. 2025-01-03 Fri
+ 2. 2025-02-05 Wed   (Feb 1 is a Saturday: Mon 3, Tue 4, Wed 5)
+ 3. 2025-03-05 Wed
+ 4. 2025-04-03 Thu
+ 5. 2025-05-05 Mon
+ 6. 2025-06-04 Wed
+ 7. 2025-07-03 Thu
+ 8. 2025-08-05 Tue
+ 9. 2025-09-03 Wed
+10. 2025-10-03 Fri
+11. 2025-11-05 Wed
+12. 2025-12-03 Wed
+```
+
+All results are `Exact`: the rule only ever picks business days.
+
+---
+
+### 34. `YY-MM-BD#L` — Last business day of every month
+
+Same result as `YY-MM-L~PB`, but reported as `Exact` on the business day itself rather than
+`AdjustedEarlier(last_day, business_day)`. Use `~PB` when the calendar month end matters too
+(for example, accrual to the 31st).
+
+**Start:** 2025-01-31 (Friday)
+
+```text
+ 1. 2025-01-31 Fri
+ 2. 2025-02-28 Fri
+ 3. 2025-03-31 Mon
+ 4. 2025-04-30 Wed
+ 5. 2025-05-30 Fri
+ 6. 2025-06-30 Mon
+ 7. 2025-07-31 Thu
+ 8. 2025-08-29 Fri
+ 9. 2025-09-30 Tue
+10. 2025-10-31 Fri
+11. 2025-11-28 Fri
+12. 2025-12-31 Wed
+```
+
+`BD#2L` is the 2nd-to-last business day; `WD#…` counts weekdays and ignores holidays.
+
+---
+
+### 35. `YY-1M-L~MF` — Last day of every month, Modified Following
+
+The standard convention for many swaps and loans: roll forward to the next business day, but
+never into the next month.
+
+**`new_after`:** 2025-05-01
+
+```text
+ 1. AdjustedEarlier actual=2025-05-31 Sat  observed=2025-05-30 Fri   (Jun 2 is next month: roll back)
+ 2. Exact           2025-06-30 Mon
+ 3. Exact           2025-07-31 Thu
+ 4. AdjustedEarlier actual=2025-08-31 Sun  observed=2025-08-29 Fri
+ 5. Exact           2025-09-30 Tue
+ 6. Exact           2025-10-31 Fri
+ 7. AdjustedEarlier actual=2025-11-30 Sun  observed=2025-11-28 Fri
+ 8. Exact           2025-12-31 Wed
+```
+
+Compare `~NB`, which would give 2025-06-02 for May. A mid-month date such as `YY-MM-15~MF`
+behaves exactly like `~NB`, because rolling forward from the 15th never leaves the month.
+`~MP` is the mirror image: `YY-MM-01~MP` on Saturday 2025-03-01 gives Monday 2025-03-03, since
+the previous business day (Feb 28) is in the previous month.
+
+---
+
 ## Behaviour Notes
 
 ### How a spec is evaluated
@@ -933,7 +1033,7 @@ All three handle the case where the target day does not exist in a given month:
 
 Specs with finite year sets (`2025-MM-01`, `[2025,2026]-MM-15`) terminate once all valid dates are exhausted. Callers should handle `None` from the iterator.
 
-Out-of-range values (month `13`, day `32`, `WD#6`, step `0M` / `0D`) are rejected when parsing with `Error::InvalidDateSpec`. Specs that parse but can never match (`YY-02-30`) return `Error::IteratorNotConverged` after a bounded search instead of looping forever.
+Out-of-range values (month `13`, day `32`, `FRI#6`, `BD#24`, step `0M` / `0D`) are rejected when parsing with `Error::InvalidDateSpec`. Specs that parse but can never match (`YY-02-30`) return `Error::IteratorNotConverged` after a bounded search instead of looping forever.
 
 ### Daylight saving time
 
@@ -1007,13 +1107,15 @@ YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb
 
 ---
 
-### `WD#0` — Zero-th occurrence of a weekday
+### `DAY#0` — Zero-th occurrence of a weekday
 
 **Example:** `YY-MM-MON#0`
 
-**Problem:** There is no "zeroth" weekday occurrence in any month, and no month has a sixth. `WD#0` and `WD#6` (and `WD#0L`, `WD#6L`) are rejected when parsing with `Error::InvalidDateSpec`.
+**Problem:** There is no "zeroth" weekday occurrence in any month, and no month has a sixth. `MON#0` and `MON#6` (and `MON#0L`, `MON#6L`) are rejected when parsing with `Error::InvalidDateSpec`.
 
-**Safe alternative:** Use `WD#1` (first occurrence) or `WD#L` (last occurrence).
+**Safe alternative:** Use `MON#1` (first occurrence) or `MON#L` (last occurrence).
+
+The same applies to `BD#0` / `WD#0`, which are rejected. `BD#n` / `WD#n` accept 1–23; a month with fewer business days (or weekdays) than *n* is skipped.
 
 ---
 
@@ -1045,6 +1147,7 @@ YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb
 |-------------|---------|-----------------|
 | `YY-02-30` / `YY-02-31` | Day never exists in February; `IteratorNotConverged` | `YY-02-L` or `YY-02-28L` |
 | `YY-MM-31` (no suffix) | Silently skips short months | `YY-MM-31L` (clamp) |
-| `WD#0`, `WD#6` | Occurrence never exists; rejected at parse time | `WD#1` or `WD#L` |
+| `MON#0`, `MON#6` | Occurrence never exists; rejected at parse time | `MON#1` or `MON#L` |
+| `BD#23` | Most months have fewer business days; they are skipped | `BD#L` for the last business day |
 | `YYYY-02-29` (non-leap year) | Zero results | `YYYY-02-28L` |
 | `[YYYY,...]-02-29` (mix) | Non-leap years silently skipped | Filter list to leap years only |

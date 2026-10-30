@@ -13,6 +13,11 @@ pub enum Error {
     IteratorNotConverged,
     #[error("ambiguous or non-existent local time in target timezone: {0}")]
     AmbiguousLocalTime(String),
+    /// A union spec (`A | B`) in [`IntervalMode::Elapsed`](crate::IntervalMode::Elapsed)
+    /// can be iterated but not resumed: each part's elapsed steps depend on its
+    /// own previous occurrence, which is not stored.
+    #[error("cannot resume: {0}")]
+    UnsupportedResume(String),
     #[error("{0}")]
     Custom(String),
 }

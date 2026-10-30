@@ -145,16 +145,16 @@ impl WeekendSkipper {
 
     fn nearest_biz_day(&self, dtm: &NaiveDateTime) -> Result<NaiveDateTime> {
         if self.is_biz_day(dtm)? {
-            return Ok(dtm.clone());
+            return Ok(*dtm);
         }
 
-        let mut current_date = dtm.clone();
+        let mut current_date = *dtm;
         let step = Duration::days(1);
         if dtm.day() == 1 {
             while current_date.weekday() == chrono::Weekday::Sat
                 || current_date.weekday() == chrono::Weekday::Sun
             {
-                current_date = current_date + step;
+                current_date += step;
             }
             return Ok(current_date);
         }
@@ -164,7 +164,7 @@ impl WeekendSkipper {
             while current_date.weekday() == chrono::Weekday::Sat
                 || current_date.weekday() == chrono::Weekday::Sun
             {
-                current_date = current_date - step;
+                current_date -= step;
             }
             return Ok(current_date);
         }
@@ -173,7 +173,7 @@ impl WeekendSkipper {
             return Ok(current_date - step);
         }
 
-        return Ok(current_date + step);
+        Ok(current_date + step)
     }
 }
 
@@ -185,10 +185,10 @@ impl BizDayProcessor for WeekendSkipper {
 
     fn add(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime> {
         let mut days_added = 0;
-        let mut current_date = dtm.clone();
+        let mut current_date = *dtm;
 
         while days_added < num {
-            current_date = current_date + Duration::days(1);
+            current_date += Duration::days(1);
             if self.is_biz_day(&current_date)? {
                 days_added += 1;
             }
@@ -199,10 +199,10 @@ impl BizDayProcessor for WeekendSkipper {
 
     fn sub(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime> {
         let mut days_subtracted = 0;
-        let mut current_date = dtm.clone();
+        let mut current_date = *dtm;
 
         while days_subtracted < num {
-            current_date = current_date - Duration::days(1);
+            current_date -= Duration::days(1);
             if self.is_biz_day(&current_date)? {
                 days_subtracted += 1;
             }

@@ -27,3 +27,6 @@ tokio-util        = { workspace = true }
 [dev-dependencies]
 tkone-trigger-macros = { workspace = true }
 thiserror            = { workspace = true }
+
+[lints]
+workspace = true

@@ -322,12 +322,8 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
             self.fire_callbacks(ctx).await;
         }
 
-        loop {
-            let Some(nr) = self.iter.next_fire() else {
-                break;
-            };
-
-            let fire_at = nr.observed().clone();
+        while let Some(nr) = self.iter.next_fire() {
+            let fire_at = *nr.observed();
             let delay = fire_at - Utc::now();
             if delay > chrono::Duration::zero() {
                 let sleep = delay.to_std().unwrap_or_default();

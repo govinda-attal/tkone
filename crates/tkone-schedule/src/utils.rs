@@ -110,14 +110,8 @@ impl DateLikeUtils for NaiveDateTime {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WeekdayStartingMonday(pub Weekday);
-
-impl PartialEq for WeekdayStartingMonday {
-    fn eq(&self, Self(other): &Self) -> bool {
-        self.0.num_days_from_monday() == other.num_days_from_monday()
-    }
-}
 
 impl Ord for WeekdayStartingMonday {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {

@@ -849,7 +849,7 @@ mod tests {
         ];
 
         for (raw, yr, mo, dy, adj) in inputs {
-            let res = parse_spec(raw).expect(&format!("Failed to parse {}", raw));
+            let res = parse_spec(raw).unwrap_or_else(|_| panic!("Failed to parse {}", raw));
             assert_eq!(res.years, yr);
             assert_eq!(res.months, mo);
             assert_eq!(res.days, dy);
@@ -1023,7 +1023,7 @@ mod table_tests {
 
             // 1. Parse
             let parsed =
-                parse_spec(case.input).expect(&format!("Failed to parse input: {}", case.input));
+                parse_spec(case.input).unwrap_or_else(|_| panic!("Failed to parse input: {}", case.input));
 
             // 2. Assert Struct Equality
             // Using Debug formatting for clearer error diffs if they don't match

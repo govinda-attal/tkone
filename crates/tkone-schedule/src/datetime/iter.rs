@@ -354,8 +354,11 @@ pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     end: Option<DateTime<Tz>>,
     done: bool,
     /// For a union spec (`A | B`), its parts; the other fields are unused.
-    union: Option<Box<Merge<SpecIterator<Tz, BDP>, DateTime<Tz>>>>,
+    union: Option<Box<Parts<Tz, BDP>>>,
 }
+
+/// The parts of a union spec, merged by actual time.
+type Parts<Tz, BDP> = Merge<SpecIterator<Tz, BDP>, DateTime<Tz>>;
 
 fn actual<Tz: TimeZone>(occurrence: &Occurrence<DateTime<Tz>>) -> DateTime<Tz> {
     occurrence.actual().clone()

@@ -20,3 +20,6 @@ tkone-trigger-macros = { workspace = true }
 chrono               = { workspace = true }
 thiserror            = { workspace = true }
 tokio                = { workspace = true }
+
+[lints]
+workspace = true

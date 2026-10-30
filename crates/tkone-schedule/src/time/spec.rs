@@ -297,7 +297,6 @@ mod tests {
                 hours: Cycle::ForEach,
                 minutes: Cycle::Every(30),
                 seconds: Cycle::At(5),
-                ..Default::default()
             },
         );
         assert_eq!(time_spec.to_string(), "HH:30M:05");

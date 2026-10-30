@@ -36,3 +36,12 @@ syn               = { version = "2", features = ["full"] }
 thiserror         = "2.0"
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }
 tokio-util        = "0.7"
+
+# Lint levels for every member (each crate opts in with `[lints] workspace = true`).
+# Clippy reads lint levels from here, not from clippy.toml, which only holds
+# lint configuration such as thresholds.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

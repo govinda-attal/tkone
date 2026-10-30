@@ -652,9 +652,9 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
         if self.index == 0 {
             if let Some(start) = &self.start {
                 if &self.dtm <= start {
-                    self.dtm = start.clone();
+                    self.dtm = *start;
                     self.index += 1;
-                    return Ok(Some(Occurrence::Exact(start.clone())));
+                    return Ok(Some(Occurrence::Exact(*start)));
                 }
             }
         }
@@ -676,7 +676,7 @@ impl<BDP: BizDayProcessor + Clone> FallibleIterator for NaiveSpecIterator<BDP> {
         };
 
         self.index += 1;
-        self.dtm = next_result.actual().clone();
+        self.dtm = *next_result.actual();
         Ok(Some(next_result))
     }
 }

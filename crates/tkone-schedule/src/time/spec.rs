@@ -167,6 +167,28 @@ impl FromStr for Spec {
     }
 }
 
+impl Spec {
+    /// Describes the spec in plain English, to check it reads as intended
+    /// before it is scheduled.
+    ///
+    /// "The start" is the time the iterator is anchored to: the
+    /// `new_with_start` start or the `new_after` cursor (in a datetime spec,
+    /// see [`TimeAnchor`](crate::TimeAnchor)). A spec without a step names a
+    /// single time of day.
+    ///
+    /// ```rust
+    /// use tkone_schedule::time::Spec;
+    /// let describe = |s: &str| s.parse::<Spec>().unwrap().describe();
+    /// assert_eq!(describe("HH:MM:00"), "every minute, at second 00");
+    /// assert_eq!(describe("1H:MM:00"), "every hour, at the start's minute and second 00");
+    /// assert_eq!(describe("HH:30M:00"), "every 30 minutes, at second 00, counted from the start");
+    /// assert_eq!(describe("09:30:00"), "at 09:30:00");
+    /// ```
+    pub fn describe(&self) -> String {
+        super::describe::describe(self)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Display
 // ---------------------------------------------------------------------------

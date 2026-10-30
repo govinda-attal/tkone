@@ -41,9 +41,50 @@ impl FromStr for Spec {
     }
 }
 
+impl Spec {
+    /// Describes the spec in plain English, to check it reads as intended
+    /// before it is scheduled: the date part, then the times on each date.
+    ///
+    /// "The start" is the start (or `new_after` cursor) for the date part and,
+    /// with the default [`TimeAnchor::Start`](crate::TimeAnchor::Start), for
+    /// the time part too. With [`TimeAnchor::Midnight`](crate::TimeAnchor::Midnight)
+    /// the time part counts from midnight of each date instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either part does not parse.
+    ///
+    /// ```rust
+    /// use tkone_schedule::datetime::Spec;
+    /// let spec: Spec = "YY-MM-MONT1H:MM:00".parse().unwrap();
+    /// assert_eq!(
+    ///     spec.describe().unwrap(),
+    ///     "every Monday; every hour, at the start's minute and second 00"
+    /// );
+    /// ```
+    pub fn describe(&self) -> Result<String> {
+        let date = self.date_spec.parse::<crate::date::Spec>()?;
+        let time = self.time_spec.parse::<crate::time::Spec>()?;
+        Ok(format!("{}; {}", date.describe(), time.describe()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_describe() {
+        for (spec, expected) in [
+            ("YY-MM-FRI#LT16:30:00", "on the last Friday of every month; at 16:30:00"),
+            ("YY-1M-31L~WT11:00:00", "on the 31st of every month (or the last day, in shorter months), moved to the nearest weekday when it falls on a weekend; at 11:00:00"),
+            ("YY-MM-DDTHH:30M:00", "every day; every 30 minutes, at second 00, counted from the start"),
+            ("YY-1M-31T_:_:_", "on the 31st of every month (skipped in shorter months); at the start's time of day"),
+        ] {
+            assert_eq!(spec.parse::<Spec>().unwrap().describe().unwrap(), expected, "{spec}");
+        }
+        assert!("YY-13-01T09:00:00".parse::<Spec>().unwrap().describe().is_err());
+    }
 
     #[test]
     fn test_compact_at_time() {

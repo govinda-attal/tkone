@@ -408,6 +408,30 @@ impl FromStr for Spec {
     }
 }
 
+impl Spec {
+    /// Describes the spec in plain English, to check it reads as intended
+    /// before it is scheduled.
+    ///
+    /// "The start" is the date the iterator is anchored to: the
+    /// `new_with_start` start or the `new_after` cursor. `nY` / `nM` cadences
+    /// and day steps are counted from it.
+    ///
+    /// ```rust
+    /// use tkone_schedule::date::Spec;
+    /// let describe = |s: &str| s.parse::<Spec>().unwrap().describe();
+    /// assert_eq!(describe("YY-MM-FRI#L"), "on the last Friday of every month");
+    /// assert_eq!(
+    ///     describe("YY-3M-31L~NB"),
+    ///     "on the 31st of every 3rd month, counted from the start's month \
+    ///      (or the last day, in shorter months), \
+    ///      moved to the next business day when it is not one"
+    /// );
+    /// ```
+    pub fn describe(&self) -> String {
+        super::describe::describe(self)
+    }
+}
+
 /// Parse a date spec string into a [`Spec`].
 ///
 /// This is the free-function equivalent of `input.parse::<Spec>()`.

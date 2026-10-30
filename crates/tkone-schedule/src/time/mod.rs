@@ -50,6 +50,7 @@
 //! *Run `cargo run -p tkone-schedule --example time_recurrence` for a complete program.*
 #![doc = include_str!("time-spec.md")]
 
+mod describe;
 mod engine;
 mod iter;
 mod spec;

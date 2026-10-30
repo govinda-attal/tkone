@@ -79,6 +79,19 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 
 ---
 
+## Checking a spec
+
+[`Spec::describe`](crate::date::Spec::describe) renders a spec in plain English:
+
+```text
+YY-3M-15     →  on the 15th of every 3rd month, counted from the start's month
+YY-MM-31     →  on the 31st of every month (skipped in shorter months)
+YY-01-4D     →  every 4 days in January, counted from the start, restarting on the 1st of the next eligible month after a gap
+YY-MM-L~2P   →  on the last day of every month, moved 2 business days earlier
+```
+
+---
+
 ## Examples
 
 ### 1. `YY-MM-DD` — Every calendar day

@@ -85,6 +85,15 @@ Examples: `HH:30M:00` (minutes drive, hours carry), `1H:MM:SS` (hours drive, min
 
 The rule: find the rightmost (finest) `ForEach` component; it advances by 1 of its unit. All coarser `ForEach` components carry. `At` components always pin.
 
+To check how a spec is read, call [`Spec::describe`](crate::time::Spec::describe):
+
+```text
+HH:MM:00   →  every minute, at second 00
+1H:MM:00   →  every hour, at the start's minute and second 00
+HH:30M:00  →  every 30 minutes, at second 00, counted from the start
+09:30M:00  →  every 30 minutes, at second 00, counted from the start, only during the 09:00 hour
+```
+
 ---
 
 ## AsIs vs ForEach

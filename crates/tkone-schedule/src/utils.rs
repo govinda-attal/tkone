@@ -2,6 +2,15 @@ use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime
 
 use crate::{prelude::*, DstPolicy, Occurrence};
 
+/// `"a"`, `"a and b"`, `"a, b and c"` — for spec descriptions.
+pub(crate) fn join(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
 /// Convert a `NaiveDateTime` to `DateTime<Tz>` according to `policy`.
 ///
 /// - `Adjust` (default): a time inside a gap (spring-forward) moves later by

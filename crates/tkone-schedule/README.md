@@ -199,6 +199,28 @@ in the date spec are not confused with the separator.
 "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 ```
 
+##### Checking a spec — `describe()`
+
+Every spec type has a `describe()` that renders it in plain English, so a
+spec can be shown to a user, or checked in a review, before it is
+scheduled. It catches near-misses like `HH:MM:00` vs `1H:MM:00`:
+
+```rust
+use tkone_schedule::{date, datetime, time};
+let t = |s: &str| s.parse::<time::Spec>().unwrap().describe();
+assert_eq!(t("HH:MM:00"), "every minute, at second 00");
+assert_eq!(t("1H:MM:00"), "every hour, at the start's minute and second 00");
+
+let d: date::Spec = "YY-MM-L~PB".parse().unwrap();
+assert_eq!(d.describe(), "on the last day of every month, moved to the previous business day when it is not one");
+
+let dt: datetime::Spec = "YY-MM-FRI#LT16:30:00".parse().unwrap();
+assert_eq!(dt.describe().unwrap(), "on the last Friday of every month; at 16:30:00");
+```
+
+"The start" in a description is the iterator's anchor: the `new_with_start`
+start or the `new_after` / `resume_after` cursor.
+
 #### `Occurrence` and Business Day Adjustments
 
 Date and datetime iterators yield [`Occurrence<T>`] rather than plain `T`.

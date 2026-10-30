@@ -27,14 +27,14 @@ use super::spec::{Cycle, Spec};
 const MAX_SCAN: u32 = 10_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Unit {
+pub(super) enum Unit {
     Second,
     Minute,
     Hour,
 }
 
 impl Unit {
-    fn duration(self, n: i64) -> Duration {
+    pub(super) fn duration(self, n: i64) -> Duration {
         match self {
             Unit::Second => Duration::seconds(n),
             Unit::Minute => Duration::minutes(n),
@@ -43,7 +43,7 @@ impl Unit {
     }
 }
 
-fn fields(spec: &Spec) -> [(Unit, &Cycle); 3] {
+pub(super) fn fields(spec: &Spec) -> [(Unit, &Cycle); 3] {
     [
         (Unit::Second, &spec.seconds),
         (Unit::Minute, &spec.minutes),
@@ -52,7 +52,7 @@ fn fields(spec: &Spec) -> [(Unit, &Cycle); 3] {
 }
 
 /// The finest unit with an `Every`, or failing that the finest `ForEach`.
-fn driver(spec: &Spec) -> Option<Unit> {
+pub(super) fn driver(spec: &Spec) -> Option<Unit> {
     let finest = |pred: fn(&Cycle) -> bool| fields(spec).into_iter().find(|(_, c)| pred(c)).map(|(u, _)| u);
     finest(|c| matches!(c, Cycle::Every(_))).or_else(|| finest(|c| matches!(c, Cycle::ForEach)))
 }
@@ -62,7 +62,7 @@ pub(crate) fn has_step(spec: &Spec) -> bool {
     driver(spec).is_some()
 }
 
-fn step(spec: &Spec, driver: Unit) -> Duration {
+pub(super) fn step(spec: &Spec, driver: Unit) -> Duration {
     let every: Duration = fields(spec)
         .into_iter()
         .filter_map(|(u, c)| match c {

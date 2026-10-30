@@ -224,7 +224,8 @@ daylight saving:
 - A schedule is **just text**. Store the text, the time zone and the last occurrence, and the
   next one can be computed at any time, on any machine. A resumed schedule gives exactly the
   same dates as one that ran without stopping, including across clock changes and business-day
-  adjustments.
+  adjustments. For a combined schedule (`A | B`), also store when it started, so every part
+  picks up where it would have been.
 
 ---
 
@@ -257,6 +258,8 @@ The format is deliberately small. Some things it leaves out:
 
 - **No exclusion dates or occurrence counts.** A schedule is bounded by an end date or an end
   schedule, not "stop after 12 times" or "except 25 December".
+- **No "every other week on several days".** Every 14 days works for one weekday (`14D`), but
+  "every second week on Tuesday and Thursday" does not fit in one rule.
 - **No built-in holiday data.** Holiday calendars come from your application.
 
 ---

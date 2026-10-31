@@ -1,5 +1,3 @@
-//! # tkone-schedule
-//!
 //! A scheduling and recurrence library built on flexible mini-language specs for dates,
 //! times, and combined datetimes. Supports business day processing, timezone awareness,
 //! and fallible iteration.
@@ -256,7 +254,7 @@
 //! a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
 //! the same way.
 //!
-//! ### Start, end and time zone — `<spec> @<start> ..<end>`
+//! ### Start, end, time zone and count — `<spec> @<start> ..<end> x<count>`
 //!
 //! A spec can end with its own start and end, each a date or datetime with an
 //! optional UTC offset and an optional IANA time zone in RFC 9557 brackets, so
@@ -270,7 +268,10 @@
 //! - `@start` anchors the schedule (cadences, week cycles, positions, steps,
 //!   the time grid) and is an inclusive lower bound.
 //! - `..end` is an inclusive upper bound; a date-only end covers the whole day.
-//! - A start or end given to the builder takes precedence. `new_after(dtm)` and
+//! - `xN` stops after *N* results counted from the start (excluded ones are not
+//!   counted); with an end too, whichever comes first stops it. Without a
+//!   start it is counted from the first result, or a builder start.
+//! - A start, end or count given to the builder takes precedence. `new_after(dtm)` and
 //!   `resume_after(last)` take a cursor, not a start, so a written start still
 //!   anchors the schedule.
 //! - `SpecIteratorBuilder::from_spec(spec, …)` builds from the text alone, in
@@ -290,10 +291,10 @@
 //! # Ok::<(), tkone_schedule::Error>(())
 //! ```
 //!
-//! ### Count — `with_count(n)` (builder option)
+//! ### Count — `xN` or `with_count(n)`
 //!
-//! `.with_count(n)` stops after *n* results counted from the start. It is a
-//! builder option, not spec syntax. Excluded occurrences are not counted, so
+//! `xN` in the spec, or `.with_count(n)` on the builder (which takes
+//! precedence), stops after *n* results counted from the start. Excluded occurrences are not counted, so
 //! `with_count(12)` always yields 12 (unlike iCalendar's `COUNT` with `EXDATE`).
 //!
 //! ```rust

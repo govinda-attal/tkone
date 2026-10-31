@@ -4,14 +4,14 @@
 
 ```text
 <date_spec>T<time_spec>
-<datetime_spec> | <datetime_spec> | …  ! <date_spec> | …  @<start> ..<end>
+<datetime_spec> | <datetime_spec> | …  ! <date_spec> | …  @<start> ..<end> x<count>
 ```
 
 The `T` separator joins a [date spec](../date/date-spec.md) and a [time spec](../time/time-spec.md).
 Both parts are required. Refer to those documents for the full syntax of each component. Several
 datetime specs can be combined with `|`, whole dates removed after `!`
-([Exclusions](#8-exclusions)), and a start, end and time zone added at the end
-([Start, end and time zone](#9-start-end-and-time-zone)).
+([Exclusions](#exclusions)), and a start, end and time zone added at the end
+([Start, end, time zone and count](#start-end-time-zone-and-count)).
 
 ### Separator detection
 
@@ -28,6 +28,45 @@ YY-MM-DDT_:_:_      →  date="YY-MM-DD"   time="_:_:_"       ✓ _: recognised
 YY-MM-BD#3T[09,17]:00:00  →  date="YY-MM-BD#3"  time="[09,17]:00:00"  ✓ list recognised
 YY-MM-[MON,WED]T09-16:30M:00  →  date="YY-MM-[MON,WED]"  time="09-16:30M:00"  ✓ range recognised
 ```
+
+---
+
+## Combining and bounding specs
+
+These apply to whole datetime specs: combine several with `|`, remove whole dates after `!`,
+and end with a start, end, time zone and count.
+
+### Union
+
+`<datetime spec> | <datetime spec> | …` yields the ticks of every part in order, each part with
+its own date rule and times: `YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00` is 09:00 on the first
+business day and 17:00 on the last Friday of each month. A tick produced by two parts is
+yielded once. Describe a union with `datetime::describe(spec)`.
+
+### Exclusions
+
+`<spec> ! <exclusion>` drops every tick whose **actual date** matches `<exclusion>`, a *date*
+spec (a union is allowed): `YY-MM-[MON-FRI]T09:00:00 ! YY-12-25 | YY-01-01` skips 25 December
+and 1 January entirely. The exclusion applies to everything before the `!`, including every part
+of a union. It cannot use day steps (`7D`) or have its own `!`.
+
+> *Library:* `.with_exclusions(date_spec)` on the builder adds exclusions the same way.
+> `.with_count(n)` stops after `n` ticks counted from the start (excluded ticks are not counted);
+> a counted schedule is resumed with `resume_with_start`.
+
+### Start, end, time zone and count
+
+`YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London] ..2025-06-30` is a complete schedule:
+every other Tuesday and Thursday at 18:00 London time, from 7 January to 30 June 2025. The start
+anchors the date part (cadences, week cycles, positions, steps) and, with the default
+`TimeAnchor::Start`, the time grid; results are the ticks at or after it. A tick before the
+start on the start's day is skipped: `YY-MM-DDT09:00:00 @2025-01-06T10:00:00` begins on
+7 January. `xN` counts ticks, not dates: `YY-MM-DDT[09,17]:00:00 @2025-01-06 x4` is two days.
+
+The syntax and precedence rules are the same as for
+[date specs](crate::date#start-end-and-time-zone-optional).
+`SpecIteratorBuilder::from_spec(spec, bdp)` builds from the text alone, in its time zone.
+
 
 ---
 
@@ -126,30 +165,6 @@ last_actual)`, with the schedule's stored start, so every part keeps its own dat
 Describe a union with `datetime::describe(spec)`. The crate docs' section *Persisting and
 resuming a schedule* has the full pattern and the rules that keep resumed results identical to a
 continuous iterator.
-
-### 8. Exclusions
-
-`<spec> ! <exclusion>` drops every tick whose **actual date** matches `<exclusion>`, a *date*
-spec (a union is allowed): `YY-MM-[MON-FRI]T09:00:00 ! YY-12-25 | YY-01-01` skips 25 December
-and 1 January entirely. The exclusion applies to everything before the `!`, including every part
-of a union. It cannot use day steps (`7D`) or have its own `!`.
-
-> *Library:* `.with_exclusions(date_spec)` on the builder adds exclusions the same way.
-> `.with_count(n)` stops after `n` ticks counted from the start (excluded ticks are not counted);
-> a counted schedule is resumed with `resume_with_start`.
-
-### 9. Start, end and time zone
-
-`YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London] ..2025-06-30` is a complete schedule:
-every other Tuesday and Thursday at 18:00 London time, from 7 January to 30 June 2025. The start
-anchors the date part (cadences, week cycles, positions, steps) and, with the default
-`TimeAnchor::Start`, the time grid; results are the ticks at or after it. A tick before the
-start on the start's day is skipped: `YY-MM-DDT09:00:00 @2025-01-06T10:00:00` begins on
-7 January.
-
-The syntax and precedence rules are the same as for
-[date specs](crate::date#start-end-and-time-zone-optional).
-`SpecIteratorBuilder::from_spec(spec, bdp)` builds from the text alone, in its time zone.
 
 ---
 
@@ -492,7 +507,7 @@ One tick per date at 11:00; result type carries the overflow metadata.
 
 ---
 
-### 12. `YY-1M-31L~NBTH:30M:00` (sub-daily on adjusted date)
+### 12. `YY-1M-31L~NBTHH:30M:00` (sub-daily on adjusted date)
 
 **Start:** 2025-01-31 08:00:00
 
@@ -604,6 +619,74 @@ With `TimeAnchor::Midnight` every date — including Jan 15 after the passthroug
 
 ---
 
+### Group 7 — Week cycles, positions, unions, exclusions and bounds
+
+These specs carry their own start (and time zone), so they are shown as built with
+`SpecIteratorBuilder::from_spec`.
+
+---
+
+### 17. `YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]` — Every other Tuesday and Thursday at 18:00 London time
+
+The week cycle counts from the week of the start; the time is read on London's wall clock.
+
+```text
+ 1. 2025-01-07 Tue 18:00 GMT
+ 2. 2025-01-09 Thu 18:00 GMT
+ 3. 2025-01-21 Tue 18:00 GMT
+ 4. 2025-01-23 Thu 18:00 GMT
+ 5. 2025-02-04 Tue 18:00 GMT
+ 6. 2025-02-06 Thu 18:00 GMT
+```
+
+---
+
+### 18. `YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00 @2025-01-01` — Two rules, each with its own time
+
+A union of two datetime specs, merged in time order.
+
+```text
+ 1. 2025-01-01 Wed 09:00 UTC
+ 2. 2025-01-31 Fri 17:00 UTC
+ 3. 2025-02-03 Mon 09:00 UTC
+ 4. 2025-02-28 Fri 17:00 UTC
+ 5. 2025-03-03 Mon 09:00 UTC
+ 6. 2025-03-28 Fri 17:00 UTC
+```
+
+---
+
+### 19. `YY-MM-[MON-FRI]T09:00:00 ! YY-12-25 | YY-12-26 @2025-12-22` — Weekdays at 09:00, except the holidays
+
+The exclusion is a date spec: every tick on 25 and 26 December is skipped.
+
+```text
+ 1. 2025-12-22 Mon 09:00 UTC
+ 2. 2025-12-23 Tue 09:00 UTC
+ 3. 2025-12-24 Wed 09:00 UTC
+ 4. 2025-12-29 Mon 09:00 UTC
+ 5. 2025-12-30 Tue 09:00 UTC
+ 6. 2025-12-31 Wed 09:00 UTC
+```
+
+---
+
+### 20. `YY-MM-8D[1-4]T06:00:00 @2025-03-07[America/Chicago] x6` — Four on, four off, six shifts, across the clock change
+
+Shifts stay at 06:00 on the wall clock when daylight saving starts on 9 March (CST → CDT), and
+the count stops the schedule after the sixth shift.
+
+```text
+ 1. 2025-03-07 Fri 06:00 CST
+ 2. 2025-03-08 Sat 06:00 CST
+ 3. 2025-03-09 Sun 06:00 CDT
+ 4. 2025-03-10 Mon 06:00 CDT
+ 5. 2025-03-15 Sat 06:00 CDT
+ 6. 2025-03-16 Sun 06:00 CDT
+```
+
+---
+
 ## Daylight Saving Time
 
 Times are computed on the wall clock (like cron), then mapped to real instants with the
@@ -641,7 +724,7 @@ Exact(04:00 -04:00)                         ← the real 03:00 is dropped as a d
 
 ---
 
-## Semantically Surprising Combinations
+## Edge cases
 
 The following combinations are valid and parse without error but produce behaviour that
 frequently surprises callers. They are not bugs; they are documented here so the semantics

@@ -1,43 +1,26 @@
 # tkone-schedule
 
-A scheduling and recurrence library built on a flexible mini-language for dates, times, and
-combined datetimes. Supports business-day processing, timezone awareness, and fallible iteration.
-
 New to the schedule format? Read the [introduction](INTRODUCTION.md). It explains why the format
 exists, how it compares with cron, Quartz and iCalendar RRULE, and walks through the spec with
-real-world examples.
+real-world examples. This README covers using the library.
 
 ## Add to your project
 
 ```toml
 [dependencies]
-tkone-schedule = { path = "crates/tkone-schedule" }
-
-[dev-dependencies]
-chrono-tz = "0.10"
-fallible-iterator = "0.3"
+tkone-schedule    = { path = "crates/tkone-schedule" }
+chrono            = "0.4"
+chrono-tz         = "0.10"  # to name time zones, e.g. chrono_tz::Europe::London
+fallible-iterator = "0.3"   # the iterators are fallible iterators
 ```
 
-## Core concepts
-
-The library is organised around three independent spec types, each with a corresponding
-recurrence iterator:
-
-| Module     | Spec string example          | Iterator item                    | Use when…                    |
-|------------|------------------------------|----------------------------------|------------------------------|
-| `date`     | `"YY-1M-31L"`                | `Occurrence<DateTime<Tz>>`       | calendar-day recurrence      |
-| `time`     | `"1H:00:00"`                 | `DateTime<Tz>`                   | intra-day time recurrence    |
-| `datetime` | `"YY-1M-31L~WT11:00:00"`    | `Occurrence<DateTime<Tz>>`       | combined date + time         |
-
 <!-- cargo-rdme start -->
-
-### tkone-schedule
 
 A scheduling and recurrence library built on flexible mini-language specs for dates,
 times, and combined datetimes. Supports business day processing, timezone awareness,
 and fallible iteration.
 
-#### Core Concepts
+## Core Concepts
 
 The library is organised around three independent spec types, each with a
 corresponding recurrence iterator:
@@ -48,9 +31,9 @@ corresponding recurrence iterator:
 | [`time`] | `"1H:00:00"` | `DateTime<Tz>` | intra-day time recurrence |
 | [`datetime`] | `"YY-1M-31L~NBT11:00:00"` | `Occurrence<DateTime<Tz>>` | combined date + time |
 
-#### Quick Start
+## Quick Start
 
-##### 1 — Find the first matching date, then iterate from it
+### 1 — Find the first matching date, then iterate from it
 
 The most common pattern is to derive a concrete *start datetime* from the spec
 itself — i.e. "what is the very next occurrence?" — and then hand that datetime
@@ -70,7 +53,7 @@ let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
 ```
 *Run `cargo run -p tkone-schedule --example date_recurrence` for the full program.*
 
-##### 2 — Combined date + time recurrence
+### 2 — Combined date + time recurrence
 
 Append `T<time_spec>` to a date spec to create a [`datetime`] schedule.
 The iterator visits each valid calendar date in order and emits every
@@ -89,7 +72,7 @@ let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~NBT11:00:00", bdp, start
 ```
 *Run `cargo run -p tkone-schedule --example datetime_recurrence` for the full program.*
 
-##### 3 — Time-only recurrence
+### 3 — Time-only recurrence
 
 ```rust
 // Every 30 minutes starting at 09:00
@@ -98,7 +81,7 @@ let iter = SpecIteratorBuilder::new_with_start("HH:30M:00", start).build().unwra
 ```
 *Run `cargo run -p tkone-schedule --example time_recurrence` for the full program.*
 
-#### Running the Bundled Examples
+## Running the Bundled Examples
 
 The crate ships runnable examples under `examples/`. Run any of them with:
 
@@ -108,11 +91,11 @@ cargo run -p tkone-schedule --example datetime_recurrence
 cargo run -p tkone-schedule --example time_recurrence
 ```
 
-#### Spec Syntax Reference
+## Spec Syntax Reference
 
-##### Date Spec — `<years>-<months>-<days>[/<weeks>][~<adj>]`
+### Date Spec — `<years>-<months>-<days>[/<weeks>][~<adj>]`
 
-###### Years
+#### Years
 
 | Token | Meaning |
 |-------|---------|
@@ -124,7 +107,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | `[2024,2025]` | Years 2024 or 2025 |
 | `[2024-2026]` | Years 2024 to 2026 (ranges work in every bracketed list) |
 
-###### Months
+#### Months
 
 | Token | Meaning |
 |-------|---------|
@@ -136,7 +119,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | `[01,06,12]` | January, June, or December |
 | `[01-06]` | January to June |
 
-###### Days
+#### Days
 
 | Token | Meaning |
 |-------|---------|
@@ -163,7 +146,7 @@ cargo run -p tkone-schedule --example time_recurrence
 | `BD#2L` | 2nd-to-last business day of the month |
 | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) instead of business days |
 
-###### Weeks (`/nW` after the day rule)
+#### Weeks (`/nW` after the day rule)
 
 | Token | Meaning |
 |-------|---------|
@@ -172,7 +155,7 @@ cargo run -p tkone-schedule --example time_recurrence
 
 Weeks run Monday to Sunday; week 1 is the week containing the start.
 
-###### Business Day Adjustment (`~`)
+#### Business Day Adjustment (`~`)
 
 Applied after the raw calendar date is resolved. Directional variants
 (`~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
@@ -192,7 +175,7 @@ when the raw date is not already a business/week day. Numeric variants
 | `~3P` | 3 business days earlier (unconditional) |
 | `~2N` | 2 business days later (unconditional) |
 
-##### Time Spec — `<hours>:<minutes>:<seconds>`
+### Time Spec — `<hours>:<minutes>:<seconds>`
 
 | Token | Meaning |
 |-------|---------|
@@ -221,7 +204,7 @@ they form a window (`09-16:15M:00` = every 15 minutes from 09:00 to 16:45);
 finer, one grid per value (`HH:[00,30]:00` = at :00 and :30); with no step,
 several times of day (`[09,12,17]:00:00`).
 
-##### DateTime Spec — `<date_spec>T<time_spec>`
+### DateTime Spec — `<date_spec>T<time_spec>`
 
 The `T` separator is detected by the pattern that follows it (`HH:`, `nH:`,
 or a two-digit clock hour `dd:`), so weekday tokens like `TUE` and `THU`
@@ -233,7 +216,7 @@ in the date spec are not confused with the separator.
 "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 ```
 
-##### Union — `<spec> | <spec> | …`
+### Union — `<spec> | <spec> | …`
 
 Any date, time or datetime spec can be a union of specs of the same kind,
 separated by `|`. The iterator yields the occurrences of every part in
@@ -253,7 +236,7 @@ schedule's start; see [Persisting and resuming a schedule](#persisting-and-resum
 To describe a union, use [`date::describe`], [`time::describe`] or
 [`datetime::describe`], which take the union string.
 
-##### Exclusions — `<spec> ! <exclusion> | <exclusion> | …`
+### Exclusions — `<spec> ! <exclusion> | <exclusion> | …`
 
 Everything after a `!` is excluded:
 
@@ -268,7 +251,7 @@ The exclusion applies to everything before the `!`, including every part of
 a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
 the same way.
 
-##### Start, end and time zone — `<spec> @<start> ..<end>`
+### Start, end, time zone and count — `<spec> @<start> ..<end> x<count>`
 
 A spec can end with its own start and end, each a date or datetime with an
 optional UTC offset and an optional IANA time zone in RFC 9557 brackets, so
@@ -282,7 +265,10 @@ the text alone defines the schedule:
 - `@start` anchors the schedule (cadences, week cycles, positions, steps,
   the time grid) and is an inclusive lower bound.
 - `..end` is an inclusive upper bound; a date-only end covers the whole day.
-- A start or end given to the builder takes precedence. `new_after(dtm)` and
+- `xN` stops after *N* results counted from the start (excluded ones are not
+  counted); with an end too, whichever comes first stops it. Without a
+  start it is counted from the first result, or a builder start.
+- A start, end or count given to the builder takes precedence. `new_after(dtm)` and
   `resume_after(last)` take a cursor, not a start, so a written start still
   anchors the schedule.
 - `SpecIteratorBuilder::from_spec(spec, …)` builds from the text alone, in
@@ -301,10 +287,10 @@ let shifts: Vec<_> = SpecIteratorBuilder::from_spec(spec, WeekendSkipper::new())
 assert_eq!(shifts, ["01 06:00", "02 06:00", "03 06:00", "04 06:00", "09 06:00", "10 06:00", "11 06:00", "12 06:00"]);
 ```
 
-##### Count — `with_count(n)` (builder option)
+### Count — `xN` or `with_count(n)`
 
-`.with_count(n)` stops after *n* results counted from the start. It is a
-builder option, not spec syntax. Excluded occurrences are not counted, so
+`xN` in the spec, or `.with_count(n)` on the builder (which takes
+precedence), stops after *n* results counted from the start. Excluded occurrences are not counted, so
 `with_count(12)` always yields 12 (unlike iCalendar's `COUNT` with `EXDATE`).
 
 ```rust
@@ -325,7 +311,7 @@ assert_eq!(dates[6], "2025-09");
 assert_eq!(dates[11], "2026-02");
 ```
 
-##### Checking a spec — `describe()`
+### Checking a spec — `describe()`
 
 Every spec type has a `describe()` that renders it in plain English, so a
 spec can be shown to a user, or checked in a review, before it is
@@ -347,7 +333,7 @@ assert_eq!(dt.describe().unwrap(), "on the last Friday of every month; at 16:30:
 "The start" in a description is the iterator's anchor: the `new_with_start`
 start or the `new_after` / `resume_after` cursor.
 
-#### `Occurrence` and Business Day Adjustments
+## `Occurrence` and Business Day Adjustments
 
 Date and datetime iterators yield [`Occurrence<T>`] rather than plain `T`.
 This distinguishes unadjusted occurrences from ones where the business day
@@ -360,7 +346,7 @@ rule moved the settlement date:
 Use `.observed()` for the settlement date and `.actual()` for the raw
 calendar date.
 
-#### Daylight Saving Time
+## Daylight Saving Time
 
 Schedules are computed on the wall clock (like cron), then mapped to real
 instants in the iterator's timezone.
@@ -387,7 +373,7 @@ real elapsed time rather than on the wall clock.
   Exact(Dec 29), AdjustedLater(Dec 30 -10:00, Dec 31 +14:00), Exact(Jan 1)
 ```
 
-#### Persisting and resuming a schedule
+## Persisting and resuming a schedule
 
 An application that stores schedules in a database does not keep an
 iterator alive. It stores the next occurrence, runs the action when that is
@@ -501,132 +487,44 @@ The same `resume_after` and `resume_with_start` exist on
 
 <!-- cargo-rdme end -->
 
-## `Occurrence` and business-day adjustments
+## Further reading
 
-Date and datetime iterators yield `Occurrence<T>` rather than plain `T`, distinguishing
-unadjusted dates from adjusted ones:
-
-| Variant | Meaning |
-|---------|---------|
-| `Exact(t)` | No adjustment; `actual == observed` |
-| `AdjustedLater(actual, observed)` | Settlement moved *later* than the raw calendar date |
-| `AdjustedEarlier(actual, observed)` | Settlement moved *earlier* than the raw calendar date |
-
-Use `.observed()` for the settlement date and `.actual()` for the raw calendar date.
-
-`AdjustedLater` is also used when a scheduled local time falls in a DST gap: `actual` shows the
-time as scheduled and `observed` the time it happens at (the same instant). See
-[Daylight saving time](#daylight-saving-time).
-
-## Daylight saving time
-
-Schedules follow the wall clock and never repeat an instant:
-
-| Situation | Default behaviour | Options |
-|-----------|-------------------|---------|
-| Time doesn't exist (spring-forward, skipped day) | Moves later by the gap; reported as `AdjustedLater` in date / datetime results | `DstPolicy::Strict` returns an error |
-| Time exists twice (fall-back) | Visited once, at the earlier offset | `DstPolicy::Strict` returns an error |
-| Two scheduled times land on one instant | The later one is dropped | — |
-| Time-spec steps (`nH`, `nM`, `nS`) | Move the wall clock, like cron | `IntervalMode::Elapsed` (time and datetime iterators) measures real elapsed time |
-
-Worked examples for each case: [Time spec](src/time/time-spec.md#daylight-saving-time),
-[DateTime spec](src/datetime/date-time-spec.md#daylight-saving-time),
-[Date spec](src/date/date-spec.md#daylight-saving-time).
-
-## Spec syntax
-
-### Date spec — `<years>-<months>-<days>[~<adj>]`
-
-| Component | Example tokens | Meaning |
-|-----------|---------------|---------|
-| Years | `YY` `nY` `2025` `[2024,2025]` `[2024-2026]` | Every year / every n years / specific / enumerated / range |
-| Months | `MM` `nM` `06` `[01,06,12]` `[01-06]` | Every month / every n months / specific / enumerated / range |
-| Weeks | `/2W` `/4W[1,2]` (after the day rule) | Every 2nd week / weeks 1–2 of every 4, from the start's week |
-| Days | `DD` `L` `15` `[01-10]` `nD` `8D[1-4]` `nBD` `MON` `[MON-FRI]` `FRI#L` `BD#3` `BD#L` | Every day / last / fixed / rolling / weekday patterns / nth business day |
-| Adjustment | `~W` `~B` `~NB` `~PB` `~MF` `~MP` `~NW` `~PW` `~nN` `~nP` | Conditional or unconditional business-day shift (incl. Modified Following / Preceding) |
-
-Full syntax with all tokens and worked examples:
-**[Date Spec Reference →](src/date/date-spec.md)**
-
-### Time spec — `<hours>:<minutes>:<seconds>`
-
-| Token type | Examples | Meaning |
-|------------|----------|---------|
-| `Every(n)` | `1H` `30M` `15S` | Advance by n units each tick |
-| `At(v)` | `09` `30` `00` | Pin to exact value |
-| `Values` | `[09,12,17]` `09-16` `[09-11,14]` | Pin to any of a list / inclusive range |
-| `ForEach` | `HH` `MM` `SS` | Carry (when `Every` present) or drive by 1 unit (finest wildcard) |
-| `AsIs` | `_` | No-op; preserve current value |
-
-Full syntax, semantics, and worked examples:
-**[Time Spec Reference →](src/time/time-spec.md)**
-
-### Union — `<spec> | <spec> | …`
-
-Any date, time or datetime spec can combine several specs of the same kind with `|`; results
-from all parts are merged in time order (`"09:[30,45]:00 | 10-15:15M:00 | 16:00:00"` = every 15
-minutes from 09:30 to 16:00).
-
-### Start, end and time zone — `<spec> @<start> ..<end>`
-
-`"YY-3M-15~NB @2025-02-15 ..2027-02-15"`, `"YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]"`:
-the start anchors the schedule and is an inclusive lower bound, the end is an inclusive upper
-bound, and the bracketed IANA zone (RFC 9557) is the zone they are read in. A start or end given
-to the builder takes precedence. `SpecIteratorBuilder::from_spec(spec, …)` builds from the text
-alone, and a stored schedule with `@start` resumes with plain `resume_after`.
-
-### Exclusions — `<spec> ! <exclusion> | …`
-
-Everything after `!` is excluded: a date spec for date and datetime specs (by actual date), a
-time spec for time specs (`"YY-MM-DD ! YY-12-25 | YY-01-01"`, `"1H:00:00 ! 12:MM:SS"`).
-`.with_exclusions(spec)` on the builder does the same.
-
-### DateTime spec — `<date_spec>T<time_spec>`
-
-The `T` separator is detected by what immediately follows it (`HH:`, `nH:`, `_:`, a
-two-digit clock hour, an hour range `09-16:` or an hour list `[09,12]:`), so weekday tokens like `TUE` and `THU` in the date part are never
-misidentified.
-
-```
-"YY-1M-31L~WT11:00:00"   →  date="YY-1M-31L~W"    time="11:00:00"
-"YY-MM-DDTHH:30M:00"     →  date="YY-MM-DD"         time="HH:30M:00"
-"YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
-```
-
-Full combining semantics, tick-per-day rules, and edge cases:
-**[DateTime Spec Reference →](src/datetime/date-time-spec.md)**
+- [Introduction to the format](INTRODUCTION.md): why it exists, the syntax in five minutes,
+  and a comparison with cron, Quartz and RRULE
+- [Date spec reference](src/date/date-spec.md): every date token, with worked examples
+- [Time spec reference](src/time/time-spec.md): the time grid, steps, windows and lists
+- [Combined date and time reference](src/datetime/date-time-spec.md): how dates and times
+  combine, time anchors and edge cases
+- Daylight saving worked examples: [date](src/date/date-spec.md#daylight-saving-time),
+  [time](src/time/time-spec.md#daylight-saving-time),
+  [datetime](src/datetime/date-time-spec.md#daylight-saving-time)
 
 ## Builder options
 
-These are library options set when building an iterator; they are not part of the spec text.
-The [introduction](INTRODUCTION.md) covers the format itself.
+These are set when building an iterator, not written in the spec. Where the spec can say the
+same thing (`@start`, `..end`, `xN`, `!`), the builder's value takes precedence.
 
 | Option | Iterators | Default | Effect |
 |--------|-----------|---------|--------|
-| `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound; nothing is invented at the boundary |
+| `::new_after(spec, …, dtm)` / `::new(spec, …, tz)` | all | — | Results strictly after `dtm` (or now) |
+| `::new_with_start(spec, …, start)` | all | — | `start` is the first result, as-is; cadences count from it |
+| `::from_spec(spec, …)` | all | — | Build from the text alone: its `@start`, `..end`, `xN` and `[Zone]` (UTC if none) |
+| `::resume_after(spec, …, tz, last)` / `::resume_with_start(…, start, last)` | all | — | Continue a stored schedule (see below) |
+| `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound; overrides `..end` |
+| `.with_count(n)` | all | — | Stop after `n` results counted from the start; overrides `xN`; excluded occurrences are not counted |
+| `.with_exclusions(spec)` | all | — | Same as writing `! spec`; combined with exclusions already there |
 | `.with_dst_policy(…)` | all | `Adjust` | `Strict` turns DST gaps and overlaps into errors |
 | `.with_interval_mode(…)` | time, datetime | `WallClock` | `Elapsed` measures steps in real time across DST |
-| `.with_exclusions(spec)` | all | — | Same as writing `! spec` in the spec; combined with exclusions already there |
-| `::from_spec(spec, …)` | all | — | Build from the text alone: its `@start`, `..end` and `[Zone]` (UTC if none) |
-| `.with_count(n)` | all | — | Stop after `n` results counted from the start; excluded occurrences are not counted |
-| `.with_time_anchor(…)` | datetime, time | `Start` | `Midnight` counts steps from each day's 00:00 (clock-aligned, like cron) instead of from the start's time of day |
+| `.with_time_anchor(…)` | time, datetime | `Start` | `Midnight` counts steps from each day's 00:00 (clock-aligned, like cron) instead of from the start's time of day |
 
 `new_with_start(start)` always yields `start` first, unchanged and as `Exact`, even if it does
 not match the spec. That lets you feed an already-adjusted (observed) date back in as the start.
 
 To continue a schedule stored in a database, use `resume_after(spec, …, tz, last_actual)` with
-the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end. A union
-spec (`A | B`) or a schedule with `with_count` must be resumed with
-`resume_with_start(spec, …, tz, start, last_actual)`, which also needs the schedule's stored start — see
-[Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
-
-## Runnable examples
-
-| Example | Command |
-|---------|---------|
-| Date recurrence | `cargo run -p tkone-schedule --example date_recurrence` |
-| Date + time recurrence | `cargo run -p tkone-schedule --example datetime_recurrence` |
-| Time-only recurrence | `cargo run -p tkone-schedule --example time_recurrence` |
+the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end. If the spec
+has no `@start` and is a union (`A | B`), has a cycle with positions (`/4W[1,2]`, `8D[1-4]`) or a
+count, resume it with `resume_with_start(spec, …, tz, start, last_actual)` and the stored start.
+See [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
 
 ## API docs
 
@@ -636,8 +534,9 @@ cargo doc -p tkone-schedule --open
 
 ## Keeping README in sync
 
-The Quick Start section is generated from the `//!` doc comments in `src/lib.rs` via
-[`cargo-rdme`](https://github.com/orium/cargo-rdme). To regenerate:
+Everything between the `cargo-rdme` markers is generated from the `//!` doc comments in
+`src/lib.rs` via [`cargo-rdme`](https://github.com/orium/cargo-rdme). Edit those, not the
+README, then regenerate:
 
 ```sh
 cargo install cargo-rdme

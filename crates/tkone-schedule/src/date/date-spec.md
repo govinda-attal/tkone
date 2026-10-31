@@ -4,10 +4,10 @@
 
 ```text
 YEAR-MONTH-DAY[/WEEKS][~ADJUSTMENT]
-SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …  @START ..END
+SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …  @START ..END xCOUNT
 ```
 
-All three components are required. The optional `/WEEKS` suffix keeps only some weeks ([Week cycles](#week-cycles-optional)), and the optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), dates removed after `!` ([Exclusions](#exclusions-optional)), and a start, end and time zone added at the end ([Start, end and time zone](#start-end-and-time-zone-optional)).
+All three components are required. The optional `/WEEKS` suffix keeps only some weeks ([Week cycles](#week-cycles-optional)), and the optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), dates removed after `!` ([Exclusions](#exclusions-optional)), and a start, end, time zone and count added at the end ([Start, end and time zone](#start-end-and-time-zone-optional)).
 
 ---
 
@@ -86,26 +86,6 @@ is shown as `[MON-FRI]`, and `[15,01]` as `[01,15]`.
 `~NB`/`~PB`/`~B` use the configured `BizDayProcessor` and can account for custom holidays.  
 `~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.
 
-### Union (optional)
-
-`<spec> | <spec> | …` yields the dates of every part, in order: `YY-MM-BD#3 | YY-MM-L~PB` is the
-3rd and the last business day of each month. A date produced by two parts is yielded once (the
-first listed part's occurrence). Each part keeps its own cadence from the start, so resume a
-union with `resume_with_start`, which also takes the schedule's start. Describe a union with
-`date::describe(spec)`.
-
-### Exclusions (optional)
-
-`<spec> ! <exclusion>` drops the dates of `<spec>` that match `<exclusion>`, another date spec,
-which can itself be a union: `YY-MM-DD ! YY-12-25 | YY-01-01` is every day except 25 December
-and 1 January. A date is matched by its **actual** (unadjusted) date, and the exclusion applies
-to everything before the `!`, including every part of a union. An exclusion spec cannot use day
-steps (`7D`, `5BD`) or have its own `!`.
-
-> *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way, combined with
-> any written in the spec. `.with_count(n)` stops after `n` results counted from the start
-> (excluded dates are not counted); a counted schedule is resumed with `resume_with_start`.
-
 ### Week cycles (optional)
 
 `/nW` after the day rule keeps only the dates in every *n*th week, and `/nW[P,...]` the dates in
@@ -143,6 +123,31 @@ month cycle, and `nBD[…]` / `nWD[…]` are not supported.
 > position when an occurrence is stored, so resuming needs the schedule's start: written in the
 > spec (`@…`), or given to `resume_with_start`.
 
+## Combining and bounding specs
+
+These apply to whole specs, after the date part: combine several with `|`, remove dates after
+`!`, and end with a start, end, time zone and count.
+
+### Union (optional)
+
+`<spec> | <spec> | …` yields the dates of every part, in order: `YY-MM-BD#3 | YY-MM-L~PB` is the
+3rd and the last business day of each month. A date produced by two parts is yielded once (the
+first listed part's occurrence). Each part keeps its own cadence from the start, so resume a
+union with `resume_with_start`, which also takes the schedule's start. Describe a union with
+`date::describe(spec)`.
+
+### Exclusions (optional)
+
+`<spec> ! <exclusion>` drops the dates of `<spec>` that match `<exclusion>`, another date spec,
+which can itself be a union: `YY-MM-DD ! YY-12-25 | YY-01-01` is every day except 25 December
+and 1 January. A date is matched by its **actual** (unadjusted) date, and the exclusion applies
+to everything before the `!`, including every part of a union. An exclusion spec cannot use day
+steps (`7D`, `5BD`) or have its own `!`.
+
+> *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way, combined with
+> any written in the spec. `.with_count(n)` stops after `n` results counted from the start
+> (excluded dates are not counted); a counted schedule is resumed with `resume_with_start`.
+
 ### Start, end and time zone (optional)
 
 `<spec> @<start> ..<end>` ends the spec with a start and/or an end, each a date or datetime with
@@ -161,12 +166,16 @@ YY-MM-15 ..2025-12-31
 - **`..end`** is an inclusive upper bound; a date-only end covers the whole day.
 - **`[Zone]`** names the IANA time zone the start and end are read in; a `+hh:mm` offset fixes a
   single instant instead.
+- **`xN`** stops after *N* results, counted from the start (`YY-MM-01~MF @2025-04-01 x36`:
+  36 payments). Excluded dates are not counted; with an end too, whichever comes first stops
+  it. It is a separate, space-separated token, and works without a start (counted from the
+  first result, or from a builder start), which makes the spec a reusable template.
 
 They apply to the whole spec, after any `|` and `!`. With a written start, a stored schedule is
-resumed with plain `resume_after`, even for a union or a cycle with positions.
+resumed with plain `resume_after`, even for a union, a cycle with positions or a count.
 
-> *Library:* a start or end given to the builder (`new_with_start`, `resume_with_start`,
-> `with_end`, `with_end_spec`) takes precedence over the text. `new_after(dtm)` and
+> *Library:* a start, end or count given to the builder (`new_with_start`, `resume_with_start`,
+> `with_end`, `with_end_spec`, `with_count`) takes precedence over the text. `new_after(dtm)` and
 > `resume_after(last)` take a cursor, not a start, so the written start still anchors the
 > schedule. `SpecIteratorBuilder::from_spec(spec, bdp)` builds from the text alone, in its
 > time zone (UTC if none is named).
@@ -945,7 +954,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 ### 31. `YY-1M-15~3P` — 15th monthly; unconditionally subtract 3 business days
 
-**Start:** 2025-01-15
+**`new_after`:** 2025-01-14 (with `new_with_start` the start itself would be returned as-is, unadjusted)
 
 `~3P` is **unconditional** — every result is shifted back 3 business days (WeekendSkipper), regardless of what day the 15th falls on.
 
@@ -971,7 +980,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 ### 32. `YY-1M-L~2N` — Last day of month; unconditionally add 2 business days
 
-**Start:** 2025-01-31
+**`new_after`:** 2025-01-30 (with `new_with_start` the start itself would be returned as-is, unadjusted)
 
 `~2N` is **unconditional** — every result is pushed forward 2 business days.
 
@@ -1074,6 +1083,131 @@ the previous business day (Feb 28) is in the previous month.
 
 ---
 
+### 36. `YY-MM-[TUE,THU]/2W @2025-01-07` — Tuesday and Thursday, every other week
+
+A week cycle keeps only the dates in every 2nd week, counted from the week containing the start
+(Monday to Sunday). The count carries across months.
+
+```text
+ 1. 2025-01-07 Tue
+ 2. 2025-01-09 Thu
+ 3. 2025-01-21 Tue
+ 4. 2025-01-23 Thu
+ 5. 2025-02-04 Tue
+ 6. 2025-02-06 Thu
+ 7. 2025-02-18 Tue
+ 8. 2025-02-20 Thu
+```
+
+---
+### 37. `YY-MM-[MON-FRI]/4W[1,2] @2025-01-06` — Weekdays, two weeks on and two weeks off
+
+Weeks 1 and 2 of every 4-week cycle: 6–17 January, then 3–14 February, and so on.
+
+```text
+ 1. 2025-01-06 Mon
+ 2. 2025-01-07 Tue
+ 3. 2025-01-08 Wed
+ 4. 2025-01-09 Thu
+ 5. 2025-01-10 Fri
+ 6. 2025-01-13 Mon
+ 7. 2025-01-14 Tue
+ 8. 2025-01-15 Wed
+ 9. 2025-01-16 Thu
+10. 2025-01-17 Fri
+11. 2025-02-03 Mon
+12. 2025-02-04 Tue
+```
+
+---
+### 38. `YY-MM-8D[1-4] @2025-01-01` — Four days on, four days off
+
+Days 1–4 of every 8-day cycle from the start, regardless of weekday or month.
+
+```text
+ 1. 2025-01-01 Wed
+ 2. 2025-01-02 Thu
+ 3. 2025-01-03 Fri
+ 4. 2025-01-04 Sat
+ 5. 2025-01-09 Thu
+ 6. 2025-01-10 Fri
+ 7. 2025-01-11 Sat
+ 8. 2025-01-12 Sun
+ 9. 2025-01-17 Fri
+10. 2025-01-18 Sat
+11. 2025-01-19 Sun
+12. 2025-01-20 Mon
+```
+
+---
+### 39. `YY-3M[1-2]-15 @2025-01-15` — The 15th in months 1 and 2 of every 3
+
+Positions on a month cycle: January and February, then April and May, and so on.
+
+```text
+ 1. 2025-01-15 Wed
+ 2. 2025-02-15 Sat
+ 3. 2025-04-15 Tue
+ 4. 2025-05-15 Thu
+ 5. 2025-07-15 Tue
+ 6. 2025-08-15 Fri
+```
+
+---
+### 40. `YY-MM-BD#3 | YY-MM-L~PB @2025-01-01` — Union: 3rd and last business day of each month
+
+Each part keeps its own rule; the results are merged in date order.
+
+```text
+ 1. 2025-01-03 Fri
+ 2. 2025-01-31 Fri
+ 3. 2025-02-05 Wed
+ 4. 2025-02-28 Fri
+ 5. 2025-03-05 Wed
+ 6. 2025-03-31 Mon
+ 7. 2025-04-03 Thu
+ 8. 2025-04-30 Wed
+```
+
+---
+### 41. `YY-MM-DD ! YY-12-25 | YY-12-26 | YY-01-01 @2025-12-22` — Every day except the holidays
+
+The exclusion is itself a union of date specs, matched against each actual date.
+
+```text
+ 1. 2025-12-22 Mon
+ 2. 2025-12-23 Tue
+ 3. 2025-12-24 Wed
+ 4. 2025-12-27 Sat
+ 5. 2025-12-28 Sun
+ 6. 2025-12-29 Mon
+ 7. 2025-12-30 Tue
+ 8. 2025-12-31 Wed
+```
+
+---
+### 42. `YY-MM-01~MF @2025-04-01 x36` — A self-contained loan schedule: 36 payments
+
+Start, adjustment and count are all in the text. Payments that fall on a weekend move to the next
+business day within the month; the 36th is 1 March 2028.
+
+```text
+ 1. 2025-04-01 Tue
+ 2. 2025-05-01 Thu
+ 3. AdjustedLater   actual=2025-06-01 Sun  observed=2025-06-02 Mon
+ 4. 2025-07-01 Tue
+ 5. 2025-08-01 Fri
+ 6. 2025-09-01 Mon
+ 7. 2025-10-01 Wed
+ 8. AdjustedLater   actual=2025-11-01 Sat  observed=2025-11-03 Mon
+...
+34. AdjustedLater   actual=2028-01-01 Sat  observed=2028-01-03 Mon
+35. 2028-02-01 Tue
+36. 2028-03-01 Wed
+```
+
+---
+
 ## Behaviour Notes
 
 ### How a spec is evaluated
@@ -1173,7 +1307,7 @@ and `YY-MM-DD~PB` gives `Exact(Fri)`, `AdjustedEarlier(Sat, Fri)`, `AdjustedEarl
 
 ---
 
-## Semantically Illogical or Impossible Combinations
+## Edge cases and invalid specs
 
 The following combinations are either silently broken, produce no results, or loop indefinitely. **Avoid them.**
 

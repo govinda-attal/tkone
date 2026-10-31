@@ -238,3 +238,85 @@ fn test_exclusions_and_describe_with_bounds() {
     assert!(date::SpecIteratorBuilder::new_after("YY-MM-15 @soon", WeekendSkipper::new(), ny(2025, 1, 1, 0, 0)).build().is_err());
     assert!(time::SpecIteratorBuilder::from_spec("1H:00:00 @2025-01-06[Nowhere/City]").is_err());
 }
+
+#[test]
+fn test_count_written_in_the_spec() {
+    let bdp = WeekendSkipper::new();
+    let tz = chrono_tz::America::New_York;
+    let all = |spec: &str| -> Vec<String> {
+        date::SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), ny(2025, 1, 1, 0, 0))
+            .build()
+            .unwrap()
+            .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+            .collect()
+            .unwrap()
+    };
+    // 36 monthly payments, Modified Following.
+    let loan = all("YY-MM-01~MF @2025-04-01 x36");
+    assert_eq!(loan.len(), 36);
+    assert_eq!((loan[0].as_str(), loan[35].as_str()), ("2025-04-01", "2028-03-01"));
+    // With an end too, whichever comes first stops it.
+    assert_eq!(all("YY-MM-15 @2025-01-01 ..2025-03-31 x12").len(), 3);
+    assert_eq!(all("YY-MM-15 @2025-01-01 ..2026-12-31 x2"), ["2025-01-15", "2025-02-15"]);
+    // Excluded dates are not counted.
+    assert_eq!(all("YY-MM-15 ! YY-02-DD @2025-01-01 x3"), ["2025-01-15", "2025-03-15", "2025-04-15"]);
+    // A union counts merged results.
+    assert_eq!(all("YY-MM-01 | YY-MM-15 @2025-01-02 x3"), ["2025-01-15", "2025-02-01", "2025-02-15"]);
+    // The count runs from the start; a cursor at the start itself (results
+    // strictly after it) still counts that first occurrence.
+    assert_eq!(all("YY-MM-01 | YY-MM-15 @2025-01-01 x3"), ["2025-01-15", "2025-02-01"]);
+    // Without a start, counted from the first result; a builder start works as a template's start.
+    assert_eq!(all("YY-MM-15 x2"), ["2025-01-15", "2025-02-15"]);
+    let got: Vec<_> = date::SpecIteratorBuilder::new_with_start("YY-MM-01~MF x3", bdp.clone(), ny(2025, 6, 1, 0, 0))
+        .build()
+        .unwrap()
+        .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(got, ["2025-06-01", "2025-07-01", "2025-08-01"]);
+    // `with_count` takes precedence.
+    let got: Vec<_> = date::SpecIteratorBuilder::new_after("YY-MM-15 @2025-01-01 x12", bdp.clone(), ny(2025, 1, 1, 0, 0))
+        .with_count(2)
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(got.len(), 2);
+    // Resuming a self-contained counted schedule with `resume_after` ends after the count.
+    let spec = "YY-MM-01~MF @2025-04-01 x6";
+    let continuous: Vec<_> = date::SpecIteratorBuilder::new_after(spec, bdp.clone(), ny(2025, 1, 1, 0, 0)).build().unwrap().collect().unwrap();
+    assert_eq!(continuous.len(), 6);
+    for i in 0..continuous.len() {
+        let next = date::SpecIteratorBuilder::resume_after(spec, bdp.clone(), tz, stored(continuous[i].actual()))
+            .build()
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(next.as_ref(), continuous.get(i + 1), "after #{i}");
+    }
+    // A counted template without a start needs one to resume.
+    assert!(matches!(
+        date::SpecIteratorBuilder::resume_after("YY-MM-15 x3", bdp.clone(), tz, stored(&ny(2025, 1, 15, 0, 0))).build(),
+        Err(crate::Error::UnsupportedResume(_))
+    ));
+    // Time and datetime.
+    let times: Vec<_> = time::SpecIteratorBuilder::from_spec("HH:30M:00 @2025-01-06T09:00:00[Europe/London] x4")
+        .unwrap()
+        .build()
+        .unwrap()
+        .map(|t| Ok(t.format("%H:%M").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(times, ["09:00", "09:30", "10:00", "10:30"]);
+    let ticks: Vec<_> = datetime::SpecIteratorBuilder::from_spec("YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London] x5", bdp)
+        .unwrap()
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(ticks.len(), 5);
+    assert_eq!(
+        date::describe("YY-MM-01~MF @2025-04-01 x36").unwrap(),
+        "on the 1st of every month, moved to the next business day when it is not one, or to the previous one if that is in the next month, 36 times, from 1 April 2025"
+    );
+}

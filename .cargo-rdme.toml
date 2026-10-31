@@ -1,0 +1,2 @@
+# Keep the crate docs' heading levels in the README (`## Core Concepts` stays `##`).
+heading-base-level = 0

@@ -1,6 +1,7 @@
-//! A start and an end written in the spec: `<spec> @<start> ..<end>`.
+//! A start, an end and a count written in the spec:
+//! `<spec> @<start> ..<end> x<count>`.
 //!
-//! Both are optional and apply to the whole spec, including every part of a
+//! All are optional and apply to the whole spec, including every part of a
 //! union and its exclusions. Each is a date or a datetime, optionally with a
 //! UTC offset and an IANA time zone in RFC 9557 brackets:
 //!
@@ -12,10 +13,14 @@
 //! ..2026-01-06                          (a date-only end includes the whole day)
 //! ```
 //!
+//! The count (`x36`) stops the schedule after that many results, counted from
+//! the start; with an end too, whichever comes first stops it. Excluded
+//! occurrences are not counted.
+//!
 //! The start anchors the schedule (cadences, positions, steps and the time
 //! phase count from it) and is an inclusive lower bound: results are the
-//! occurrences at or after it. The end is an inclusive upper bound. A start or
-//! end given to a builder takes precedence over the text.
+//! occurrences at or after it. The end is an inclusive upper bound. A start,
+//! end or count given to a builder takes precedence over the text.
 
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -26,6 +31,10 @@ use regex::Regex;
 use crate::prelude::*;
 use crate::utils::resolve_local;
 use crate::DstPolicy;
+
+/// ` x36`: a whitespace-separated token, so zone names such as
+/// `America/Mexico_City` never match.
+static COUNT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|\s)x(\d+)(?:\s|$)").unwrap());
 
 static TEXT_TIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -48,21 +57,34 @@ pub(crate) struct Bounds {
     start: Option<TextTime>,
     end: Option<TextTime>,
     zone: Option<chrono_tz::Tz>,
+    count: Option<usize>,
 }
 
 /// Splits `spec @start ..end` into the spec and its bounds.
 pub(crate) fn split_bounds(spec: &str) -> Result<(&str, Bounds)> {
     let at = spec.find('@');
     let dots = spec.find("..");
-    let body_end = [at, dots].into_iter().flatten().min().unwrap_or(spec.len());
+    let count = COUNT.captures(spec);
+    let x = count.as_ref().map(|c| c.get(0).unwrap().start());
+    let body_end = [at, dots, x].into_iter().flatten().min().unwrap_or(spec.len());
     let body = spec[..body_end].trim();
     let mut bounds = Bounds::default();
     let invalid = |reason: String| Error::InvalidSpecBounds(format!("{spec}: {reason}"));
 
     let token = |from: usize| {
-        let next = [at, dots].into_iter().flatten().filter(|&i| i > from).min().unwrap_or(spec.len());
+        let next = [at, dots, x].into_iter().flatten().filter(|&i| i > from).min().unwrap_or(spec.len());
         spec[from..next].trim()
     };
+    if let Some(caps) = &count {
+        let n: usize = caps[1].parse().map_err(|_| invalid(format!("`x{}` is too large", &caps[1])))?;
+        if n == 0 {
+            return Err(invalid("the count `x0` must be at least 1".into()));
+        }
+        if COUNT.find_at(spec, caps.get(1).unwrap().end()).is_some() {
+            return Err(invalid("more than one count".into()));
+        }
+        bounds.count = Some(n);
+    }
     if let Some(i) = at {
         if spec[i + 1..].contains('@') {
             return Err(invalid("more than one start".into()));
@@ -91,10 +113,11 @@ pub(crate) fn split_bounds(spec: &str) -> Result<(&str, Bounds)> {
     Ok((body, bounds))
 }
 
-/// The spec without its `@start ..end` suffix, and the suffix as written.
+/// The spec without its `@start ..end xN` suffix, and the suffix as written.
 pub(crate) fn split_suffix(spec: &str) -> (&str, &str) {
-    let i = [spec.find('@'), spec.find("..")].into_iter().flatten().min().unwrap_or(spec.len());
-    (spec[..i].trim_end(), &spec[i..])
+    let x = COUNT.find(spec).map(|m| m.start());
+    let i = [spec.find('@'), spec.find(".."), x].into_iter().flatten().min().unwrap_or(spec.len());
+    (spec[..i].trim_end(), spec[i..].trim_start())
 }
 
 fn parse_time(text: &str) -> core::result::Result<(TextTime, Option<chrono_tz::Tz>), String> {
@@ -123,6 +146,11 @@ fn parse_time(text: &str) -> core::result::Result<(TextTime, Option<chrono_tz::T
 }
 
 impl Bounds {
+    /// The count written as `xN`.
+    pub(crate) fn count(&self) -> Option<usize> {
+        self.count
+    }
+
     /// The cursor a schedule read from its own text starts from: just
     /// before its start, or now; in its time zone (UTC if it names none).
     pub(crate) fn cursor(&self) -> Result<DateTime<chrono_tz::Tz>> {
@@ -147,6 +175,9 @@ impl Bounds {
             out
         };
         let mut out = String::new();
+        if let Some(n) = self.count {
+            out += &format!(", {n} time{}", if n == 1 { "" } else { "s" });
+        }
         if let Some(start) = &self.start {
             out += &format!(", from {}", when(start));
         }
@@ -231,6 +262,27 @@ mod tests {
             assert!(split_bounds(bad).is_err(), "{bad} should be rejected");
         }
         assert_eq!(split_suffix("YY-MM-15 ! YY-12-15 @2025-01-06"), ("YY-MM-15 ! YY-12-15", "@2025-01-06"));
+        assert_eq!(split_suffix("YY-MM-15 x12"), ("YY-MM-15", "x12"));
+    }
+
+    #[test]
+    fn test_count() {
+        let (body, b) = split_bounds("YY-MM-01~MF @2025-04-01 x36").unwrap();
+        assert_eq!((body, b.count()), ("YY-MM-01~MF", Some(36)));
+        let (body, b) = split_bounds("YY-MM-01 x36 @2025-04-01 ..2028-03-31").unwrap();
+        assert_eq!((body, b.count()), ("YY-MM-01", Some(36)));
+        assert!(b.start.is_some() && b.end.is_some());
+        let (body, b) = split_bounds("YY-MM-15 x12").unwrap();
+        assert_eq!((body, b.count()), ("YY-MM-15", Some(12)));
+        // An `x` inside a zone name is not a count.
+        let (_, b) = split_bounds("YY-MM-DDT09:00:00 @2025-01-06[America/Mexico_City]").unwrap();
+        assert_eq!((b.count(), b.zone), (None, Some(chrono_tz::America::Mexico_City)));
+        assert_eq!(b.describe(), ", from 6 January 2025 (America/Mexico_City)");
+        let (_, b) = split_bounds("YY-MM-01 @2025-04-01 x36").unwrap();
+        assert_eq!(b.describe(), ", 36 times, from 1 April 2025");
+        for bad in ["YY-MM-15 x0", "YY-MM-15 x3 x4", "YY-MM-15 x99999999999999999999999"] {
+            assert!(split_bounds(bad).is_err(), "{bad} should be rejected");
+        }
     }
 
     #[test]

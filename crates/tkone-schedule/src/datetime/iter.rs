@@ -150,8 +150,10 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
     /// stored start instead.
     fn finish(self, include_start: bool, end: Option<DateTime<Tz>>) -> Result<SpecIterator<Tz, BDP>> {
         let bdp = self.bd_processor;
-        let count = self.limits.count;
         let (body, bounds) = split_bounds(&self.spec)?;
+        // A builder count (`with_count`) takes precedence over one written (`xN`).
+        let limits = Limits { count: self.limits.count.or(bounds.count()), ..self.limits.clone() };
+        let count = limits.count;
         let tz = self.dtm.timezone();
         // A builder end takes precedence over one written in the spec.
         let end = match end {
@@ -178,7 +180,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
             iter.remaining = count;
             return Ok(iter);
         }
-        if let Some(start) = self.limits.replay_from(self.local)? {
+        if let Some(start) = limits.replay_from(self.local)? {
             let start = start.with_timezone(&self.dtm.timezone());
             let mut continuous = SpecIterator::new(body, bdp, start, None, None, true, end, self.options)?;
             continuous.remaining = count;

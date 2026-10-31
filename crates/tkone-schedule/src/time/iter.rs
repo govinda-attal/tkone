@@ -121,7 +121,9 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
             BuilderEnd::Spec(end_spec) => Some(end_from_spec(&end_spec, &self.dtm, policy)?),
             BuilderEnd::None => bounds.end_in(tz, policy)?,
         };
-        let count = self.limits.count;
+        // A builder count (`with_count`) takes precedence over one written (`xN`).
+        let limits = Limits { count: self.limits.count.or(bounds.count()), ..self.limits.clone() };
+        let count = limits.count;
         let configured = |iter: SpecIterator<Tz>| {
             let mut iter = iter.with_interval_mode(self.interval_mode).with_time_anchor(self.time_anchor);
             iter.remaining = count;
@@ -131,7 +133,7 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
             let start = Some(self.dtm.clone());
             return Ok(configured(SpecIterator::new(body, self.dtm.clone(), start, end, policy)?));
         }
-        if let Some(start) = self.limits.replay_from(self.local)? {
+        if let Some(start) = limits.replay_from(self.local)? {
             // A counted `resume_with_start`: replay from the start.
             let start = start.with_timezone(tz);
             let continuous = configured(SpecIterator::new(body, start.clone(), Some(start), end, policy)?);

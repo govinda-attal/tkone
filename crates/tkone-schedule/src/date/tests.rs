@@ -1458,11 +1458,23 @@ fn test_ranges_in_date_lists() {
     use chrono::Weekday::*;
     assert_eq!(weekdays("YY-MM-[MON-FRI]"), vec![Mon, Tue, Wed, Thu, Fri]);
     assert_eq!(weekdays("YY-MM-[MON-TUE,THU-SAT]"), vec![Mon, Tue, Thu, Fri, Sat]);
-    // A range is the same as listing its values.
-    assert_eq!(
-        "YY-MM-[MON-FRI]".parse::<Spec>().unwrap().to_string(),
-        "YY-MM-[MON,TUE,WED,THU,FRI]"
-    );
+    // A range is the same as listing its values; runs display as ranges.
+    for (input, shown) in [
+        ("YY-MM-[MON-FRI]", "YY-MM-[MON-FRI]"),
+        ("YY-MM-[MON,TUE,WED,THU,FRI]", "YY-MM-[MON-FRI]"),
+        ("YY-MM-[MON,WED,FRI]", "YY-MM-[MON,WED,FRI]"),
+        ("YY-MM-[MON-WED,FRI,SAT]", "YY-MM-[MON-WED,FRI-SAT]"),
+        ("YY-[01-03,12]-[01-05,15]", "YY-[01-03,12]-[01-05,15]"),
+        ("YY-[03,06,09,12]-15", "YY-[03,06,09,12]-15"),
+        ("[2025-2027,2030]-12-L", "[2025-2027,2030]-12-L"),
+        ("YY-[06]-[15]", "YY-06-15"),
+        ("YY-MM-[15,01]", "YY-MM-[01,15]"),
+    ] {
+        let spec: Spec = input.parse().unwrap();
+        assert_eq!(spec.to_string(), shown, "display of {input}");
+        let again: Spec = shown.parse().unwrap();
+        assert_eq!(again.to_string(), shown, "round trip of {shown}");
+    }
 
     for s in ["YY-MM-[FRI-MON]", "YY-[06-01]-01", "YY-MM-[15-01]", "[1-4000000000]-MM-01", "YY-[01-13]-01", "YY-MM-[00-05]", "YY-MM-[MON-]"] {
         assert!(s.parse::<Spec>().is_err(), "{s} should be rejected");

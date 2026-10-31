@@ -60,8 +60,9 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 | `[D1-D2,...]` | Day ranges inside a list (e.g. `[01-10]`, `[01-05,15]`) |
 
 Ranges are only written inside brackets, because `-` also separates the year, month and day.
-They are inclusive and must run forwards (`[06-01]` and `[FRI-MON]` are rejected). A spec shows
-them expanded: `YY-MM-[MON-FRI]` displays as `YY-MM-[MON,TUE,WED,THU,FRI]`.
+They are inclusive and must run forwards (`[06-01]` and `[FRI-MON]` are rejected). When a spec is
+written back out, consecutive values become ranges and lists are sorted: `[MON,TUE,WED,THU,FRI]`
+is shown as `[MON-FRI]`, and `[15,01]` as `[01,15]`.
 
 ### Business Day Adjustment (optional)
 

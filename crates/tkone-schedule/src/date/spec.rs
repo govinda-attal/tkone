@@ -262,6 +262,27 @@ pub struct Spec {
     pub biz_day_adj: Option<BizDayAdjustment>,
 }
 
+/// A bracketed list, with runs of consecutive values written as ranges:
+/// `[01-06,12]`, `[MON-FRI]`, `[2025-2027]`. `items` are ascending
+/// `(position, label)` pairs; a single value is written without brackets.
+fn fmt_list(items: impl IntoIterator<Item = (u32, String)>) -> String {
+    let mut runs: Vec<((u32, String), (u32, String))> = Vec::new();
+    for (key, label) in items {
+        match runs.last_mut() {
+            Some((_, last)) if last.0 + 1 == key => *last = (key, label),
+            _ => runs.push(((key, label.clone()), (key, label))),
+        }
+    }
+    let parts: Vec<String> = runs
+        .iter()
+        .map(|(first, last)| if first.0 == last.0 { first.1.clone() } else { format!("{}-{}", first.1, last.1) })
+        .collect();
+    match (runs.as_slice(), parts.as_slice()) {
+        ([(first, last)], [one]) if first.0 == last.0 => one.clone(),
+        _ => format!("[{}]", parts.join(",")),
+    }
+}
+
 /// Helper struct to provide context for displaying a `Cycle`.
 struct CycleDisplayer<'a> {
     cycle: &'a Cycle,
@@ -289,29 +310,12 @@ impl<'a> fmt::Display for CycleDisplayer<'a> {
                     write!(f, "MM")
                 }
             }
-            Cycle::Values(vals) => {
-                if vals.len() == 1 {
-                    let val = vals.iter().next().unwrap();
-                    if self.is_year {
-                        // Years are not typically zero-padded.
-                        write!(f, "{}", val)
-                    } else {
-                        write!(f, "{:02}", val)
-                    }
-                } else {
-                    let strs: Vec<String> = vals
-                        .iter()
-                        .map(|v| {
-                            if self.is_year {
-                                format!("{}", v)
-                            } else {
-                                format!("{:02}", v)
-                            }
-                        })
-                        .collect();
-                    write!(f, "[{}]", strs.join(","))
-                }
-            }
+            // Years are not zero-padded; months are.
+            Cycle::Values(vals) => write!(
+                f,
+                "{}",
+                fmt_list(vals.iter().map(|&v| (v, if self.is_year { v.to_string() } else { format!("{v:02}") })))
+            ),
             Cycle::NextNth(n) => {
                 if self.is_year {
                     write!(f, "{}Y", n)
@@ -370,8 +374,7 @@ impl fmt::Display for DayCycle {
                         _ => Ok(()),
                     }
                 } else {
-                    let strs: Vec<String> = days.iter().map(|d| format!("{:02}", d)).collect();
-                    write!(f, "[{}]", strs.join(","))
+                    write!(f, "{}", fmt_list(days.iter().map(|&d| (d, format!("{d:02}")))))
                 }
             }
             DayCycle::OnWeekDays { weekdays, option } => {
@@ -385,8 +388,8 @@ impl fmt::Display for DayCycle {
                         _ => Ok(()),
                     }
                 } else {
-                    let strs: Vec<String> = weekdays.iter().map(|w| w.to_string()).collect();
-                    write!(f, "[{}]", strs.join(","))
+                    let items = weekdays.iter().map(|w| (w.0.num_days_from_monday(), w.to_string()));
+                    write!(f, "{}", fmt_list(items))
                 }
             }
             DayCycle::NthBizDay { calendar, option } => {
@@ -944,7 +947,7 @@ mod table_tests {
             TestCase {
                 name: "test_month_year_set",
                 input: "[2024]-[01,02]-TUE#2L~3P",
-                expected_str: "2024-[01,02]-TUE#2L~3P",
+                expected_str: "2024-[01-02]-TUE#2L~3P",
                 expected: Spec {
                     years: Cycle::Values(set(vec![2024])),
                     months: Cycle::Values(set(vec![1, 2])),
@@ -955,11 +958,11 @@ mod table_tests {
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
             },
-            // Case 6: "2024-[01,02]-[05,10,15]~3P"
+            // Case 6: "2024-[01-02]-[05,10,15]~3P"
             TestCase {
                 name: "test_month_day_set",
-                input: "2024-[01,02]-[05,10,15]~3P",
-                expected_str: "2024-[01,02]-[05,10,15]~3P",
+                input: "2024-[01-02]-[05,10,15]~3P",
+                expected_str: "2024-[01-02]-[05,10,15]~3P",
                 expected: Spec {
                     years: Cycle::Values(set(vec![2024])),
                     months: Cycle::Values(set(vec![1, 2])),
@@ -974,7 +977,7 @@ mod table_tests {
             TestCase {
                 name: "test_month_weekday_set",
                 input: "2024-[01,02]-[SAT,SUN]~3P",
-                expected_str: "2024-[01,02]-[SAT,SUN]~3P",
+                expected_str: "2024-[01-02]-[SAT-SUN]~3P",
                 expected: Spec {
                     years: Cycle::Values(set(vec![2024])),
                     months: Cycle::Values(set(vec![1, 2])),

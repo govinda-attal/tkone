@@ -18,9 +18,13 @@ proc-macro = true
 readme-path = "README.md"
 
 [dependencies]
-proc-macro2 = { workspace = true }
-quote       = { workspace = true }
-syn         = { workspace = true }
+proc-macro2    = { workspace = true }
+quote          = { workspace = true }
+syn            = { workspace = true }
+# To check specs, starts and time zones while compiling.
+tkone-schedule = { workspace = true }
+chrono         = { workspace = true }
+chrono-tz      = { workspace = true }
 
 [lints]
 workspace = true

@@ -42,6 +42,7 @@ async fn reconcile_accounts(ctx: FireContext) -> Result<(), PaymentError> {
 
 #[tokio::main]
 async fn main() {
+    println!("[declarative] schedule: {}", PaymentSchedule::describe());
     let shutdown = PaymentSchedule::shutdown_token();
     tokio::select! {
         // Run until the iterator is exhausted or shutdown is requested.

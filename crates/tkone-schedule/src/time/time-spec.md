@@ -897,7 +897,8 @@ results. They are documented here for clarity.
 
 **Behaviour:** A spec with no step names one time of day (or, with lists, a few). As a time
 iterator it yields those times **on the current day only**, then terminates:
-`[09,12,17]:00:00` from 10:00 yields 12:00 and 17:00.
+`[09,12,17]:00:00` from 10:00 yields 12:00 and 17:00. To repeat them every day, as a union does,
+build with `.repeat_daily()` (`tkone-trigger` always does).
 
 - `new_with_start` from `09:30:00` → yields `09:30:00` (passthrough) then terminates.
 - `new_after` from `09:30:00` → yields nothing (09:30 today is not after the cursor).

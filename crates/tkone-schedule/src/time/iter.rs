@@ -47,6 +47,8 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     dst_policy: DstPolicy,
     interval_mode: IntervalMode,
     time_anchor: TimeAnchor,
+    /// `repeat_daily`: fixed times of day recur every day.
+    daily: bool,
     /// Wall-clock cursor given to `resume_after`; `None` means `dtm`.
     local: Option<NaiveDateTime>,
     /// Wall-clock start given to `resume_with_start`.
@@ -80,6 +82,31 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
     pub fn with_time_anchor(mut self, anchor: TimeAnchor) -> Self {
         self.time_anchor = anchor;
         self
+    }
+
+    /// Repeat a spec without a step every day. On its own, `09:30:00` (or
+    /// `[09,17]:00:00`) yields its times on the current day only; with this,
+    /// it yields them every day, as it does in a union. A spec with a step is
+    /// unaffected.
+    pub fn repeat_daily(mut self) -> Self {
+        self.daily = true;
+        self
+    }
+
+    /// `SpecIterator::new`, with `repeat_daily` applied.
+    fn new_iter(
+        &self,
+        spec: &str,
+        cursor: DateTime<Tz>,
+        start: Option<DateTime<Tz>>,
+        end: Option<DateTime<Tz>>,
+        dst_policy: DstPolicy,
+    ) -> Result<SpecIterator<Tz>> {
+        let mut iter = SpecIterator::new(spec, cursor, start, end, dst_policy)?;
+        if self.daily {
+            iter.each_part(|part| part.daily = true);
+        }
+        Ok(iter)
     }
 
     /// Skip the times that match `spec`, another time spec (a union is
@@ -131,12 +158,12 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
         };
         if given_start {
             let start = Some(self.dtm.clone());
-            return Ok(configured(SpecIterator::new(body, self.dtm.clone(), start, end, policy)?));
+            return Ok(configured(self.new_iter(body, self.dtm.clone(), start, end, policy)?));
         }
         if let Some(start) = limits.replay_from(self.local)? {
             // A counted `resume_with_start`: replay from the start.
             let start = start.with_timezone(tz);
-            let continuous = configured(SpecIterator::new(body, start.clone(), Some(start), end, policy)?);
+            let continuous = configured(self.new_iter(body, start.clone(), Some(start), end, policy)?);
             return skip_through(continuous, &self.dtm, instant);
         }
         if self.anchor.is_none() {
@@ -144,7 +171,7 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
                 return self.with_text_start(body, start, end, count);
             }
         }
-        let iter = configured(SpecIterator::new(body, self.dtm.clone(), None, end, policy)?);
+        let iter = configured(self.new_iter(body, self.dtm.clone(), None, end, policy)?);
         let mut iter = resumed(iter, body, self.interval_mode, self.local, self.anchor)?;
         // Steps in exclusion specs count from the stored start, if any.
         if let Some(anchor) = self.anchor {
@@ -165,7 +192,7 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
         let anchor = start.naive_local();
         let policy = self.dst_policy;
         let fresh = |cursor: DateTime<Tz>| -> Result<SpecIterator<Tz>> {
-            let mut iter = SpecIterator::new(body, cursor, None, end.clone(), policy)?
+            let mut iter = self.new_iter(body, cursor, None, end.clone(), policy)?
                 .with_interval_mode(self.interval_mode)
                 .with_time_anchor(self.time_anchor);
             iter.remaining = count;
@@ -185,7 +212,7 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
             return fresh(just_before(&start));
         }
         // After the start: resume on the grid counted from it.
-        let iter = SpecIterator::new(body, self.dtm.clone(), None, end, policy)?
+        let iter = self.new_iter(body, self.dtm.clone(), None, end, policy)?
             .with_interval_mode(self.interval_mode)
             .with_time_anchor(self.time_anchor);
         let mut iter = resumed(iter, body, self.interval_mode, self.local, Some(anchor))?;
@@ -215,6 +242,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             dst_policy: DstPolicy::default(),
             interval_mode: IntervalMode::default(),
             time_anchor: TimeAnchor::default(),
+            daily: false,
             local: None,
             anchor: None,
             limits: Limits::default(),
@@ -279,6 +307,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
             time_anchor: self.time_anchor,
+            daily: self.daily,
             local: self.local,
             anchor: self.anchor,
             limits: self.limits,
@@ -389,6 +418,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             dst_policy: DstPolicy::default(),
             interval_mode: IntervalMode::default(),
             time_anchor: TimeAnchor::default(),
+            daily: false,
             local: None,
             anchor: None,
             limits: Limits::default(),
@@ -412,6 +442,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
             time_anchor: self.time_anchor,
+            daily: self.daily,
             local: self.local,
             anchor: self.anchor,
             limits: self.limits,
@@ -436,6 +467,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             dst_policy: self.dst_policy,
             interval_mode: self.interval_mode,
             time_anchor: self.time_anchor,
+            daily: self.daily,
             local: self.local,
             anchor: self.anchor,
             limits: self.limits,

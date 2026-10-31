@@ -1,14 +1,15 @@
-//! Declarative scheduling macros built on top of [`tkone_trigger`].
+//! Declarative scheduling macros built on top of
+//! [`tkone_trigger`](https://docs.rs/tkone-trigger).
 //!
 //! This crate provides two attribute macros that eliminate the boilerplate
-//! of wiring up [`tkone_trigger::Scheduler`] by hand.
+//! of wiring up `tkone_trigger::Scheduler` by hand.
 //!
 //! | Macro | Applied to | Purpose |
 //! |-------|-----------|---------|
 //! | [`#[schedule]`](macro@schedule) | `impl` block | Turn a plain struct into a scheduler entry point |
 //! | [`#[job]`](macro@job) | `async fn` | Register a function as a job on a named scheduler |
 //!
-//! Every callback and error handler receives a [`tkone_trigger::FireContext`]
+//! Every callback and error handler receives a `tkone_trigger::FireContext`
 //! carrying the [`tkone_schedule::Occurrence`] for that tick, so handlers can
 //! inspect the scheduled occurrence.
 //!
@@ -46,6 +47,7 @@
 //!
 //! ```text
 //! fn  shutdown_token() -> CancellationToken
+//! fn  describe() -> &'static str   // the spec in plain English, e.g. for a startup log line
 //! async fn run()
 //! async fn run_until_signal()   // stops on Ctrl-C / SIGTERM
 //! ```
@@ -54,9 +56,18 @@
 //!
 //! | Argument | Required | Description |
 //! |----------|----------|-------------|
-//! | `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` |
-//! | `start_spec = "..."` | no | Where to start iterating. RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a tkone-schedule time spec (`"09:00:00"`). When omitted the scheduler starts from `Utc::now()`. |
+//! | `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` or `"HH:30M:00 ! 12:MM:SS"` |
+//! | `start_spec = "..."` | no | From when on to fire: an RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a time spec, meaning its next occurrence (`"09:00:00"` = the next 9 am). When omitted, from now. |
+//! | `tz = "..."` | no | IANA time zone the spec is read in, e.g. `"Europe/London"`. When omitted, the zone written in the spec (`@2026-06-01T09:00[Europe/London]`), else UTC. |
 //! | `fire_on_start` | no | Fire all jobs once immediately before the first tick |
+//!
+//! The spec, `start_spec` and `tz` are checked **while compiling**: a typo or
+//! a date spec (`"YY-MM-DD"`, which this in-memory trigger doesn't support) is a
+//! compile error on the attribute, not a panic at startup.
+//!
+//! A start written in the spec (`@…`) anchors its grid, for example the phase
+//! of `HH:15M:00`; `start_spec` only decides from when on times are fired.
+//! Past occurrences are never fired.
 //!
 //! ### 2 — Register jobs
 //!
@@ -110,6 +121,7 @@ use syn::{
 struct ScheduleArgs {
     spec: LitStr,
     start_spec: Option<LitStr>,
+    tz: Option<LitStr>,
     fire_on_start: bool,
 }
 
@@ -117,21 +129,19 @@ impl Parse for ScheduleArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut spec: Option<LitStr> = None;
         let mut start_spec: Option<LitStr> = None;
+        let mut tz: Option<LitStr> = None;
         let mut fire_on_start = false;
+        let string = |nv: &syn::MetaNameValue| match &nv.value {
+            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Ok(s.clone()),
+            other => Err(syn::Error::new_spanned(other, "expected a string literal")),
+        };
 
         let metas = Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
         for meta in &metas {
             match meta {
-                Meta::NameValue(nv) if nv.path.is_ident("spec") => {
-                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
-                        spec = Some(s.clone());
-                    }
-                }
-                Meta::NameValue(nv) if nv.path.is_ident("start_spec") => {
-                    if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
-                        start_spec = Some(s.clone());
-                    }
-                }
+                Meta::NameValue(nv) if nv.path.is_ident("spec") => spec = Some(string(nv)?),
+                Meta::NameValue(nv) if nv.path.is_ident("start_spec") => start_spec = Some(string(nv)?),
+                Meta::NameValue(nv) if nv.path.is_ident("tz") => tz = Some(string(nv)?),
                 Meta::Path(p) if p.is_ident("fire_on_start") => {
                     fire_on_start = true;
                 }
@@ -140,12 +150,17 @@ impl Parse for ScheduleArgs {
                         fire_on_start = b.value;
                     }
                 }
-                _ => {}
+                other => {
+                    return Err(syn::Error::new_spanned(
+                        other,
+                        "unknown argument; expected `spec`, `start_spec`, `tz` or `fire_on_start`",
+                    ))
+                }
             }
         }
 
         let spec = spec.ok_or_else(|| input.error("expected `spec = \"...\"`"))?;
-        Ok(ScheduleArgs { spec, start_spec, fire_on_start })
+        Ok(ScheduleArgs { spec, start_spec, tz, fire_on_start })
     }
 }
 
@@ -159,13 +174,17 @@ impl Parse for ScheduleArgs {
 /// | Argument | Required | Description |
 /// |---|---|---|
 /// | `spec = "..."` | yes | `tkone-schedule` time spec, e.g. `"1H:00:00"` |
-/// | `start_spec = "..."` | no | Start point: RFC 3339 datetime **or** a tkone-schedule time spec. Omit to start from `Utc::now()`. |
+/// | `start_spec = "..."` | no | From when on to fire: RFC 3339 datetime **or** a time spec (its next occurrence). Omit to start from now. |
+/// | `tz = "..."` | no | IANA time zone, e.g. `"Europe/London"`. Omit to use the zone written in the spec, else UTC. |
 /// | `fire_on_start` | no | Run all jobs once immediately before the first tick |
+///
+/// The spec, `start_spec` and `tz` are checked while compiling.
 ///
 /// # Generated items
 ///
 /// On the struct:
 /// - `fn shutdown_token() -> CancellationToken`
+/// - `fn describe() -> &'static str`: the spec in plain English
 /// - `async fn run()`
 /// - `async fn run_until_signal()`
 ///
@@ -174,20 +193,31 @@ impl Parse for ScheduleArgs {
 /// Default — start from now:
 /// ```rust,ignore
 /// #[schedule(spec = "1H:00:00", fire_on_start)]
-/// impl Payments { … }
+/// impl Payments { /* … */ }
 /// ```
 ///
 /// Start from the next occurrence of 9 am (time-spec start):
 /// ```rust,ignore
 /// #[schedule(spec = "1H:00:00", start_spec = "09:00:00")]
-/// impl Payments { … }
+/// impl Payments { /* … */ }
 /// ```
 ///
-/// Start from a fixed wall-clock moment (RFC 3339 start):
+/// Start from a fixed moment (RFC 3339 start):
 /// ```rust,ignore
-/// #[schedule(spec = "YY-1M-L~NBT11:00:00", start_spec = "2026-06-01T00:00:00Z")]
-/// impl MonthlySettlement { … }
+/// #[schedule(spec = "HH:30M:00", start_spec = "2026-06-01T09:00:00Z")]
+/// impl Snapshots { /* … */ }
 /// ```
+///
+/// London time, every 15 minutes from 08:00 to 17:59, except the 12:00 hour:
+/// ```rust,ignore
+/// #[schedule(spec = "08-17:15M:00 ! 12:MM:SS", tz = "Europe/London")]
+/// impl Prices { /* … */ }
+/// ```
+///
+/// Only time specs are supported: monthly or business-day schedules
+/// (`"YY-1M-L~NBT11:00:00"`) are rejected while compiling, because an
+/// in-memory trigger would lose a missed occurrence on restart. Use
+/// `tkone-tempo` for those.
 #[proc_macro_attribute]
 pub fn schedule(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as ScheduleArgs);
@@ -203,6 +233,7 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
     let struct_ty = &item_impl.self_ty;
     let spec_lit = &args.spec;
     let fire_on_start = args.fire_on_start;
+    let description = check_args(&args)?;
 
     let on_error_fn = find_on_error_fn(&item_impl)?;
     let error_type = extract_on_error_error_type(on_error_fn)?;
@@ -216,26 +247,14 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
         quote! {}
     };
 
-    // Build the iterator differently depending on whether start_spec was supplied.
-    let iter_build = if let Some(start_lit) = &args.start_spec {
-        quote! {
-            let __start_dt = ::tkone_trigger::resolve_start_spec(#start_lit);
-            let iter = ::tkone_schedule::time::SpecIteratorBuilder::new_after(
-                #spec_lit,
-                __start_dt,
-            )
-            .build()
-            .expect("invalid schedule spec");
-        }
-    } else {
-        quote! {
-            let iter = ::tkone_schedule::time::SpecIteratorBuilder::new(
-                #spec_lit,
-                ::chrono::Utc,
-            )
-            .build()
-            .expect("invalid schedule spec");
-        }
+    let optional = |lit: &Option<LitStr>| match lit {
+        Some(lit) => quote! { ::std::option::Option::Some(#lit) },
+        None => quote! { ::std::option::Option::None },
+    };
+    let (start_arg, tz_arg) = (optional(&args.start_spec), optional(&args.tz));
+    let iter_build = quote! {
+        let iter = ::tkone_trigger::time_schedule(#spec_lit, #start_arg, #tz_arg)
+            .expect("the schedule spec was checked when compiling");
     };
 
     let expanded = quote! {
@@ -248,6 +267,12 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
                 static TOKEN: ::std::sync::OnceLock<::tkone_trigger::CancellationToken> =
                     ::std::sync::OnceLock::new();
                 TOKEN.get_or_init(|| ::tkone_trigger::CancellationToken::new()).clone()
+            }
+
+            /// The schedule in plain English, as `tkone_schedule::time::describe`
+            /// gives it; for example, for a startup log line.
+            pub fn describe() -> &'static str {
+                #description
             }
 
             /// Build and run the scheduler until the iterator is exhausted or
@@ -295,6 +320,45 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
     };
 
     Ok(expanded)
+}
+
+/// Check the spec, `start_spec` and `tz` while compiling, and describe the
+/// spec. Errors point at the offending argument.
+fn check_args(args: &ScheduleArgs) -> syn::Result<String> {
+    let spec = args.spec.value();
+    if let Err(e) = tkone_schedule::time::describe(&spec) {
+        let is_date = tkone_schedule::date::describe(&spec).is_ok() || tkone_schedule::datetime::describe(&spec).is_ok();
+        let message = if is_date {
+            format!(
+                "`{spec}` is a date schedule; #[schedule] only takes time specs such as \"1H:00:00\", \
+                 because an in-memory trigger would lose a missed date on restart (use tkone-tempo)"
+            )
+        } else {
+            format!("invalid time spec `{spec}`: {e}")
+        };
+        return Err(syn::Error::new(args.spec.span(), message));
+    }
+    // Building checks what describing doesn't, such as the exclusions.
+    let now = chrono::Utc::now();
+    if let Err(e) = tkone_schedule::time::SpecIteratorBuilder::new_after(&spec, now).build() {
+        return Err(syn::Error::new(args.spec.span(), format!("invalid time spec `{spec}`: {e}")));
+    }
+    if let Some(start) = &args.start_spec {
+        let text = start.value();
+        let is_datetime = chrono::DateTime::parse_from_rfc3339(&text).is_ok();
+        if !is_datetime && tkone_schedule::time::describe(&text).is_err() {
+            return Err(syn::Error::new(
+                start.span(),
+                format!("`start_spec` `{text}` is neither an RFC 3339 datetime nor a time spec"),
+            ));
+        }
+    }
+    if let Some(tz) = &args.tz {
+        if tz.value().parse::<chrono_tz::Tz>().is_err() {
+            return Err(syn::Error::new(tz.span(), format!("`{}` is not an IANA time zone", tz.value())));
+        }
+    }
+    Ok(tkone_schedule::time::describe(&spec).unwrap_or_default())
 }
 
 fn find_on_error_fn(item_impl: &ItemImpl) -> syn::Result<&ImplItemFn> {

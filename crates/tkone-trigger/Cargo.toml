@@ -19,6 +19,7 @@ readme-path = "README.md"
 [dependencies]
 tkone-schedule    = { workspace = true }
 chrono            = { workspace = true }
+chrono-tz         = { workspace = true }
 fallible-iterator = { workspace = true }
 inventory         = { workspace = true }
 tokio             = { workspace = true }

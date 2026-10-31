@@ -534,6 +534,24 @@ mod grammar_tests;
 
 pub use error::{Error, Result};
 
+/// The IANA time zone written in a spec, after its start or end
+/// (`09:00:00 @2026-01-05[Europe/London]`), if it names one.
+///
+/// ```rust
+/// assert_eq!(
+///     tkone_schedule::time_zone_of("09:00:00 @2026-01-05[Europe/London]").unwrap(),
+///     Some(chrono_tz::Europe::London)
+/// );
+/// assert_eq!(tkone_schedule::time_zone_of("1H:00:00").unwrap(), None);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the start, end, count or zone is malformed.
+pub fn time_zone_of(spec: &str) -> Result<Option<chrono_tz::Tz>> {
+    Ok(bounds::split_bounds(spec)?.1.zone())
+}
+
 /// Controls how timezone-aware iterators resolve local datetimes that fall in
 /// a DST transition window.
 ///

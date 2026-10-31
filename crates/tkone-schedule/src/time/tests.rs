@@ -889,3 +889,22 @@ fn test_midnight_anchor_across_spring_forward() {
     // 02:00 and 02:30 do not exist and move an hour later; 03:00 and 03:30 are not repeated.
     assert_eq!(got, vec![edt(1, 30), edt(3, 0), edt(3, 30), edt(4, 0)]);
 }
+
+#[test]
+fn test_repeat_daily() {
+    let after = Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
+    let take = |iter: crate::time::SpecIterator<Utc>| -> Vec<String> {
+        iter.take(4).map(|t| Ok(t.format("%d %H:%M").to_string())).collect().unwrap()
+    };
+    // On its own a fixed-time spec ends with the day; repeat_daily continues.
+    assert_eq!(take(SpecIteratorBuilder::new_after("[09,17]:00:00", after).build().unwrap()), ["01 17:00"]);
+    assert_eq!(
+        take(SpecIteratorBuilder::new_after("[09,17]:00:00", after).repeat_daily().build().unwrap()),
+        ["01 17:00", "02 09:00", "02 17:00", "03 09:00"]
+    );
+    // A spec with a step is unaffected.
+    assert_eq!(
+        take(SpecIteratorBuilder::new_after("HH:30M:00", after).repeat_daily().build().unwrap()),
+        ["01 10:30", "01 11:00", "01 11:30", "01 12:00"]
+    );
+}

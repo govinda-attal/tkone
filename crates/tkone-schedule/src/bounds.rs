@@ -146,6 +146,11 @@ fn parse_time(text: &str) -> core::result::Result<(TextTime, Option<chrono_tz::T
 }
 
 impl Bounds {
+    /// The time zone written in brackets after the start or end.
+    pub(crate) fn zone(&self) -> Option<chrono_tz::Tz> {
+        self.zone
+    }
+
     /// The count written as `xN`.
     pub(crate) fn count(&self) -> Option<usize> {
         self.count

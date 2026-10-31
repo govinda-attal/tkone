@@ -14,6 +14,17 @@
 //! | `"HH:30M:00"` | Every 30 minutes |
 //! | `"HH:MM:10S"` | Every 10 seconds |
 //! | `"09:30:00"` | Daily at 09:30 |
+//! | `"HH:30M:00 ! [12,13]:MM:SS"` | Every 30 minutes, except 12:00–13:59 |
+//! | `"HH:15M:00 @2026-06-01T09:00[Europe/London] x8"` | Eight times, every 15 minutes, London time |
+//!
+//! ## Time zones and starts
+//!
+//! [`time_schedule`] builds the iterator for a spec. Times are read on the
+//! wall clock of a time zone: the `tz` you pass, else the zone written in the
+//! spec (`@2026-06-01T09:00[Europe/London]`), else UTC. A `start_spec`
+//! ([`resolve_start_spec_in`]) sets from when on times are produced; a start
+//! written in the spec anchors the schedule's grid. Past occurrences are never
+//! fired.
 //!
 //! **Only [`tkone_schedule::time`] specs are supported.** `date` and `datetime`
 //! specs (daily, weekly, monthly) require persistent state to survive process
@@ -32,25 +43,20 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
-use tkone_schedule::Occurrence;
+use tkone_schedule::{Error, Occurrence};
 use tokio::task::JoinHandle;
 pub use tokio_util::sync::CancellationToken;
 pub use inventory;
 
-// ── Start-spec resolution ─────────────────────────────────────────────────────
+// ── Building a time schedule ─────────────────────────────────────────────────
 
-/// Resolves a `start_spec` string to a [`DateTime<Utc>`] for use as the
-/// scheduler's start point.
+/// Resolves a `start_spec` string to a [`DateTime<Utc>`]: see
+/// [`resolve_start_spec_in`].
 ///
-/// Resolution order:
-/// 1. **RFC 3339 / ISO 8601 datetime** — if `s` parses as a datetime, it is
-///    returned directly.  Use this to pin a scheduler to a known wall-clock
-///    moment: `"2026-06-01T09:00:00Z"`.
-/// 2. **tkone-schedule time spec** — if `s` does not parse as a datetime, it is
-///    treated as a time spec (e.g. `"09:00:00"` or `"1H:00:00"`).  The first
-///    occurrence of that spec strictly after `Utc::now()` is returned.  Use this
-///    to express relative starts such as "next 9 am" or "next top of the hour".
-/// 3. **Fallback** — `Utc::now()` if neither parse succeeds.
+/// # Errors
+///
+/// Returns an error if `s` is neither an RFC 3339 datetime nor a valid time
+/// spec.
 ///
 /// # Examples
 ///
@@ -58,27 +64,82 @@ pub use inventory;
 /// use tkone_trigger::resolve_start_spec;
 ///
 /// // Pin to a fixed datetime
-/// let dt = resolve_start_spec("2026-06-01T09:00:00Z");
+/// let dt = resolve_start_spec("2026-06-01T09:00:00Z")?;
 ///
-/// // Start from the next occurrence of 9 am
-/// let dt = resolve_start_spec("09:00:00");
-///
-/// // Start from the next top of the hour
-/// let dt = resolve_start_spec("1H:00:00");
+/// // Start from the next occurrence of 9 am (UTC)
+/// let dt = resolve_start_spec("09:00:00")?;
+/// # Ok::<(), tkone_schedule::Error>(())
 /// ```
-pub fn resolve_start_spec(s: &str) -> DateTime<Utc> {
-    // 1. Try RFC 3339 / ISO 8601
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return dt.with_timezone(&Utc);
+pub fn resolve_start_spec(s: &str) -> Result<DateTime<Utc>, Error> {
+    resolve_start_spec_in(s, &Utc)
+}
+
+/// Resolves a `start_spec` string to a datetime in `tz`, for use as where a
+/// scheduler starts iterating:
+///
+/// 1. **An RFC 3339 datetime** (`"2026-06-01T09:00:00Z"`) is that instant.
+/// 2. **A time spec** (`"09:00:00"`, `"1H:00:00"`) is its first occurrence
+///    after now, read on `tz`'s wall clock: "the next 9 am", "the next top of
+///    the hour".
+///
+/// A start written in the schedule's own spec (`@2026-06-01T09:00`) is
+/// different: it anchors the schedule's grid. With both, the written start
+/// still anchors the grid, and the `start_spec` only decides from when on
+/// times are produced.
+///
+/// # Errors
+///
+/// Returns an error if `s` is neither an RFC 3339 datetime nor a valid time
+/// spec, instead of silently starting from now.
+pub fn resolve_start_spec_in<Tz: TimeZone>(s: &str, tz: &Tz) -> Result<DateTime<Tz>, Error> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(tz));
     }
-    // 2. Try as a tkone-schedule time spec — return the next occurrence after now
-    if let Ok(mut iter) = tkone_schedule::time::SpecIteratorBuilder::new_after(s, Utc::now()).build() {
-        if let Ok(Some(dt)) = iter.next() {
-            return dt.with_timezone(&Utc);
-        }
-    }
-    // 3. Fallback
-    Utc::now()
+    let now = Utc::now().with_timezone(tz);
+    let next = tkone_schedule::time::SpecIteratorBuilder::new_after(s, now)
+        .build()
+        .and_then(|mut iter| iter.next())
+        .map_err(|e| Error::Custom(format!("start_spec `{s}` is neither an RFC 3339 datetime nor a time spec: {e}")))?;
+    next.ok_or_else(|| Error::Custom(format!("start_spec `{s}` has no occurrence after now")))
+}
+
+/// Builds the iterator for a time-spec schedule, the way `#[schedule]` does.
+///
+/// - **Time zone:** `tz` (an IANA name such as `"Europe/London"`) if given,
+///   else the zone written in the spec (`09:00:00 @2026-01-05[Europe/London]`),
+///   else UTC. Times are read on that zone's wall clock, so `09:00:00` stays
+///   at 09:00 local time across daylight-saving changes. `tz` takes
+///   precedence over a zone in the spec, as builder settings do.
+/// - **Fixed times repeat daily:** `09:30:00` fires at 09:30 every day.
+/// - **Where it starts:** results are the times after `start_spec` (see
+///   [`resolve_start_spec_in`]), or after now. Past occurrences are never
+///   produced, even when the spec's written `@start` is in the past.
+///
+/// # Errors
+///
+/// Returns an error if the spec, `start_spec` or `tz` is invalid.
+///
+/// ```rust
+/// let iter = tkone_trigger::time_schedule("09:00:00", None, Some("Europe/London"))?;
+/// # Ok::<(), tkone_schedule::Error>(())
+/// ```
+pub fn time_schedule(
+    spec: &str,
+    start_spec: Option<&str>,
+    tz: Option<&str>,
+) -> Result<tkone_schedule::time::SpecIterator<chrono_tz::Tz>, Error> {
+    let zone = match tz {
+        Some(name) => name
+            .parse::<chrono_tz::Tz>()
+            .map_err(|_| Error::Custom(format!("`{name}` is not an IANA time zone")))?,
+        None => tkone_schedule::time_zone_of(spec)?.unwrap_or(chrono_tz::UTC),
+    };
+    let after = match start_spec {
+        Some(s) => resolve_start_spec_in(s, &zone)?,
+        None => Utc::now().with_timezone(&zone),
+    };
+    // A trigger repeats fixed times (`09:30:00`) every day.
+    tkone_schedule::time::SpecIteratorBuilder::new_after(spec, after).repeat_daily().build()
 }
 
 // ── Context ──────────────────────────────────────────────────────────────────
@@ -371,5 +432,53 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
         for h in handles {
             let _ = h.await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Timelike, TimeZone};
+
+    #[test]
+    fn test_resolve_start_spec() {
+        assert_eq!(
+            resolve_start_spec("2026-06-01T09:00:00Z").unwrap(),
+            Utc.with_ymd_and_hms(2026, 6, 1, 9, 0, 0).unwrap()
+        );
+        assert!(resolve_start_spec("HH:MM:00").unwrap() > Utc::now());
+        // A typo is an error, not a silent "now".
+        assert!(resolve_start_spec("9 am").is_err());
+        // A relative start is read on the given zone's clock.
+        let london = chrono_tz::Europe::London;
+        let next_nine = resolve_start_spec_in("09:00:00", &london).unwrap();
+        assert_eq!((next_nine.hour(), next_nine.minute()), (9, 0));
+    }
+
+    #[test]
+    fn test_time_schedule_time_zones() {
+        let first_hour = |spec, tz| {
+            let mut iter = time_schedule(spec, None, tz).unwrap();
+            let t = iter.next().unwrap().unwrap();
+            (t.hour(), t.timezone().name().to_string())
+        };
+        // UTC by default, the zone written in the spec, or `tz`, which wins.
+        assert_eq!(first_hour("09:00:00", None), (9, "UTC".into()));
+        assert_eq!(first_hour("09:00:00 @2026-01-05[America/New_York]", None), (9, "America/New_York".into()));
+        assert_eq!(first_hour("09:00:00 @2026-01-05[America/New_York]", Some("Asia/Tokyo")), (9, "Asia/Tokyo".into()));
+        assert!(time_schedule("09:00:00", None, Some("Mars/Base")).is_err());
+        assert!(time_schedule("YY-MM-DD", None, None).is_err());
+    }
+
+    #[test]
+    fn test_written_start_anchors_and_start_spec_sets_from_when() {
+        // The grid is anchored at :05 by the written start; the start_spec
+        // only says from when on.
+        let mut iter = time_schedule("HH:15M:00 @2026-01-01T09:05:00[UTC]", Some("2030-01-01T00:00:00Z"), None).unwrap();
+        let first = iter.next().unwrap().unwrap();
+        assert_eq!(first, Utc.with_ymd_and_hms(2030, 1, 1, 0, 5, 0).unwrap());
+        // Past occurrences of a past written start are not produced.
+        let mut iter = time_schedule("1H:00:00 @2020-01-01T00:00:00[UTC]", None, None).unwrap();
+        assert!(iter.next().unwrap().unwrap() > Utc::now());
     }
 }

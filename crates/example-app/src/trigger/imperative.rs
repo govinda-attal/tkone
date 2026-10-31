@@ -15,17 +15,22 @@
 //! In the imperative API the start point is set **on the iterator**, not on the
 //! `Scheduler`.  [`resolve_start_spec`] accepts either an RFC 3339 datetime string
 //! or a tkone-schedule time spec and returns a `DateTime<Utc>` that can be passed
-//! directly to [`SpecIteratorBuilder::new_after`]:
+//! directly to [`TimeBuilder::new_after`]. It returns an error for
+//! anything else, rather than silently starting from now:
 //!
 //! ```rust,no_run
 //! // Start from the next top-of-minute (spec-based start)
-//! let start = tkone_trigger::resolve_start_spec("HH:MM:00");
-//! let iter  = TimeBuilder::new_after("HH:MM:10S", start).build().unwrap();
+//! let start = tkone_trigger::resolve_start_spec("HH:MM:00")?;
+//! let iter  = TimeBuilder::new_after("HH:MM:10S", start).build()?;
 //!
 //! // Start from a fixed wall-clock moment (RFC 3339 start)
-//! let start = tkone_trigger::resolve_start_spec("2026-06-01T09:00:00Z");
-//! let iter  = TimeBuilder::new_after("HH:MM:10S", start).build().unwrap();
+//! let start = tkone_trigger::resolve_start_spec("2026-06-01T09:00:00Z")?;
+//! let iter  = TimeBuilder::new_after("HH:MM:10S", start).build()?;
 //! ```
+//!
+//! [`tkone_trigger::time_schedule`] does all of this in one call, and also
+//! reads the schedule in a time zone:
+//! `time_schedule("HH:MM:10S", Some("HH:MM:00"), Some("Europe/London"))`.
 //!
 //! Omitting `resolve_start_spec` and using `TimeBuilder::new(spec, Utc)` is
 //! equivalent to `start_spec = Utc::now()` — iteration begins from the current
@@ -62,7 +67,7 @@ async fn main() {
     // time spec and returns the first occurrence strictly after now — i.e. the
     // next :00 seconds boundary.  Pass that DateTime to new_after so the
     // iterator skips the partial minute we're already in.
-    let start = resolve_start_spec("HH:MM:00");
+    let start = resolve_start_spec("HH:MM:00").expect("a valid start spec");
     let iter  = TimeBuilder::new_after("HH:MM:10S", start).build().unwrap();
 
     let mut scheduler = Scheduler::new(iter, on_error).fire_on_start();

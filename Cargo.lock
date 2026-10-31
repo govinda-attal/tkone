@@ -430,6 +430,7 @@ name = "tkone-trigger"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "fallible-iterator",
  "inventory",
  "thiserror",
@@ -443,9 +444,12 @@ dependencies = [
 name = "tkone-trigger-macros"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "proc-macro2",
  "quote",
  "syn",
+ "tkone-schedule",
 ]
 
 [[package]]

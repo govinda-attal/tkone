@@ -1,16 +1,17 @@
 <!-- cargo-rdme start -->
 
-Declarative scheduling macros built on top of [`tkone_trigger`].
+Declarative scheduling macros built on top of
+[`tkone_trigger`](https://docs.rs/tkone-trigger).
 
 This crate provides two attribute macros that eliminate the boilerplate
-of wiring up [`tkone_trigger::Scheduler`] by hand.
+of wiring up `tkone_trigger::Scheduler` by hand.
 
 | Macro | Applied to | Purpose |
 |-------|-----------|---------|
 | [`#[schedule]`](macro@schedule) | `impl` block | Turn a plain struct into a scheduler entry point |
 | [`#[job]`](macro@job) | `async fn` | Register a function as a job on a named scheduler |
 
-Every callback and error handler receives a [`tkone_trigger::FireContext`]
+Every callback and error handler receives a `tkone_trigger::FireContext`
 carrying the [`tkone_schedule::Occurrence`] for that tick, so handlers can
 inspect the scheduled occurrence.
 
@@ -48,6 +49,7 @@ impl MySchedule {
 
 ```text
 fn  shutdown_token() -> CancellationToken
+fn  describe() -> &'static str   // the spec in plain English, e.g. for a startup log line
 async fn run()
 async fn run_until_signal()   // stops on Ctrl-C / SIGTERM
 ```
@@ -56,9 +58,18 @@ async fn run_until_signal()   // stops on Ctrl-C / SIGTERM
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` |
-| `start_spec = "..."` | no | Where to start iterating. RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a tkone-schedule time spec (`"09:00:00"`). When omitted the scheduler starts from `Utc::now()`. |
+| `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` or `"HH:30M:00 ! 12:MM:SS"` |
+| `start_spec = "..."` | no | From when on to fire: an RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a time spec, meaning its next occurrence (`"09:00:00"` = the next 9 am). When omitted, from now. |
+| `tz = "..."` | no | IANA time zone the spec is read in, e.g. `"Europe/London"`. When omitted, the zone written in the spec (`@2026-06-01T09:00[Europe/London]`), else UTC. |
 | `fire_on_start` | no | Fire all jobs once immediately before the first tick |
+
+The spec, `start_spec` and `tz` are checked **while compiling**: a typo or
+a date spec (`"YY-MM-DD"`, which this in-memory trigger doesn't support) is a
+compile error on the attribute, not a panic at startup.
+
+A start written in the spec (`@…`) anchors its grid, for example the phase
+of `HH:15M:00`; `start_spec` only decides from when on times are fired.
+Past occurrences are never fired.
 
 ### 2 — Register jobs
 

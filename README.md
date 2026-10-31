@@ -22,4 +22,4 @@ A growing Rust toolkit of libraries and applications across multiple domains. Cu
 
 ## License
 
-Licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for copyright.

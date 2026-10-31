@@ -18,43 +18,50 @@ bug in one of them.
 
 ### Notation
 
-The grammar is written in EBNF:
+The grammar is written in ABNF ([RFC 5234](https://www.rfc-editor.org/rfc/rfc5234)), with
+case-sensitive strings written `%s"…"` ([RFC 7405](https://www.rfc-editor.org/rfc/rfc7405)).
+`ALPHA`, `DIGIT` and `SP` are the RFC 5234 core rules.<!-- not-in-draft --> The ABNF blocks
+below are copied from [ietf/tkone-schedule.abnf](ietf/tkone-schedule.abnf), the single source of
+the grammar; run `python3 ietf/build.py` after changing it.<!-- /not-in-draft -->
 
-- `"x"` is literal text; `[ a ]` is optional; `{ a }` repeats zero or more times;
-  `( a | b )` groups.
-- **Alternatives are tried in the order written, and the first that matches wins** (as in a PEG).
-  This matters where one alternative is a prefix of another: `BD#3` is a business-day position,
-  not the start of `3BD`.
 - Matching is **case-sensitive**: `YY-MM-DD`, not `yy-mm-dd`.
-- **No whitespace is allowed** inside a date, time or datetime part, except where `ws?` is shown.
-  `ws?` is optional whitespace; `ws` is required whitespace.
+- **No whitespace is allowed** inside a date, time or datetime part, except where `OWS`
+  (optional) or `RWS` (required) is shown.
+- **Where alternatives overlap, the first one listed applies.** ABNF itself does not order
+  alternatives, so an implementation that tries them in a different order can accept the same
+  text but read it differently. For example, `BD#3` is a business-day position, not the start of
+  a `3BD` step.
 
 ### Shared tokens
 
-```ebnf
-digit      = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
-number     = digit { digit } ;
-span       = number [ "-" number ] ;                  (* a value, or an inclusive range *)
-list       = "[" span { "," span } "]" ;              (* e.g. [01,15], [01-05,15], [1-4] *)
-ws         = " " { " " } ;
-ws?        = [ ws ] ;
+<!-- abnf:shared -->
+```abnf
+number        = 1*DIGIT
+span          = number [ "-" number ]
+list          = "[" span *( "," span ) "]"
+OWS           = *SP
+RWS           = 1*SP
 ```
+<!-- /abnf -->
 
 ### Schedule
 
 A schedule is a union of parts, optional exclusions, and optional bounds. The kind of schedule
 (date, time or datetime) is decided by the caller, not by the text.
 
-```ebnf
-schedule   = union [ ws? "!" ws? exclusion ] { ws? bound } ;
-union      = part { ws? "|" ws? part } ;
-exclusion  = excl_part { ws? "|" ws? excl_part } ;
-bound      = start | end | count ;                    (* each at most once, in any order *)
-
-part       = date_spec | time_spec | datetime_spec ;  (* all parts are the same kind *)
-excl_part  = date_spec                                (* for date and datetime schedules *)
-           | time_spec ;                              (* for time schedules *)
+<!-- abnf:schedule -->
+```abnf
+schedule      = union [ OWS "!" OWS exclusion ]
+                *( OWS ( start / end ) / RWS count )
+union         = part *( OWS "|" OWS part )
+exclusion     = excl-part *( OWS "|" OWS excl-part )
+part          = datetime-spec / date-spec / time-spec
+              ; every part of one schedule is of the same kind
+excl-part     = date-spec / time-spec
+              ; a date spec for date and datetime schedules,
+              ; a time spec for time schedules
 ```
+<!-- /abnf -->
 
 How a schedule is split, in this order:
 
@@ -66,48 +73,55 @@ How a schedule is split, in this order:
 
 ### Date spec
 
-```ebnf
-date_spec  = years "-" months "-" days [ weeks ] [ ws? adjustment ] ;
+<!-- abnf:date -->
+```abnf
+date-spec     = years "-" months "-" days [ weeks ]
+                [ OWS adjustment ]
 
-years      = list | "YY" | "_" | number "Y" [ list ] | number ;
-months     = list | "MM" | "_" | number "M" [ list ] | number ;
+years         = list / %s"YY" / "_" / number %s"Y" [ list ] / number
+months        = list / %s"MM" / "_" / number %s"M" [ list ] / number
 
-days       = weekday_list
-           | list                                     (* days of the month: [01,15], [01-10] *)
-           | biz_nth
-           | weekday "#" occurrence                   (* WED#2, FRI#L, THU#2L *)
-           | weekday                                  (* MON *)
-           | number ( "BD" | "WD" | "D" )             (* steps: 5BD, 3WD, 7D *)
-           | number "D" list                          (* positions in a day cycle: 8D[1-4] *)
-           | "DD" | "_" | "L"
-           | number [ "L" | "N" | "O" ] ;             (* 15, 31L, 31N, 31O *)
+days          = weekday-list
+              / list
+              / biz-nth
+              / weekday "#" occurrence
+              / weekday
+              / number %s"D" list
+              / number ( %s"BD" / %s"WD" / %s"D" )
+              / %s"DD" / "_" / %s"L"
+              / number [ %s"L" / %s"N" / %s"O" ]
 
-weekday    = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN" ;
-weekday_list = "[" weekday [ "-" weekday ] { "," weekday [ "-" weekday ] } "]" ;
-occurrence = "L" | number [ "L" ] ;
+weekday       = %s"MON" / %s"TUE" / %s"WED" / %s"THU" / %s"FRI"
+              / %s"SAT" / %s"SUN"
+weekday-span  = weekday [ "-" weekday ]
+weekday-list  = "[" weekday-span *( "," weekday-span ) "]"
+occurrence    = %s"L" / number [ %s"L" ]
 
-biz_nth    = ( "BD" | "WD" ) "#" ( occurrence | "[" biz_pos { "," biz_pos } "]" ) ;
-biz_pos    = "L" | number "L" | number [ "-" number ] ;
+biz-nth       = ( %s"BD" / %s"WD" ) "#"
+                ( occurrence / "[" biz-pos *( "," biz-pos ) "]" )
+biz-pos       = %s"L" / number %s"L" / span
 
-weeks      = "/" number "W" [ list ] ;                (* /2W, /4W[1,2] *)
+weeks         = "/" number %s"W" [ list ]
 
-adjustment = "~" ( "SB" | "MF" | "MP" | "PW" | "NW" | "PB" | "NB" | "B" | "W"
-                 | [ number ] ( "P" | "N" ) ) ;       (* ~3P, ~2N; a bare ~P or ~N means 1 *)
+adjustment    = "~" ( %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
+                    / %s"PB" / %s"NB" / %s"B" / %s"W"
+                    / [ number ] ( %s"P" / %s"N" ) )
 ```
+<!-- /abnf -->
 
-`number "D" list` is only valid for calendar days: `5BD[…]` and `3WD[…]` do not parse.
+`number %s"D" list` is only valid for calendar days: `5BD[…]` and `3WD[…]` do not parse.
 
 ### Time spec
 
-```ebnf
-time_spec  = hour_field ":" minute_field ":" second_field ;
-
-hour_field   = values | "HH" | "_" | number "H" | number ;
-minute_field = values | "MM" | "_" | number "M" | number ;
-second_field = values | "SS" | "_" | number "S" | number ;
-
-values     = list | number "-" number ;               (* [09,12,17], 09-16, [09-11,14] *)
+<!-- abnf:time -->
+```abnf
+time-spec     = hour-field ":" minute-field ":" second-field
+hour-field    = values / %s"HH" / "_" / number %s"H" / number
+minute-field  = values / %s"MM" / "_" / number %s"M" / number
+second-field  = values / %s"SS" / "_" / number %s"S" / number
+values        = list / number "-" number
 ```
+<!-- /abnf -->
 
 In each field, the forms are, in order: a list or range (*values*), the wildcard (*for each*),
 `_` (*as is*), a step (*every n*), and a single fixed value (*at*). A list or range that names a
@@ -115,9 +129,11 @@ single value is the same as that value: `[09]` and `09-09` both mean `09`.
 
 ### Datetime spec
 
-```ebnf
-datetime_spec = date_spec "T" time_spec ;
+<!-- abnf:datetime -->
+```abnf
+datetime-spec = date-spec %s"T" time-spec
 ```
+<!-- /abnf -->
 
 The `T` that separates the parts is the **first** `T` that is immediately followed by the start
 of a time spec, described by this regular expression:
@@ -131,18 +147,20 @@ splits into `YY-MM-THU` and `09:00:00`.
 
 ### Bounds: start, end and count
 
-```ebnf
-start      = "@" ws? moment ;
-end        = ".." ws? moment ;
-count      = "x" number ;                             (* must be preceded by whitespace or begin the text,
-                                                         and followed by whitespace or the end *)
-
-moment     = date [ "T" clock ] [ offset ] [ "[" zone "]" ] ;
-date       = digit digit digit digit "-" digit digit "-" digit digit ;
-clock      = digit digit ":" digit digit [ ":" digit digit ] ;
-offset     = "Z" | ( "+" | "-" ) digit digit ":" digit digit ;
-zone       = ? an IANA time zone name, e.g. Europe/London ? ;
+<!-- abnf:bounds -->
+```abnf
+start         = "@" OWS moment
+end           = ".." OWS moment
+count         = %s"x" number
+moment        = full-date [ %s"T" clock ] [ offset ]
+                [ "[" zone "]" ]
+full-date     = 4DIGIT "-" 2DIGIT "-" 2DIGIT
+clock         = 2DIGIT ":" 2DIGIT [ ":" 2DIGIT ]
+offset        = %s"Z" / ( "+" / "-" ) 2DIGIT ":" 2DIGIT
+zone          = 1*( ALPHA / DIGIT / "/" / "_" / "-" / "+" )
+              ; an IANA time zone name, e.g. Europe/London
 ```
+<!-- /abnf -->
 
 `moment` follows RFC 3339 with an optional RFC 9557 time zone suffix. A count token only counts
 when it stands alone, so an `x` inside a zone name such as `America/Mexico_City` is not a count.

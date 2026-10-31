@@ -1,0 +1,82 @@
+; ABNF (RFC 5234, with RFC 7405 case-sensitive strings) for the
+; tkone schedule format.
+;
+; The single source of the grammar: ietf/build.py copies its sections
+; into the Internet-Draft and into GRAMMAR.md, and checks the
+; conformance examples in GRAMMAR.md against it. Keep lines within 69
+; characters, so that they fit in the draft's plain-text form.
+;
+; Each section starts with a "; @section NAME" line.
+
+; @section schedule
+schedule      = union [ OWS "!" OWS exclusion ]
+                *( OWS ( start / end ) / RWS count )
+union         = part *( OWS "|" OWS part )
+exclusion     = excl-part *( OWS "|" OWS excl-part )
+part          = datetime-spec / date-spec / time-spec
+              ; every part of one schedule is of the same kind
+excl-part     = date-spec / time-spec
+              ; a date spec for date and datetime schedules,
+              ; a time spec for time schedules
+
+; @section shared
+number        = 1*DIGIT
+span          = number [ "-" number ]
+list          = "[" span *( "," span ) "]"
+OWS           = *SP
+RWS           = 1*SP
+
+; @section date
+date-spec     = years "-" months "-" days [ weeks ]
+                [ OWS adjustment ]
+
+years         = list / %s"YY" / "_" / number %s"Y" [ list ] / number
+months        = list / %s"MM" / "_" / number %s"M" [ list ] / number
+
+days          = weekday-list
+              / list
+              / biz-nth
+              / weekday "#" occurrence
+              / weekday
+              / number %s"D" list
+              / number ( %s"BD" / %s"WD" / %s"D" )
+              / %s"DD" / "_" / %s"L"
+              / number [ %s"L" / %s"N" / %s"O" ]
+
+weekday       = %s"MON" / %s"TUE" / %s"WED" / %s"THU" / %s"FRI"
+              / %s"SAT" / %s"SUN"
+weekday-span  = weekday [ "-" weekday ]
+weekday-list  = "[" weekday-span *( "," weekday-span ) "]"
+occurrence    = %s"L" / number [ %s"L" ]
+
+biz-nth       = ( %s"BD" / %s"WD" ) "#"
+                ( occurrence / "[" biz-pos *( "," biz-pos ) "]" )
+biz-pos       = %s"L" / number %s"L" / span
+
+weeks         = "/" number %s"W" [ list ]
+
+adjustment    = "~" ( %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
+                    / %s"PB" / %s"NB" / %s"B" / %s"W"
+                    / [ number ] ( %s"P" / %s"N" ) )
+
+; @section time
+time-spec     = hour-field ":" minute-field ":" second-field
+hour-field    = values / %s"HH" / "_" / number %s"H" / number
+minute-field  = values / %s"MM" / "_" / number %s"M" / number
+second-field  = values / %s"SS" / "_" / number %s"S" / number
+values        = list / number "-" number
+
+; @section datetime
+datetime-spec = date-spec %s"T" time-spec
+
+; @section bounds
+start         = "@" OWS moment
+end           = ".." OWS moment
+count         = %s"x" number
+moment        = full-date [ %s"T" clock ] [ offset ]
+                [ "[" zone "]" ]
+full-date     = 4DIGIT "-" 2DIGIT "-" 2DIGIT
+clock         = 2DIGIT ":" 2DIGIT [ ":" 2DIGIT ]
+offset        = %s"Z" / ( "+" / "-" ) 2DIGIT ":" 2DIGIT
+zone          = 1*( ALPHA / DIGIT / "/" / "_" / "-" / "+" )
+              ; an IANA time zone name, e.g. Europe/London

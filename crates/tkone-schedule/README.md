@@ -495,6 +495,8 @@ The same `resume_after` and `resume_with_start` exist on
   and a comparison with cron, Quartz and RRULE
 - [Grammar and rules](GRAMMAR.md): the formal grammar, validity rules and evaluation rules,
   for validating the format or implementing it elsewhere
+- [The format as an Internet-Draft](ietf/README.md): the ABNF, the draft, and the tooling that
+  keeps them in sync with GRAMMAR.md
 - [Date spec reference](src/date/date-spec.md): every date token, with worked examples
 - [Time spec reference](src/time/time-spec.md): the time grid, steps, windows and lists
 - [Combined date and time reference](src/datetime/date-time-spec.md): how dates and times

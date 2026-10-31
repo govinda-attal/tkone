@@ -1,0 +1,55 @@
+# Keeps the schedule format's grammar, GRAMMAR.md and the Internet-Draft in
+# sync, and renders the draft.
+name: spec
+
+on:
+  push:
+    paths: ["crates/tkone-schedule/**", ".github/workflows/spec.yml"]
+  pull_request:
+    paths: ["crates/tkone-schedule/**", ".github/workflows/spec.yml"]
+
+jobs:
+  check:
+    name: Grammar in sync and valid
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/tkone-schedule
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r ietf/requirements.txt
+      - name: GRAMMAR.md and the draft are up to date; examples match the ABNF
+        run: python ietf/build.py --check --validate
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GRAMMAR.md's examples match the Rust parser
+        run: cargo test -p tkone-schedule grammar
+
+  render:
+    name: Render the Internet-Draft
+    needs: check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/tkone-schedule
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: |
+          python -m pip install -r ietf/requirements.txt
+          gem install kramdown-rfc
+      - run: python ietf/build.py --render
+      - uses: actions/upload-artifact@v4
+        with:
+          name: internet-draft
+          path: |
+            crates/tkone-schedule/ietf/*.txt
+            crates/tkone-schedule/ietf/*.html
+            crates/tkone-schedule/ietf/*.xml

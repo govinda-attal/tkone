@@ -1,0 +1,6 @@
+# Rendered by `python3 ietf/build.py --render`; rebuild instead of committing.
+*.xml
+*.txt
+*.html
+.refcache/
+!requirements.txt

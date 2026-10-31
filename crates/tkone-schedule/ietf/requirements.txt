@@ -1,0 +1,3 @@
+# Python tools for ietf/build.py.
+abnf==2.9.1      # --validate: check GRAMMAR.md's examples against the ABNF
+xml2rfc==3.35.0  # --render: XML to .txt and .html

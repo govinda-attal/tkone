@@ -96,7 +96,9 @@ pub fn resolve_start_spec_in<Tz: TimeZone>(s: &str, tz: &Tz) -> Result<DateTime<
         return Ok(dt.with_timezone(tz));
     }
     let now = Utc::now().with_timezone(tz);
+    // "09:00:00" is the next 9 am, tomorrow's if today's has passed.
     let next = tkone_schedule::time::SpecIteratorBuilder::new_after(s, now)
+        .repeat_daily()
         .build()
         .and_then(|mut iter| iter.next())
         .map_err(|e| Error::Custom(format!("start_spec `{s}` is neither an RFC 3339 datetime nor a time spec: {e}")))?;

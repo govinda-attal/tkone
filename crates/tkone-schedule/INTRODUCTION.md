@@ -23,10 +23,12 @@ YY-MM-DDT1H:30M:00    every day, every 90 minutes
 
 ## The format in five minutes
 
-A schedule has a **date part**, a **time part**, or both joined by `T`:
+A schedule has a **date part**, a **time part**, or both joined by `T`. Several schedules can
+be combined with `|`, and dates (or times) can be excluded after `!`:
 
 ```text
 <years>-<months>-<days>[~<adjustment>]  T  <hours>:<minutes>:<seconds>
+<schedule> | <schedule> | …  ! <exclusion> | <exclusion> | …
 ```
 
 ### Date part
@@ -50,8 +52,9 @@ Ranges such as `[01-06]` are written inside brackets, because `-` also separates
 
 ### Adjustment (optional)
 
-What to do when the date lands on a day you can't use. Business days come from a holiday
-calendar that your application provides.
+What to do when the date lands on a day you can't use. A *business day* is a weekday that is not
+a holiday. The holiday calendar is not written in the schedule: it is supplied alongside it, one
+per market if needed, so the same schedule text works for London and New York.
 
 | Adjustment | Meaning |
 |------------|---------|
@@ -79,8 +82,7 @@ value.
 | `HH:MM:00` | every minute |
 
 Steps are counted from the schedule's start: `HH:15M:00` started at 09:07 runs at 09:22, 09:37,
-and so on. If you want them on the clock (:00, :15, :30, :45) like cron, ask for midnight
-alignment when the schedule is built.
+and so on. To stay on fixed minutes whatever the start, name them: `HH:[00,15,30,45]:00`.
 
 ### Combining schedules
 
@@ -93,12 +95,20 @@ YY-MM-BD#3 | YY-MM-L~PB                       the 3rd and the last business day 
 YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00    09:00 on the 1st business day, 17:00 on the last Friday
 ```
 
-Not sure how a schedule will be read? The library can describe any schedule in plain English:
+### Excluding dates
+
+Everything after `!` is excluded. A date or datetime schedule excludes by date; a time schedule
+excludes by time. The exclusion is itself a schedule, so it can be a single date, a recurring
+date, or several joined with `|`:
 
 ```text
-YY-1M-31L~WT11:00:00  →  on the 31st of every month (or the last day, in shorter months),
-                         moved to the nearest weekday when it falls on a weekend; at 11:00:00
+YY-MM-DD ! YY-12-25 | YY-01-01                every day except 25 December and 1 January
+YY-MM-[MON-FRI]T09:00:00 ! 2025-12-[24-31]     09:00 on weekdays, but not 24–31 December 2025
+1H:00:00 ! 12:MM:SS                           every hour, except during the 12:00 hour
 ```
+
+Exclusions apply to the schedule's own date (the scheduled date, before any `~` adjustment) and
+to everything before the `!`, including all parts of a `|` combination.
 
 ---
 
@@ -161,9 +171,9 @@ no month end, no business days, and "one month after January 31" is left to the 
 | N business days before a date | ✗ | ✗ | ✗ | ✓ `~2P` |
 | Every N business days | ✗ | ✗ | ✗ | ✓ `5BD` |
 | Both the scheduled and the adjusted date | ✗ | ✗ | ✗ | ✓ |
-| Clock-change behaviour defined and selectable | ✗ | ✗ | partly | ✓ |
+| Clock-change behaviour defined | ✗ | ✗ | partly | ✓ |
+| Exclude given dates | ✗ | partly | ✓ | ✓ `! …` |
 | Combine several rules into one schedule | ✗ | ✗ | partly | ✓ `A \| B` |
-| Plain-English description of a schedule | ✗ | ✗ | ✗ | ✓ |
 
 *This compares the standard formats. Some products add their own extensions.*
 
@@ -171,16 +181,17 @@ no month end, no business days, and "one month after January 31" is left to the 
 
 ## What makes it a good fit for finance
 
-### The scheduled date and the paid date are both kept
+### The scheduled date and the paid date are both defined
 
 When a payment due on Saturday the 31st moves to Monday the 2nd, both dates matter: interest
-accrues to the 31st, while cash moves on the 2nd. Every occurrence reports:
+accrues to the 31st, while cash moves on the 2nd. An adjustment never replaces the date the rule
+produced; every occurrence has both:
 
-- **actual**: the date the rule produced (the 31st)
-- **observed**: the date after adjustment (the 2nd)
+- the **scheduled** date the rule produced (the 31st)
+- the **observed** date after adjustment (the 2nd)
 
-It is also labelled *exact*, *adjusted later* or *adjusted earlier*, so the moved dates are easy
-to find in a report.
+An occurrence is either exact, moved later or moved earlier. The schedule always continues from
+scheduled dates, so an adjustment never shifts the dates that follow it.
 
 ### Business-day conventions are built into the text
 
@@ -195,9 +206,6 @@ The common conventions map directly onto adjustments:
 | Nearest business day | `~B` |
 | N business days before / after | `~NP` / `~NN` |
 
-The holiday calendar is supplied by your application (one per market, if needed), so the same
-schedule text works for London and New York.
-
 ### Month end is a choice, not an accident
 
 `31L` clamps to the last day, `31N` moves to the 1st of the next month, `31O` overflows by the
@@ -206,26 +214,25 @@ is decided silently.
 
 ### Clock changes are handled the same way every time
 
-Each schedule runs in a named time zone (for example `Europe/London`) with a defined rule for
-daylight saving:
+Times are read on the wall clock of the schedule's time zone (for example `Europe/London`), with
+fixed rules for daylight saving:
 
 - **A time that doesn't exist** (02:30 when the clocks jump from 02:00 to 03:00) moves later
-  by the size of the jump, and is labelled as moved.
-- **A time that happens twice** (when the clocks fall back) runs once, not twice.
-- **Every 6 hours** can mean *by the clock on the wall* (the default: started at midnight, it
-  runs at 00:00, 06:00, 12:00 and 18:00 every day) or *6 real hours apart*, which matters for
-  things like interest accrual or monitoring.
-- A strict mode turns any of these into an error instead, for systems that must never guess.
+  by the size of the jump, and counts as moved.
+- **A time that happens twice** (when the clocks fall back) happens once, not twice.
+- **Steps follow the wall clock**: every 6 hours from midnight is 00:00, 06:00, 12:00 and 18:00
+  on every day, including the days the clocks change.
 
-### Start, end and resume
+### What a schedule needs besides its text
 
-- A schedule can have an **inclusive end**, given as a date or as another schedule ("until
-  the last business day of the year").
-- A schedule is **just text**. Store the text, the time zone and the last occurrence, and the
-  next one can be computed at any time, on any machine. A resumed schedule gives exactly the
-  same dates as one that ran without stopping, including across clock changes and business-day
-  adjustments. For a combined schedule (`A | B`), also store when it started, so every part
-  picks up where it would have been.
+A schedule's text is read together with three things that are not written in it:
+
+- **a start**, from which `2Y`, `3M`, day steps such as `7D`, and time steps are counted;
+- **a time zone**, whose wall clock the times are read on;
+- **a holiday calendar**, which decides what a business day is.
+
+Where a schedule ends, and how it is stored and picked up again later, are up to the system
+that runs it. The [README](README.md) covers what the tkone library offers for these.
 
 ---
 
@@ -249,6 +256,7 @@ daylight saving:
 | Prices every 15 minutes, 09:00–16:45, on business days | `YY-MM-1BDT09-16:15M:00` |
 | Every 15 minutes during market hours, 09:30–16:00, Mon–Fri | `YY-MM-[MON-FRI]T09:[30,45]:00 \| YY-MM-[MON-FRI]T10-15:15M:00 \| YY-MM-[MON-FRI]T16:00:00` |
 | Reminders at 09:00, 12:00 and 17:00 on the 2nd business day | `YY-MM-BD#2T[09,12,17]:00:00` |
+| Overnight batch at 02:00 on weekdays, except 25 December and 1 January | `YY-MM-[MON-FRI]T02:00:00 ! YY-12-25 \| YY-01-01` |
 
 ---
 
@@ -256,17 +264,18 @@ daylight saving:
 
 The format is deliberately small. Some things it leaves out:
 
-- **No exclusion dates or occurrence counts.** A schedule is bounded by an end date or an end
-  schedule, not "stop after 12 times" or "except 25 December".
 - **No "every other week on several days".** Every 14 days works for one weekday (`14D`), but
   "every second week on Tuesday and Thursday" does not fit in one rule.
-- **No built-in holiday data.** Holiday calendars come from your application.
+- **No end or occurrence limit in the text.** The text says *when* a schedule repeats, not when
+  it stops; the end is given alongside it.
+- **No holiday data.** Holiday calendars are supplied with a schedule, not written in it.
 
 ---
 
 ## Where to go next
 
-- [README](README.md): installing and using the library
+- [README](README.md): using the tkone library: ends, occurrence counts, clock alignment,
+  daylight-saving options, plain-English descriptions, and storing and resuming schedules
 - [Date spec reference](src/date/date-spec.md)
 - [Time spec reference](src/time/time-spec.md)
 - [Combined date and time reference](src/datetime/date-time-spec.md)

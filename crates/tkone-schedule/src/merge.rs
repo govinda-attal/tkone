@@ -1,4 +1,10 @@
-//! Union specs: `A | B` yields the occurrences of every part, in order.
+//! Composite specs.
+//!
+//! - **Exclusions**: `A ! X` yields the occurrences of `A` that do not match
+//!   `X`. Everything after the `!` is the exclusion spec, which may itself be
+//!   a union. Date and datetime specs exclude by a date spec (matched against
+//!   the actual date), time specs by a time spec.
+//! - **Unions**: `A | B` yields the occurrences of every part, in order.
 //!
 //! Each part runs as its own iterator; [`Merge`] interleaves their results by
 //! actual time. Results must have strictly increasing actual times, as for a
@@ -7,9 +13,45 @@
 
 use fallible_iterator::FallibleIterator;
 
+/// Splits `spec ! exclusions`; the exclusions are `None` without a `!`.
+pub(crate) fn split_exclusions(spec: &str) -> (&str, Option<&str>) {
+    match spec.split_once('!') {
+        Some((spec, exclusions)) => (spec.trim(), Some(exclusions.trim())),
+        None => (spec, None),
+    }
+}
+
+/// `spec` with `exclusions` added, as the builders' `with_exclusions` does.
+pub(crate) fn add_exclusions(spec: &str, exclusions: &str) -> String {
+    match split_exclusions(spec).1 {
+        Some(_) => format!("{spec} | {exclusions}"),
+        None => format!("{spec} ! {exclusions}"),
+    }
+}
+
 /// The parts of a union spec, or `None` for a plain spec.
 pub(crate) fn union_parts(spec: &str) -> Option<Vec<&str>> {
     spec.contains('|').then(|| spec.split('|').map(str::trim).collect())
+}
+
+/// Describe a spec that may have exclusions and unions: each part with
+/// `part`, joined by ", and also ", then each exclusion with `exclusion`,
+/// after ", except " and joined by " or ".
+pub(crate) fn describe_union(
+    spec: &str,
+    part: impl Fn(&str) -> crate::Result<String>,
+    exclusion: impl Fn(&str) -> crate::Result<String>,
+) -> crate::Result<String> {
+    let describe = |spec: &str, f: &dyn Fn(&str) -> crate::Result<String>, joiner: &str| {
+        let parts = union_parts(spec).unwrap_or_else(|| vec![spec]);
+        Ok::<_, crate::Error>(parts.into_iter().map(f).collect::<crate::Result<Vec<_>>>()?.join(joiner))
+    };
+    let (spec, exclusions) = split_exclusions(spec);
+    let mut out = describe(spec, &part, ", and also ")?;
+    if let Some(exclusions) = exclusions {
+        out += &format!(", except {}", describe(exclusions, &exclusion, " or ")?);
+    }
+    Ok(out)
 }
 
 /// Interleaves several iterators by `key` (an occurrence's actual time),
@@ -30,6 +72,10 @@ where
 {
     pub(crate) fn new(parts: Vec<I>, key: fn(&I::Item) -> K) -> Self {
         Self { parts, heads: Vec::new(), key, last: None }
+    }
+
+    pub(crate) fn parts(&self) -> &[I] {
+        &self.parts
     }
 
     /// The parts, for applying settings before iteration starts.

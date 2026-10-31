@@ -55,6 +55,28 @@ mod tests;
 
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 
+/// Describes a date spec in plain English, like [`Spec::describe`], but also
+/// accepts a union (`A | B`), whose parts are joined with ", and also ".
+///
+/// ```rust
+/// assert_eq!(
+///     tkone_schedule::date::describe("YY-MM-BD#3 | YY-MM-L~PB").unwrap(),
+///     "on the 3rd business day of every month, and also on the last day of every month, \
+///      moved to the previous business day when it is not one"
+/// );
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if any part does not parse.
+pub fn describe(spec: &str) -> crate::Result<String> {
+    crate::merge::describe_union(spec, describe_one, describe_one)
+}
+
+fn describe_one(spec: &str) -> crate::Result<String> {
+    Ok(spec.parse::<Spec>()?.describe())
+}
+
 pub use spec::{
     parse_spec, BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
     WeekdayOption,

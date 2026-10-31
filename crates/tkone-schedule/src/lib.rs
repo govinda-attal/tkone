@@ -226,7 +226,48 @@
 //! Each part keeps its own cadence and phase from the start. Fixed times of
 //! day in a time-only union recur every day. Resuming a union needs the
 //! schedule's start; see [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
-//! `describe()` works on each part's spec type, not on the union string.
+//! To describe a union, use [`date::describe`], [`time::describe`] or
+//! [`datetime::describe`], which take the union string.
+//!
+//! ### Exclusions — `<spec> ! <exclusion> | <exclusion> | …`
+//!
+//! Everything after a `!` is excluded:
+//!
+//! - date and datetime specs exclude by a **date spec**, matched against each
+//!   occurrence's actual (unadjusted) date: `YY-MM-DD ! YY-12-25 | YY-01-01`.
+//!   For a datetime spec every time on an excluded date is skipped. The
+//!   exclusion spec cannot use day steps (`7D`).
+//! - time specs exclude by a **time spec**: `1H:00:00 ! 12:MM:SS` skips the
+//!   12:00 hour.
+//!
+//! The exclusion applies to everything before the `!`, including every part of
+//! a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
+//! the same way.
+//!
+//! ### Count — `with_count(n)` (builder option)
+//!
+//! `.with_count(n)` stops after *n* results counted from the start. It is a
+//! builder option, not spec syntax. Excluded occurrences are not counted, so
+//! `with_count(12)` always yields 12 (unlike iCalendar's `COUNT` with `EXDATE`).
+//!
+//! ```rust
+//! use tkone_schedule::biz_day::WeekendSkipper;
+//! use tkone_schedule::date::SpecIteratorBuilder;
+//! use chrono::{TimeZone, Utc};
+//! use fallible_iterator::FallibleIterator;
+//!
+//! let start = Utc.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap();
+//! // nothing in July and August
+//! let dates: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-15 ! YY-[07-08]-DD", WeekendSkipper::new(), start)
+//!     .with_count(12)
+//!     .build()?
+//!     .map(|o| Ok(o.observed().format("%Y-%m").to_string()))
+//!     .collect()?;
+//! assert_eq!(dates.len(), 12);
+//! assert_eq!(dates[6], "2025-09");
+//! assert_eq!(dates[11], "2026-02");
+//! # Ok::<(), tkone_schedule::Error>(())
+//! ```
 //!
 //! ### Checking a spec — `describe()`
 //!
@@ -304,11 +345,11 @@
 //! |--------|-------|----------|
 //! | spec | `"YY-1M-L~NBT17:00:00"` | rebuilding the iterator |
 //! | timezone | IANA name, e.g. `"America/New_York"` (not an offset) | rebuilding the iterator |
-//! | options | `TimeAnchor`, `IntervalMode`, `DstPolicy` if not default | rebuilding with the same behaviour |
+//! | options | `TimeAnchor`, `IntervalMode`, `DstPolicy`, `with_exclusions`, `with_count` if set | rebuilding with the same behaviour |
 //! | cursor | `occurrence.actual().to_rfc3339()` | resuming |
 //! | due at | `occurrence.observed()` | when to run the action |
 //! | end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
-//! | start (for unions) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec |
+//! | start (for unions, counts) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec or `with_count` |
 //!
 //! ```rust
 //! # use tkone_schedule::biz_day::WeekendSkipper;
@@ -397,6 +438,12 @@
 //!   [`IntervalMode::Elapsed`]. `resume_with_start` also works for plain specs,
 //!   with the same results as `resume_after`.
 //!
+//! - **A counted schedule (`with_count`) needs its start too.** Resume it with
+//!   `resume_with_start`, which replays it from the start (at most *n*
+//!   results) to know how many have run; this works for any spec and mode,
+//!   including a union in `Elapsed`. `resume_after` with `with_count` returns
+//!   [`Error::UnsupportedResume`].
+//!
 //! The same `resume_after` and `resume_with_start` exist on
 //! [`date::SpecIteratorBuilder`] and [`time::SpecIteratorBuilder`].
 
@@ -414,6 +461,7 @@ pub mod datetime;
 pub mod time;
 
 mod error;
+mod limits;
 mod merge;
 mod prelude;
 mod utils;
@@ -422,6 +470,8 @@ mod utils;
 mod resume_tests;
 #[cfg(test)]
 mod union_tests;
+#[cfg(test)]
+mod limits_tests;
 
 pub use error::{Error, Result};
 

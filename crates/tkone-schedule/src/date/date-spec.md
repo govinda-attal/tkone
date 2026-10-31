@@ -4,9 +4,10 @@
 
 ```text
 YEAR-MONTH-DAY[~ADJUSTMENT]
+SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …
 ```
 
-All three components are required. The optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday.
+All three components are required. The optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), and dates removed after `!` ([Exclusions](#exclusions-optional)).
 
 ---
 
@@ -86,7 +87,20 @@ them expanded: `YY-MM-[MON-FRI]` displays as `YY-MM-[MON,TUE,WED,THU,FRI]`.
 `<spec> | <spec> | …` yields the dates of every part, in order: `YY-MM-BD#3 | YY-MM-L~PB` is the
 3rd and the last business day of each month. A date produced by two parts is yielded once (the
 first listed part's occurrence). Each part keeps its own cadence from the start, so resume a
-union with `resume_with_start`, which also takes the schedule's start.
+union with `resume_with_start`, which also takes the schedule's start. Describe a union with
+`date::describe(spec)`.
+
+### Exclusions (optional)
+
+`<spec> ! <exclusion>` drops the dates of `<spec>` that match `<exclusion>`, another date spec,
+which can itself be a union: `YY-MM-DD ! YY-12-25 | YY-01-01` is every day except 25 December
+and 1 January. A date is matched by its **actual** (unadjusted) date, and the exclusion applies
+to everything before the `!`, including every part of a union. An exclusion spec cannot use day
+steps (`7D`, `5BD`) or have its own `!`.
+
+> *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way, combined with
+> any written in the spec. `.with_count(n)` stops after `n` results counted from the start
+> (excluded dates are not counted); a counted schedule is resumed with `resume_with_start`.
 
 ---
 
@@ -101,6 +115,8 @@ union with `resume_with_start`, which also takes the schedule's start.
 ---
 
 ## Checking a spec
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 [`Spec::describe`](crate::date::Spec::describe) renders a spec in plain English:
 
@@ -1053,6 +1069,8 @@ With `DstPolicy::Strict` the skipped date returns `Error::AmbiguousLocalTime` in
 
 ### Resuming a stored schedule
 
+> *Library behaviour: set when building the iterator, not written in the spec.*
+
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, bdp, tz, last_actual)`, where `last_actual` is the
 stored ``actual()`` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
@@ -1061,9 +1079,13 @@ pattern and the rules that keep resumed results identical to a continuous iterat
 
 ### Start-date inclusivity
 
+> *Library behaviour: set when building the iterator, not written in the spec.*
+
 When constructed with `new_with_start`, the start date is always returned as the **first result**, as `Exact` and unchanged — even when it does not match the spec, and without applying any `~` adjustment (a Saturday start stays Saturday). This lets you feed an already-adjusted (observed) date back in as the start. Use `new_after` to begin strictly after a given point in time.
 
 ### End bound
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 `with_end(end)` is **inclusive**: occurrences up to and including `end` are returned, and the iterator stops at the first occurrence whose actual or observed date is after `end`. Nothing is invented at the boundary. `with_end_spec(spec)` uses the first occurrence of `spec` after the start (its observed date) as `end`.
 

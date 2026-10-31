@@ -4,10 +4,13 @@
 
 ```text
 <date_spec>T<time_spec>
+<datetime_spec> | <datetime_spec> | …  ! <date_spec> | <date_spec> | …
 ```
 
-The `T` separator joins a [date spec](../date/spec.md) and a [time spec](../time/spec.md).
-Both parts are required. Refer to those documents for the full syntax of each component.
+The `T` separator joins a [date spec](../date/date-spec.md) and a [time spec](../time/time-spec.md).
+Both parts are required. Refer to those documents for the full syntax of each component. Several
+datetime specs can be combined with `|`, and whole dates removed after `!`
+([Exclusions](#8-exclusions)).
 
 ### Separator detection
 
@@ -47,6 +50,8 @@ A time spec is a regular grid (see the [time spec semantics](crate::time)): a st
 optional windows for fixed coarser fields. Each date gets every grid point inside its window.
 
 ### 3. Which times each date gets — `TimeAnchor`
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 The grid's phase, and the values of carried fields (`ForEach` finer than the step, `AsIs`), come
 from an anchor chosen with `.with_time_anchor(…)`:
@@ -96,6 +101,8 @@ exist. See [Daylight Saving Time](#daylight-saving-time).
 
 ### 6. End bound
 
+> *Library behaviour: set when building the iterator, not written in the spec.*
+
 `with_end(end)` is **inclusive**: ticks up to and including `end` are yielded, and the iterator
 stops at the first tick whose actual or observed time is after `end`. Nothing is invented at the
 boundary.
@@ -107,13 +114,28 @@ boundary.
 
 ### 7. Resuming a stored schedule
 
+> *Library behaviour: set when building the iterator, not written in the spec.*
+
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, bdp, tz, last_actual)`, where `last_actual` is the
 stored ``actual()`` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
 same options; add `.with_end(end)` if the schedule has a stored end. A union spec
 (`YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00`) needs `resume_with_start(spec, bdp, tz, start,
-last_actual)`, with the schedule's stored start, so every part keeps its own dates and times. The crate docs' section *Persisting and resuming a schedule* has the full
-pattern and the rules that keep resumed results identical to a continuous iterator.
+last_actual)`, with the schedule's stored start, so every part keeps its own dates and times.
+Describe a union with `datetime::describe(spec)`. The crate docs' section *Persisting and
+resuming a schedule* has the full pattern and the rules that keep resumed results identical to a
+continuous iterator.
+
+### 8. Exclusions
+
+`<spec> ! <exclusion>` drops every tick whose **actual date** matches `<exclusion>`, a *date*
+spec (a union is allowed): `YY-MM-[MON-FRI]T09:00:00 ! YY-12-25 | YY-01-01` skips 25 December
+and 1 January entirely. The exclusion applies to everything before the `!`, including every part
+of a union. It cannot use day steps (`7D`) or have its own `!`.
+
+> *Library:* `.with_exclusions(date_spec)` on the builder adds exclusions the same way.
+> `.with_count(n)` stops after `n` ticks counted from the start (excluded ticks are not counted);
+> a counted schedule is resumed with `resume_with_start`.
 
 ---
 

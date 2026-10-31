@@ -238,7 +238,47 @@ increase.
 Each part keeps its own cadence and phase from the start. Fixed times of
 day in a time-only union recur every day. Resuming a union needs the
 schedule's start; see [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
-`describe()` works on each part's spec type, not on the union string.
+To describe a union, use [`date::describe`], [`time::describe`] or
+[`datetime::describe`], which take the union string.
+
+##### Exclusions — `<spec> ! <exclusion> | <exclusion> | …`
+
+Everything after a `!` is excluded:
+
+- date and datetime specs exclude by a **date spec**, matched against each
+  occurrence's actual (unadjusted) date: `YY-MM-DD ! YY-12-25 | YY-01-01`.
+  For a datetime spec every time on an excluded date is skipped. The
+  exclusion spec cannot use day steps (`7D`).
+- time specs exclude by a **time spec**: `1H:00:00 ! 12:MM:SS` skips the
+  12:00 hour.
+
+The exclusion applies to everything before the `!`, including every part of
+a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
+the same way.
+
+##### Count — `with_count(n)` (builder option)
+
+`.with_count(n)` stops after *n* results counted from the start. It is a
+builder option, not spec syntax. Excluded occurrences are not counted, so
+`with_count(12)` always yields 12 (unlike iCalendar's `COUNT` with `EXDATE`).
+
+```rust
+use tkone_schedule::biz_day::WeekendSkipper;
+use tkone_schedule::date::SpecIteratorBuilder;
+use chrono::{TimeZone, Utc};
+use fallible_iterator::FallibleIterator;
+
+let start = Utc.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap();
+// nothing in July and August
+let dates: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-15 ! YY-[07-08]-DD", WeekendSkipper::new(), start)
+    .with_count(12)
+    .build()?
+    .map(|o| Ok(o.observed().format("%Y-%m").to_string()))
+    .collect()?;
+assert_eq!(dates.len(), 12);
+assert_eq!(dates[6], "2025-09");
+assert_eq!(dates[11], "2026-02");
+```
 
 ##### Checking a spec — `describe()`
 
@@ -316,11 +356,11 @@ Per schedule, store:
 |--------|-------|----------|
 | spec | `"YY-1M-L~NBT17:00:00"` | rebuilding the iterator |
 | timezone | IANA name, e.g. `"America/New_York"` (not an offset) | rebuilding the iterator |
-| options | `TimeAnchor`, `IntervalMode`, `DstPolicy` if not default | rebuilding with the same behaviour |
+| options | `TimeAnchor`, `IntervalMode`, `DstPolicy`, `with_exclusions`, `with_count` if set | rebuilding with the same behaviour |
 | cursor | `occurrence.actual().to_rfc3339()` | resuming |
 | due at | `occurrence.observed()` | when to run the action |
 | end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
-| start (for unions) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec |
+| start (for unions, counts) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec or `with_count` |
 
 ```rust
 struct Row {
@@ -400,6 +440,12 @@ Rules that keep resumed results exact:
   [`IntervalMode::Elapsed`]. `resume_with_start` also works for plain specs,
   with the same results as `resume_after`.
 
+- **A counted schedule (`with_count`) needs its start too.** Resume it with
+  `resume_with_start`, which replays it from the start (at most *n*
+  results) to know how many have run; this works for any spec and mode,
+  including a union in `Elapsed`. `resume_after` with `with_count` returns
+  [`Error::UnsupportedResume`].
+
 The same `resume_after` and `resume_with_start` exist on
 [`date::SpecIteratorBuilder`] and [`time::SpecIteratorBuilder`].
 
@@ -470,6 +516,12 @@ Any date, time or datetime spec can combine several specs of the same kind with 
 from all parts are merged in time order (`"09:[30,45]:00 | 10-15:15M:00 | 16:00:00"` = every 15
 minutes from 09:30 to 16:00).
 
+### Exclusions — `<spec> ! <exclusion> | …`
+
+Everything after `!` is excluded: a date spec for date and datetime specs (by actual date), a
+time spec for time specs (`"YY-MM-DD ! YY-12-25 | YY-01-01"`, `"1H:00:00 ! 12:MM:SS"`).
+`.with_exclusions(spec)` on the builder does the same.
+
 ### DateTime spec — `<date_spec>T<time_spec>`
 
 The `T` separator is detected by what immediately follows it (`HH:`, `nH:`, `_:`, a
@@ -487,11 +539,16 @@ Full combining semantics, tick-per-day rules, and edge cases:
 
 ## Builder options
 
+These are library options set when building an iterator; they are not part of the spec text.
+The [introduction](INTRODUCTION.md) covers the format itself.
+
 | Option | Iterators | Default | Effect |
 |--------|-----------|---------|--------|
 | `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound; nothing is invented at the boundary |
 | `.with_dst_policy(…)` | all | `Adjust` | `Strict` turns DST gaps and overlaps into errors |
 | `.with_interval_mode(…)` | time, datetime | `WallClock` | `Elapsed` measures steps in real time across DST |
+| `.with_exclusions(spec)` | all | — | Same as writing `! spec` in the spec; combined with exclusions already there |
+| `.with_count(n)` | all | — | Stop after `n` results counted from the start; excluded occurrences are not counted |
 | `.with_time_anchor(…)` | datetime, time | `Start` | `Midnight` counts steps from each day's 00:00 (clock-aligned, like cron) instead of from the start's time of day |
 
 `new_with_start(start)` always yields `start` first, unchanged and as `Exact`, even if it does
@@ -499,8 +556,8 @@ not match the spec. That lets you feed an already-adjusted (observed) date back 
 
 To continue a schedule stored in a database, use `resume_after(spec, …, tz, last_actual)` with
 the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end. A union
-spec (`A | B`) must be resumed with `resume_with_start(spec, …, tz, start, last_actual)`, which
-also needs the schedule's stored start — see
+spec (`A | B`) or a schedule with `with_count` must be resumed with
+`resume_with_start(spec, …, tz, start, last_actual)`, which also needs the schedule's stored start — see
 [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
 
 ## Runnable examples

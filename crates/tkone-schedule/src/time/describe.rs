@@ -145,9 +145,46 @@ pub(crate) fn describe(spec: &Spec) -> String {
     out + &window(pinned(Unit::Hour), pinned(Unit::Minute))
 }
 
+/// Describes a time spec used as an exclusion (after `!`) by the times it
+/// covers rather than how it repeats: `12:MM:SS` is "during 12:00–12:59",
+/// not "every second, only during 12:00–12:59".
+pub(crate) fn describe_exclusion(spec: &Spec) -> String {
+    let Some(driver) = driver(spec) else {
+        return fixed_times(spec);
+    };
+    // Every second inside the window: the whole window is covered.
+    if driver == Unit::Second && step(spec, driver) == driver.duration(1) {
+        let pinned = |unit: Unit| written(spec).find(|(u, _)| *u == unit).and_then(|(_, c)| c.pinned());
+        return match window(pinned(Unit::Hour), pinned(Unit::Minute)).strip_prefix(", only ") {
+            Some(during) => during.to_string(),
+            None => "at any time".to_string(),
+        };
+    }
+    format!("at times matching: {}", describe(spec))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_describe_exclusion() {
+        for (spec, expected) in [
+            ("12:MM:SS", "during 12:00–12:59"),
+            ("[12-13]:MM:SS", "during 12:00–13:59"),
+            ("[12,18]:MM:SS", "during 12:00–12:59 and 18:00–18:59"),
+            ("HH:[00-04]:SS", "during minutes 00 to 04 of each hour"),
+            ("12:30:SS", "during minute 12:30"),
+            ("HH:MM:SS", "at any time"),
+            ("12:00:00", "at 12:00:00"),
+            ("[12,18]:00:00", "at 12:00:00 and 18:00:00"),
+            ("HH:15M:00", "at times matching: every 15 minutes, at second 00, counted from the start"),
+            ("12:MM:00", "at times matching: every minute, at second 00, only during 12:00–12:59"),
+        ] {
+            let parsed: Spec = spec.parse().unwrap();
+            assert_eq!(describe_exclusion(&parsed), expected, "{spec}");
+        }
+    }
 
     #[test]
     fn test_describe() {

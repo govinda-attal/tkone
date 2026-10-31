@@ -62,3 +62,27 @@ pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 pub(crate) use engine::next_after;
 
 pub use spec::{Cycle, Spec};
+
+/// Describes a time spec in plain English, like [`Spec::describe`], but also
+/// accepts a union (`A | B`), whose parts are joined with ", and also ".
+///
+/// ```rust
+/// assert_eq!(
+///     tkone_schedule::time::describe("09:[30,45]:00 | 10-15:15M:00 | 16:00:00").unwrap(),
+///     "at 09:30:00 and 09:45:00, and also every 15 minutes, at second 00, counted from the start, \
+///      only during 10:00–15:59, and also at 16:00:00"
+/// );
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if any part does not parse.
+pub fn describe(spec: &str) -> crate::Result<String> {
+    crate::merge::describe_union(spec, describe_one, |part| {
+        Ok(describe::describe_exclusion(&part.parse::<Spec>()?))
+    })
+}
+
+fn describe_one(spec: &str) -> crate::Result<String> {
+    Ok(spec.parse::<Spec>()?.describe())
+}

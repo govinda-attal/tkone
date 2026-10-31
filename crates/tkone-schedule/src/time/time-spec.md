@@ -4,9 +4,10 @@
 
 ```text
 HH:MM:SS
+SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …
 ```
 
-All three components are required. Each component is one of: a wildcard (`ForEach`), a keep-current marker (`AsIs`), a fixed value (`At`), or an interval (`Every`).
+All three components are required. Each component is one of: a wildcard (`ForEach`), a keep-current marker (`AsIs`), a fixed value (`At`), a list or range of values (`Values`), or an interval (`Every`). Several specs can be combined with `|` ([Union](#union-of-time-specs)), and times removed after `!` ([Exclusions](#exclusions)).
 
 ---
 
@@ -677,6 +678,8 @@ No `Every`; `HH` drives by 1 hour, and the minute list gives one hourly grid at 
 
 ## end_spec Usage
 
+> *Library behaviour: set when building the iterator, not written in the spec.*
+
 An end spec is a time spec string evaluated **once from the start datetime**: its first
 occurrence after the start becomes the end boundary. Any valid time spec may be used:
 
@@ -697,9 +700,13 @@ end of 11:30 yields 09:00, 10:00, 11:00.
 
 ### Start-time inclusivity
 
+> *Library behaviour: set when building the iterator, not written in the spec.*
+
 When constructed with `new_with_start`, the start datetime is always returned as the **first result** regardless of whether it aligns with the spec pattern. Use `new_after` to begin strictly after a given point in time.
 
 ### `new_after` with non-aligned starts
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 With `new_after`, the first result is the next grid point **strictly after** the given datetime,
 so a non-aligned cursor snaps to the grid:
@@ -709,6 +716,8 @@ so a non-aligned cursor snaps to the grid:
 - `HH:MM:30` from 10:00:00 → **10:00:30**
 
 ### Clock alignment — `TimeAnchor::Midnight`
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 By default a step is counted from the start: `HH:15M:00` started at 09:07 runs at 09:22, 09:37, …
 For cron-like alignment, build with `.with_time_anchor(TimeAnchor::Midnight)`: steps and carried
@@ -733,9 +742,27 @@ The spec is applied to the wall-clock (local) time using `chrono::Duration` arit
 `09:[30,45]:00 | 10-15:15M:00 | 16:00:00` yields the times of every part in order: every 15
 minutes from 09:30 to 16:00. Each part keeps its own grid, counted from the start (or from
 midnight with `TimeAnchor::Midnight`). Fixed-time parts such as `16:00:00` recur every day in a
-union. When two parts produce the same instant it is yielded once.
+union. When two parts produce the same instant it is yielded once. Describe a union with
+`time::describe(spec)`.
+
+### Exclusions
+
+`<spec> ! <exclusion>` drops the times of `<spec>` that match `<exclusion>`, another time spec
+(a union is allowed): `1H:00:00 ! 12:MM:SS` is every hour except during the 12:00 hour. The
+exclusion applies to everything before the `!`, including every part of a union.
+
+An exclusion matches **exact times**, so leave the finer fields as wildcards to cover a whole
+period: `12:MM:SS` covers the entire 12:00 hour, `12:MM:00` only 12:00:00, 12:01:00, …, and
+`12:00:00` only the single instant 12:00:00. `time::describe` shows what an exclusion covers:
+`1H:00:00 ! 12:MM:SS` is "every hour, at minute 00 and second 00, except during 12:00–12:59".
+
+> *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way.
+> `.with_count(n)` stops after `n` results counted from the start (excluded times are not
+> counted); a counted schedule is resumed with `resume_with_start`.
 
 ### Resuming a stored schedule
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, tz, last_actual)`, where `last_actual` is the
@@ -802,6 +829,8 @@ WallClock              Elapsed
 `WallClock` visits the repeated 01:00 once; `Elapsed` runs every real hour.
 
 ### Longer steps drift in `Elapsed`
+
+> *Library behaviour: set when building the iterator, not written in the spec.*
 
 `6H:00:00` from 06:00 on 2025-03-08 (New York):
 

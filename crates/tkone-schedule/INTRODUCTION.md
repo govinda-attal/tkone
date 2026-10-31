@@ -400,6 +400,8 @@ The format is deliberately small. Some things it leaves out:
 
 - [README](README.md): using the tkone library: building and resuming schedules, builder
   options (`with_count`, clock alignment, daylight-saving modes) and plain-English descriptions
+- [Grammar and rules](GRAMMAR.md): the precise definition, for validating or implementing the
+  format
 - [Date spec reference](src/date/date-spec.md)
 - [Time spec reference](src/time/time-spec.md)
 - [Combined date and time reference](src/datetime/date-time-spec.md)

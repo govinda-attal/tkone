@@ -493,6 +493,8 @@ The same `resume_after` and `resume_with_start` exist on
 
 - [Introduction to the format](INTRODUCTION.md): why it exists, the syntax in five minutes,
   and a comparison with cron, Quartz and RRULE
+- [Grammar and rules](GRAMMAR.md): the formal grammar, validity rules and evaluation rules,
+  for validating the format or implementing it elsewhere
 - [Date spec reference](src/date/date-spec.md): every date token, with worked examples
 - [Time spec reference](src/time/time-spec.md): the time grid, steps, windows and lists
 - [Combined date and time reference](src/datetime/date-time-spec.md): how dates and times

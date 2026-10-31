@@ -529,6 +529,8 @@ mod union_tests;
 mod limits_tests;
 #[cfg(test)]
 mod bounds_tests;
+#[cfg(test)]
+mod grammar_tests;
 
 pub use error::{Error, Result};
 

@@ -191,6 +191,8 @@ fn test_resume_union_date_specs() {
         ("YY-MM-7D | YY-MM-15", ny(2025, 1, 2, 0, 0)), // a step part and a calendar part
         ("YY-3M-15 | YY-MM-FRI#L", ny(2025, 2, 15, 0, 0)), // cadence counted from the start
         ("YY-MM-5BD | YY-MM-[01,20]~NB", ny(2025, 1, 6, 0, 0)),
+        ("YY-MM-[MON-FRI]/4W[1,2] | YY-MM-SAT/4W[3]", ny(2025, 1, 6, 0, 0)),
+        ("YY-MM-8D[1-4] | YY-MM-15", ny(2025, 1, 1, 0, 0)),
     ] {
         check_date(spec, start);
     }
@@ -236,6 +238,12 @@ fn test_resume_with_start_on_plain_specs() {
         ("YY-01-4D", ny(2025, 1, 1, 0, 0)),
         ("YY-MM-DD~PB", ny(2025, 1, 9, 0, 0)),
         ("YY-MM-BD#3", ny(2025, 1, 3, 0, 0)),
+        // Cycles with positions: an occurrence can be anywhere in its cycle.
+        ("YY-MM-[MON-FRI]/4W[1,2]~NB", ny(2025, 1, 6, 0, 0)),
+        ("YY-MM-8D[1-4]", ny(2025, 1, 29, 0, 0)),
+        ("YY-[01-02]-8D[1-4]", ny(2025, 1, 1, 0, 0)),
+        ("YY-3M[1-2]-15", ny(2025, 1, 15, 0, 0)),
+        ("4Y[1,3]-06-15", ny(2025, 6, 15, 0, 0)),
     ] {
         check_date(spec, start);
     }
@@ -245,6 +253,8 @@ fn test_resume_with_start_on_plain_specs() {
         ("YY-MM-DDT1H:00:00", ny(2025, 11, 2, 0, 0), Elapsed, Start),
         ("YY-MM-DDTHH:30M:00", ny(2025, 3, 9, 1, 0), Elapsed, Midnight),
         ("YY-MM-BD#3T[09,17]:00:00", ny(2025, 1, 3, 9, 0), WallClock, Start),
+        ("YY-MM-8D[1-4]T07:00:00", ny(2025, 3, 6, 7, 0), WallClock, Start), // across spring-forward
+        ("YY-MM-[MON-FRI]/4W[1,2]THH:30M:00", ny(2025, 1, 6, 9, 0), WallClock, Midnight),
     ] {
         check_datetime(spec, start, mode, anchor);
     }
@@ -265,6 +275,12 @@ fn test_union_resume_errors() {
     let unsupported = |r: Result<(), Error>| matches!(r, Err(Error::UnsupportedResume(_)));
 
     assert!(unsupported(date::SpecIteratorBuilder::resume_after("YY-MM-01 | YY-MM-15", bdp.clone(), tz, last).build().map(|_| ())));
+    assert!(unsupported(date::SpecIteratorBuilder::resume_after("YY-MM-8D[1-4]", bdp.clone(), tz, last).build().map(|_| ())));
+    assert!(unsupported(
+        datetime::SpecIteratorBuilder::resume_after("YY-MM-DD/4W[1,2]T09:00:00", bdp.clone(), tz, last).build().map(|_| ())
+    ));
+    // A cycle counted from its first position resumes from any occurrence.
+    assert!(date::SpecIteratorBuilder::resume_after("YY-MM-[TUE,THU]/2W", bdp.clone(), tz, last).build().is_ok());
     assert!(unsupported(time::SpecIteratorBuilder::resume_after("HH:00:00 | HH:30:00", tz, last).build().map(|_| ())));
     assert!(unsupported(
         datetime::SpecIteratorBuilder::resume_after("YY-MM-DDT09:00:00 | YY-MM-DDT17:00:00", bdp.clone(), tz, last).build().map(|_| ())

@@ -9,7 +9,7 @@
 //! Day rules come in two kinds:
 //!
 //! - *Calendar* rules (`DD`, `15`, `[01,15]`, `L`, `31L`, `31N`, `31O`, `MON`,
-//!   `[MON,FRI]`, `WED#2`, `FRI#L`, `BD#3`, `BD#L`) are a function of the period
+//!   `[MON,FRI]`, `WED#2`, `FRI#L`, `BD#3`, `BD#L`, `8D[1-4]`) are a function of the period
 //!   (and, for `BD#`, the business day calendar): list the matching days and
 //!   take the first one after the cursor.
 //! - *Step* rules (`nD`, `nBD`, `nWD`) advance from the previous occurrence.
@@ -19,9 +19,15 @@
 //!   the first day of the next eligible period once it leaves them
 //!   (`YY-01-4D` = Jan 1, 5, …, 29, then Jan 1 of the next year).
 //!
-//! `nY` and `nM` cadences are aligned to [`IterContext::anchor`]. When both are
+//! A week cycle (`/2W`, `/4W[1,2]`) then keeps only dates in the selected
+//! weeks, counted from the anchor's week (Monday to Sunday).
+//!
+//! `nY` and `nM` cadences, positions (`3M[1-2]`, `8D[1-4]`) and week cycles
+//! are aligned to [`IterContext::anchor`]. When both are
 //! present they fold into one stride of `12·n + m` months (`1Y-3M` = every 15
 //! months).
+
+use std::collections::BTreeSet;
 
 use chrono::{Datelike, Days, Months, NaiveDate, NaiveDateTime, NaiveTime};
 
@@ -178,6 +184,23 @@ fn month_stride(spec: &Spec) -> Option<i64> {
     }
 }
 
+/// Whether `offset` (from the start) falls on one of the 1-based `positions`
+/// of an `every`-long cycle.
+fn in_cycle(offset: i64, every: u32, positions: &BTreeSet<u32>) -> bool {
+    u32::try_from(offset.rem_euclid(i64::from(every)) + 1).is_ok_and(|p| positions.contains(&p))
+}
+
+/// Whether `date` is in a selected week of the spec's week cycle (`/nW`).
+/// Weeks run Monday to Sunday; week 1 contains the start.
+fn week_matches(spec: &Spec, date: NaiveDate, anchor: NaiveDate) -> bool {
+    let Some(weeks) = &spec.weeks else {
+        return true;
+    };
+    let monday = |d: NaiveDate| d - Days::new(u64::from(d.weekday().num_days_from_monday()));
+    let offset = (monday(date) - monday(anchor)).num_days() / 7;
+    in_cycle(offset, weeks.every, &weeks.positions)
+}
+
 /// Whether `year` passes the year rule. With a month stride an `nY` rule is
 /// already part of the stride, so it passes every year.
 fn year_matches(spec: &Spec, year: i32, anchor: Period) -> bool {
@@ -187,6 +210,9 @@ fn year_matches(spec: &Spec, year: i32, anchor: Period) -> bool {
         Cycle::Values(years) => u32::try_from(year).is_ok_and(|y| years.contains(&y)),
         Cycle::NextNth(n) => {
             (i64::from(year) - i64::from(anchor.year)).rem_euclid(i64::from(*n)) == 0
+        }
+        Cycle::Positions { every, positions } => {
+            in_cycle(i64::from(year) - i64::from(anchor.year), *every, positions)
         }
     }
 }
@@ -205,6 +231,7 @@ fn period_matches(spec: &Spec, p: Period, anchor: Period) -> bool {
     let month_ok = match (&spec.months, month_stride(spec)) {
         (_, Some(stride)) => (p.index() - anchor.index()).rem_euclid(stride) == 0,
         (Cycle::Values(months), None) => months.contains(&p.month),
+        (Cycle::Positions { every, positions }, None) => in_cycle(p.index() - anchor.index(), *every, positions),
         _ => true,
     };
     month_ok && year_matches(spec, p.year, anchor)
@@ -238,6 +265,8 @@ fn next_period(spec: &Spec, from: Period, anchor: Period) -> Result<Option<Perio
         let first_month = if year == p.year { p.month } else { 1 };
         let month = match &spec.months {
             Cycle::Values(months) => months.range(first_month..=12).next().copied(),
+            Cycle::Positions { every, positions } => (first_month..=12)
+                .find(|&month| in_cycle(Period { year, month }.index() - anchor.index(), *every, positions)),
             _ => Some(first_month),
         };
         if let Some(month) = month {
@@ -271,6 +300,10 @@ fn next_year(years: &Cycle, year: i32, anchor: Period) -> Option<i32> {
             let offset = (i64::from(year) - i64::from(anchor.year)).rem_euclid(n);
             i32::try_from(i64::from(year) + if offset == 0 { 0 } else { n - offset }).ok()
         }
+        Cycle::Positions { every, positions } => (0..i64::from(*every))
+            .map(|k| i64::from(year) + k)
+            .find(|&y| in_cycle(y - i64::from(anchor.year), *every, positions))
+            .and_then(|y| i32::try_from(y).ok()),
     }
 }
 
@@ -292,7 +325,7 @@ fn next_calendar<BDP: BizDayProcessor>(
         };
         let found = calendar_days(days, p, ctx)?
             .into_iter()
-            .find(|occ| *occ.actual() > after.date());
+            .find(|occ| *occ.actual() > after.date() && week_matches(spec, *occ.actual(), ctx.anchor.date()));
         if let Some(occ) = found {
             return Ok(Some(at_time(occ, after.time())));
         }
@@ -322,6 +355,10 @@ fn calendar_days<BDP: BizDayProcessor>(
 
     Ok(match days {
         DayCycle::ForEach => month().map(Occurrence::Exact).collect(),
+        DayCycle::Positions { every, positions } => month()
+            .filter(|d| in_cycle((*d - anchor).num_days(), *every, positions))
+            .map(Occurrence::Exact)
+            .collect(),
         DayCycle::AsIs => vec![Occurrence::Exact(
             first.with_day(anchor.day()).unwrap_or(last),
         )],
@@ -492,6 +529,43 @@ fn step<BDP: BizDayProcessor>(
         NextNthDayOption::BizDay => ctx.bd_processor.add(&from, n).map(Some),
         NextNthDayOption::WeekDay => WeekendSkipper::new().add(&from, n).map(Some),
     }
+}
+
+/// Where a step rule begins when the schedule's start is written in the spec
+/// (an inclusive start): on the start itself if steps can begin there,
+/// otherwise on the next business day / weekday (`nBD`, `nWD`), or where the
+/// steps restart in the next eligible month.
+pub(super) fn first_step<BDP: BizDayProcessor>(
+    spec: &Spec,
+    start: NaiveDateTime,
+    ctx: &IterContext<BDP>,
+) -> Result<Option<NaiveDateTime>> {
+    let DayCycle::NextNth(_, unit) = &spec.days else {
+        return Ok(Some(start));
+    };
+    // With an `nM` cadence the start is the clock's origin.
+    if month_stride(spec).is_some() {
+        return Ok(Some(start));
+    }
+    let anchor = Period::of(ctx.anchor.date());
+    let period = Period::of(start.date());
+    if period_matches(spec, period, anchor) {
+        let ws = WeekendSkipper::new();
+        return Ok(Some(match unit {
+            NextNthDayOption::Regular => start,
+            NextNthDayOption::BizDay if ctx.bd_processor.is_biz_day(&start)? => start,
+            NextNthDayOption::BizDay => ctx.bd_processor.add(&start, 1)?,
+            NextNthDayOption::WeekDay if ws.is_biz_day(&start)? => start,
+            NextNthDayOption::WeekDay => ws.add(&start, 1)?,
+        }));
+    }
+    let Some(from) = period.succ() else {
+        return Ok(None);
+    };
+    let Some(p) = next_period(spec, from, anchor)? else {
+        return Ok(None);
+    };
+    period_start(unit, p, start.time(), ctx)
 }
 
 /// Where a step sequence restarts inside period `p`: the 1st, or for `nBD` /

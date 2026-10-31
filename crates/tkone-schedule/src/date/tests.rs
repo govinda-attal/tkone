@@ -1494,3 +1494,104 @@ fn test_ranges_in_date_lists() {
     assert_eq!(got[..4], ["01", "02", "03", "06"]);
     assert_eq!(got[22], "31");
 }
+
+// ---------------------------------------------------------------------------
+// Group 23: Week cycles (`/nW`) and positions inside cycles (`8D[1-4]`, `3M[1-2]`)
+// ---------------------------------------------------------------------------
+
+fn dates_from(spec: &str, start: (i32, u32, u32), n: usize) -> Vec<String> {
+    let tz = chrono_tz::America::New_York;
+    let start = tz.with_ymd_and_hms(start.0, start.1, start.2, 0, 0, 0).unwrap();
+    SpecIteratorBuilder::new_with_start(spec, WeekendSkipper::new(), start)
+        .build()
+        .unwrap()
+        .take(n)
+        .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+        .collect()
+        .unwrap()
+}
+
+#[test]
+fn test_week_cycles() {
+    // Every other week on Tuesday and Thursday, from Tue 7 Jan 2025.
+    assert_eq!(
+        dates_from("YY-MM-[TUE,THU]/2W", (2025, 1, 7), 6),
+        ["2025-01-07", "2025-01-09", "2025-01-21", "2025-01-23", "2025-02-04", "2025-02-06"]
+    );
+    // Weeks 1 and 2 of every 4: two weeks on, two weeks off.
+    let got = dates_from("YY-MM-[MON-FRI]/4W[1,2]", (2025, 1, 6), 11);
+    assert_eq!(got[..2], ["2025-01-06", "2025-01-07"]);
+    assert_eq!(got[9], "2025-01-17");
+    assert_eq!(got[10], "2025-02-03");
+    // The week cycle counts across month boundaries and from a mid-week start.
+    assert_eq!(
+        dates_from("YY-MM-FRI/2W", (2025, 1, 29), 3),
+        ["2025-01-29", "2025-01-31", "2025-02-14"]
+    );
+    // Week 2 of every 2: the weeks not containing the start.
+    assert_eq!(dates_from("YY-MM-MON/2W[2]", (2025, 1, 6), 3), ["2025-01-06", "2025-01-13", "2025-01-27"]);
+    // Adjustments apply as usual.
+    assert_eq!(dates_from("YY-MM-SAT/2W~NB", (2025, 1, 4), 3), ["2025-01-04", "2025-01-20", "2025-02-03"]);
+}
+
+#[test]
+fn test_positions_inside_cycles() {
+    // 4 on, 4 off: days 1–4 of every 8, continuing across months.
+    let got = dates_from("YY-MM-8D[1-4]", (2025, 1, 1), 12);
+    assert_eq!(got[..5], ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-09"]);
+    assert_eq!(got[11], "2025-01-20");
+    // From 29 Jan: on 29–31 Jan and 1 Feb, off 2–5 Feb, on again from 6 Feb.
+    assert_eq!(dates_from("YY-MM-8D[1-4]", (2025, 1, 29), 6)[4..], ["2025-02-06", "2025-02-07"]);
+    // A month filter removes dates but does not restart the cycle.
+    let got = dates_from("YY-[01-02]-8D[1-4]", (2025, 1, 1), 40);
+    assert!(got.iter().all(|d| d.contains("-01-") || d.contains("-02-")));
+    // 2026-01-01 is day 366 of the cycle (position 6, off); the cycle resumes on 2026-01-04.
+    let first_2026 = got.iter().find(|d| d.starts_with("2026")).unwrap();
+    assert_eq!(first_2026, "2026-01-04");
+    // Months 1 and 2 of every 3-month cycle.
+    assert_eq!(
+        dates_from("YY-3M[1-2]-15", (2025, 1, 15), 5),
+        ["2025-01-15", "2025-02-15", "2025-04-15", "2025-05-15", "2025-07-15"]
+    );
+    // Years 1 and 3 of every 4.
+    assert_eq!(
+        dates_from("4Y[1,3]-06-15", (2025, 6, 15), 4),
+        ["2025-06-15", "2027-06-15", "2029-06-15", "2031-06-15"]
+    );
+}
+
+#[test]
+fn test_cycle_parsing() {
+    use crate::date::Spec;
+    for (input, shown) in [
+        ("YY-MM-[TUE,THU]/2W", "YY-MM-[TUE,THU]/2W"),
+        ("YY-MM-[TUE,THU]/2W[1]", "YY-MM-[TUE,THU]/2W"),
+        ("YY-MM-DD/4W[1,2]", "YY-MM-DD/4W[1-2]"),
+        ("YY-MM-FRI/2W~NB", "YY-MM-FRI/2W~NB"),
+        ("YY-MM-8D[1,2,3,4]", "YY-MM-8D[1-4]"),
+        ("YY-MM-14D[1,3]", "YY-MM-14D[1,3]"),
+        ("YY-3M[1-2]-15", "YY-3M[1-2]-15"),
+        ("4Y[1,3]-06-15", "4Y[1,3]-06-15"),
+        ("YY-MM-8D[1]", "YY-MM-8D[1]"),
+    ] {
+        let spec: Spec = input.parse().unwrap_or_else(|e| panic!("{input}: {e}"));
+        assert_eq!(spec.to_string(), shown, "display of {input}");
+    }
+    for bad in [
+        "YY-MM-MON/0W",
+        "YY-MM-MON/2W[3]",
+        "YY-MM-MON/2W[]",
+        "YY-MM-8D[0]",
+        "YY-MM-8D[9]",
+        "YY-MM-5BD[1]",
+        "YY-MM-7D/2W",
+        "1Y-3M[1]-15",
+        "4Y[1]-3M-15",
+        "YY-3M[4]-15",
+    ] {
+        assert!(bad.parse::<Spec>().is_err(), "{bad} should be rejected");
+    }
+    // A datetime spec finds the time part after a week cycle.
+    let dt: crate::datetime::Spec = "YY-MM-[TUE,THU]/2WT18:00:00".parse().unwrap();
+    assert_eq!((dt.date_spec.as_str(), dt.time_spec.as_str()), ("YY-MM-[TUE,THU]/2W", "18:00:00"));
+}

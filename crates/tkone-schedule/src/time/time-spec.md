@@ -4,10 +4,10 @@
 
 ```text
 HH:MM:SS
-SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …
+SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …  @START ..END
 ```
 
-All three components are required. Each component is one of: a wildcard (`ForEach`), a keep-current marker (`AsIs`), a fixed value (`At`), a list or range of values (`Values`), or an interval (`Every`). Several specs can be combined with `|` ([Union](#union-of-time-specs)), and times removed after `!` ([Exclusions](#exclusions)).
+All three components are required. Each component is one of: a wildcard (`ForEach`), a keep-current marker (`AsIs`), a fixed value (`At`), a list or range of values (`Values`), or an interval (`Every`). Several specs can be combined with `|` ([Union](#union-of-time-specs)), times removed after `!` ([Exclusions](#exclusions)), and a start, end and time zone added at the end ([Start, end and time zone](#start-end-and-time-zone)).
 
 ---
 
@@ -759,6 +759,15 @@ period: `12:MM:SS` covers the entire 12:00 hour, `12:MM:00` only 12:00:00, 12:01
 > *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way.
 > `.with_count(n)` stops after `n` results counted from the start (excluded times are not
 > counted); a counted schedule is resumed with `resume_with_start`.
+
+### Start, end and time zone
+
+`1H:00:00 @2025-01-06T09:00:00[Europe/Paris] ..2025-01-06T17:00` is hourly from 09:00 to 17:00
+Paris time on 6 January. The start anchors the grid and is included when it is on it:
+`HH:15M:00 @2025-01-06T09:07:00` runs at 09:07, 09:22, …. A spec without a step yields its times
+on the start's day. The syntax and precedence rules are the same as for
+[date specs](crate::date#start-end-and-time-zone-optional); `SpecIteratorBuilder::from_spec(spec)`
+builds from the text alone.
 
 ### Resuming a stored schedule
 

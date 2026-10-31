@@ -63,6 +63,21 @@ fn weekday(wd: Weekday) -> &'static str {
     }
 }
 
+/// `"1 and 3"`, `"1 to 4"`: the positions of a cycle.
+fn positions(positions: &std::collections::BTreeSet<u32>) -> String {
+    join_runs(positions.iter().map(|p| (*p, p.to_string())))
+}
+
+/// `"weeks 1 and 2 of every 4-week cycle"`, or `"every 2nd week"` for `/2W`.
+fn cycle(unit: &str, every: u32, selected: &std::collections::BTreeSet<u32>) -> String {
+    if selected.len() == 1 && selected.contains(&1) {
+        format!("every {} {unit}", ordinal(every))
+    } else {
+        let units = if selected.len() == 1 { unit.to_string() } else { format!("{unit}s") };
+        format!("{units} {} of every {every}-{unit} cycle", positions(selected))
+    }
+}
+
 /// Which months are eligible.
 enum Months {
     All,
@@ -78,6 +93,9 @@ fn months(spec: &Spec) -> Months {
         (_, Cycle::Values(ms)) => {
             Months::In(join_runs(ms.iter().map(|m| (*m, MONTHS[(*m - 1) as usize].to_string()))))
         }
+        (_, Cycle::Positions { every, positions }) => {
+            Months::In(format!("{}, counted from the start's month", cycle("month", *every, positions)))
+        }
         _ => Months::All,
     }
 }
@@ -91,6 +109,9 @@ fn years(spec: &Spec) -> String {
         // With an `nM` cadence the year step is part of the month stride.
         (Cycle::NextNth(n), m) if *n > 1 && !matches!(m, Cycle::NextNth(_)) => {
             format!(", in every {} year, counted from the start's year", ordinal(*n))
+        }
+        (Cycle::Positions { every, positions }, _) => {
+            format!(", in {}, counted from the start's year", cycle("year", *every, positions))
         }
         _ => String::new(),
     }
@@ -154,6 +175,14 @@ fn calendar_days(days: &DayCycle) -> Days {
             };
             Days::On(format!("on the {which} {unit}"), None)
         }
+        DayCycle::Positions { every, positions } => Days::Every(format!(
+            "on {}, counted from the start",
+            if positions.len() == 1 && positions.contains(&1) {
+                format!("the 1st day of every {every}-day cycle")
+            } else {
+                cycle("day", *every, positions)
+            }
+        )),
         DayCycle::NextNth(..) => unreachable!("step rules are described separately"),
     }
 }
@@ -233,7 +262,11 @@ pub(crate) fn describe(spec: &Spec) -> String {
             if let Some(note) = note {
                 out += &format!(" ({note})");
             }
-            out + &years(spec)
+            out += &years(spec);
+            if let Some(weeks) = &spec.weeks {
+                out += &format!(", in {}, counted from the start's week", cycle("week", weeks.every, &weeks.positions));
+            }
+            out
         }
     };
     if let Some(adj) = &spec.biz_day_adj {
@@ -275,6 +308,13 @@ mod tests {
             ("YY-MM-BD#L", "on the last business day of every month"),
             ("YY-[03,06,09,12]-BD#2L", "on the 2nd-to-last business day of March, June, September and December"),
             ("YY-MM-WD#1", "on the 1st weekday of every month"),
+            ("YY-MM-[TUE,THU]/2W", "every Tuesday and Thursday, in every 2nd week, counted from the start's week"),
+            ("YY-MM-[MON-FRI]/4W[1,2]", "every Monday to Friday, in weeks 1 and 2 of every 4-week cycle, counted from the start's week"),
+            ("YY-MM-FRI/2W~NB", "every Friday, in every 2nd week, counted from the start's week, moved to the next business day when it is not one"),
+            ("YY-MM-8D[1-4]", "on days 1 to 4 of every 8-day cycle, counted from the start"),
+            ("YY-MM-14D[1,3]", "on days 1 and 3 of every 14-day cycle, counted from the start"),
+            ("YY-3M[1-2]-15", "on the 15th of months 1 and 2 of every 3-month cycle, counted from the start's month"),
+            ("4Y[1,3]-06-15", "on the 15th of June, in years 1 and 3 of every 4-year cycle, counted from the start's year"),
             ("YY-MM-1D", "every day"),
             ("YY-MM-7D", "every 7 days, counted from the start"),
             ("YY-MM-5BD", "every 5 business days, counted from the start"),

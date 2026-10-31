@@ -4,13 +4,14 @@
 
 ```text
 <date_spec>T<time_spec>
-<datetime_spec> | <datetime_spec> | …  ! <date_spec> | <date_spec> | …
+<datetime_spec> | <datetime_spec> | …  ! <date_spec> | …  @<start> ..<end>
 ```
 
 The `T` separator joins a [date spec](../date/date-spec.md) and a [time spec](../time/time-spec.md).
 Both parts are required. Refer to those documents for the full syntax of each component. Several
-datetime specs can be combined with `|`, and whole dates removed after `!`
-([Exclusions](#8-exclusions)).
+datetime specs can be combined with `|`, whole dates removed after `!`
+([Exclusions](#8-exclusions)), and a start, end and time zone added at the end
+([Start, end and time zone](#9-start-end-and-time-zone)).
 
 ### Separator detection
 
@@ -136,6 +137,19 @@ of a union. It cannot use day steps (`7D`) or have its own `!`.
 > *Library:* `.with_exclusions(date_spec)` on the builder adds exclusions the same way.
 > `.with_count(n)` stops after `n` ticks counted from the start (excluded ticks are not counted);
 > a counted schedule is resumed with `resume_with_start`.
+
+### 9. Start, end and time zone
+
+`YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London] ..2025-06-30` is a complete schedule:
+every other Tuesday and Thursday at 18:00 London time, from 7 January to 30 June 2025. The start
+anchors the date part (cadences, week cycles, positions, steps) and, with the default
+`TimeAnchor::Start`, the time grid; results are the ticks at or after it. A tick before the
+start on the start's day is skipped: `YY-MM-DDT09:00:00 @2025-01-06T10:00:00` begins on
+7 January.
+
+The syntax and precedence rules are the same as for
+[date specs](crate::date#start-end-and-time-zone-optional).
+`SpecIteratorBuilder::from_spec(spec, bdp)` builds from the text alone, in its time zone.
 
 ---
 

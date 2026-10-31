@@ -23,10 +23,13 @@ pub(crate) fn split_exclusions(spec: &str) -> (&str, Option<&str>) {
 
 /// `spec` with `exclusions` added, as the builders' `with_exclusions` does.
 pub(crate) fn add_exclusions(spec: &str, exclusions: &str) -> String {
-    match split_exclusions(spec).1 {
+    // Exclusions go before a written start / end (`@… ..…`).
+    let (spec, bounds) = crate::bounds::split_suffix(spec);
+    let spec = match split_exclusions(spec).1 {
         Some(_) => format!("{spec} | {exclusions}"),
         None => format!("{spec} ! {exclusions}"),
-    }
+    };
+    if bounds.is_empty() { spec } else { format!("{spec} {bounds}") }
 }
 
 /// The parts of a union spec, or `None` for a plain spec.
@@ -46,12 +49,13 @@ pub(crate) fn describe_union(
         let parts = union_parts(spec).unwrap_or_else(|| vec![spec]);
         Ok::<_, crate::Error>(parts.into_iter().map(f).collect::<crate::Result<Vec<_>>>()?.join(joiner))
     };
+    let (spec, bounds) = crate::bounds::split_bounds(spec)?;
     let (spec, exclusions) = split_exclusions(spec);
     let mut out = describe(spec, &part, ", and also ")?;
     if let Some(exclusions) = exclusions {
         out += &format!(", except {}", describe(exclusions, &exclusion, " or ")?);
     }
-    Ok(out)
+    Ok(out + &bounds.describe())
 }
 
 /// Interleaves several iterators by `key` (an occurrence's actual time),

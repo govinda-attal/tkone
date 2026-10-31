@@ -114,6 +114,7 @@ fn test_resume_date_specs() {
         ("YY-MM-BD#3", ny(2025, 1, 3, 0, 0)),
         ("YY-[03,06]-BD#2L", ny(2025, 3, 28, 0, 0)),
         ("YY-MM-WD#1~1N", ny(2025, 1, 1, 0, 0)),
+        ("YY-MM-[TUE,THU]/2W", ny(2025, 1, 7, 0, 0)),
     ] {
         check_date(spec, start);
     }
@@ -148,6 +149,7 @@ fn test_resume_datetime_specs() {
         ("YY-MM-DDT1H:00:00", ny(2025, 11, 2, 0, 0), Elapsed, Start),
         ("YY-MM-DDTHH:30M:00", ny(2025, 3, 9, 1, 0), Elapsed, Midnight),
         ("YY-MM-BD#3T[09,17]:00:00", ny(2025, 1, 3, 9, 0), WallClock, Start),
+        ("YY-MM-[TUE,THU]/2WT18:00:00", ny(2025, 1, 7, 18, 0), WallClock, Start),
         ("YY-MM-DDT09-16:30M:00", ny(2025, 1, 15, 9, 0), WallClock, Midnight),
         ("YY-MM-DDT[01,02,03]:30:00", ny(2025, 3, 8, 1, 30), WallClock, Start), // spring-forward
         ("YY-MM-DDTHH:[00,30]:00", ny(2025, 11, 2, 0, 0), WallClock, Start), // fall-back

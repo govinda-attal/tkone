@@ -18,13 +18,11 @@ readme-path = "README.md"
 
 [dependencies]
 chrono            = { workspace = true }
+chrono-tz         = { workspace = true }
 fallible-iterator = { workspace = true }
 nom               = { workspace = true }
 regex             = { workspace = true }
 thiserror         = { workspace = true }
-
-[dev-dependencies]
-chrono-tz = { workspace = true }
 
 [lints]
 workspace = true

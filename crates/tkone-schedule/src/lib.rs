@@ -98,7 +98,7 @@
 //!
 //! ## Spec Syntax Reference
 //!
-//! ### Date Spec — `<years>-<months>-<days>[~<adj>]`
+//! ### Date Spec — `<years>-<months>-<days>[/<weeks>][~<adj>]`
 //!
 //! #### Years
 //!
@@ -107,6 +107,7 @@
 //! | `YY`  | Every calendar year |
 //! | `_`   | Same as `YY` |
 //! | `nY`  | Every *n* years, aligned to the iterator start date |
+//! | `4Y[1,3]` | Years 1 and 3 of every 4-year cycle from the start |
 //! | `2025` | Exactly year 2025 |
 //! | `[2024,2025]` | Years 2024 or 2025 |
 //! | `[2024-2026]` | Years 2024 to 2026 (ranges work in every bracketed list) |
@@ -118,6 +119,7 @@
 //! | `MM`  | Every calendar month |
 //! | `_`   | Same as `MM` |
 //! | `nM`  | Every *n* months, aligned to the iterator start date |
+//! | `3M[1-2]` | Months 1 and 2 of every 3-month cycle from the start |
 //! | `03`  | March only |
 //! | `[01,06,12]` | January, June, or December |
 //! | `[01-06]` | January to June |
@@ -134,6 +136,7 @@
 //! | `31N` | 31st, or 1st of next month if the month is shorter |
 //! | `31O` | 31st, or overflow remainder days into next month (e.g. → Mar 3 when Feb has 28 days) |
 //! | `nD`  | Advance *n* calendar days |
+//! | `8D[1-4]` | Days 1–4 of every 8-day cycle from the start (four on, four off) |
 //! | `nBD` | Advance *n* business days |
 //! | `nWD` | Advance *n* weekdays (Mon–Fri) |
 //! | `MON` / `TUE` / … | Every occurrence of that weekday in the month |
@@ -147,6 +150,15 @@
 //! | `BD#L` | Last business day of the month |
 //! | `BD#2L` | 2nd-to-last business day of the month |
 //! | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) instead of business days |
+//!
+//! #### Weeks (`/nW` after the day rule)
+//!
+//! | Token | Meaning |
+//! |-------|---------|
+//! | `[TUE,THU]/2W` | Tuesday and Thursday in every 2nd week |
+//! | `[MON-FRI]/4W[1,2]` | Weekdays in weeks 1 and 2 of every 4-week cycle |
+//!
+//! Weeks run Monday to Sunday; week 1 is the week containing the start.
 //!
 //! #### Business Day Adjustment (`~`)
 //!
@@ -243,6 +255,40 @@
 //! The exclusion applies to everything before the `!`, including every part of
 //! a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
 //! the same way.
+//!
+//! ### Start, end and time zone — `<spec> @<start> ..<end>`
+//!
+//! A spec can end with its own start and end, each a date or datetime with an
+//! optional UTC offset and an optional IANA time zone in RFC 9557 brackets, so
+//! the text alone defines the schedule:
+//!
+//! ```text
+//! "YY-3M-15~NB @2025-02-15 ..2027-02-15"
+//! "YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]"
+//! ```
+//!
+//! - `@start` anchors the schedule (cadences, week cycles, positions, steps,
+//!   the time grid) and is an inclusive lower bound.
+//! - `..end` is an inclusive upper bound; a date-only end covers the whole day.
+//! - A start or end given to the builder takes precedence. `new_after(dtm)` and
+//!   `resume_after(last)` take a cursor, not a start, so a written start still
+//!   anchors the schedule.
+//! - `SpecIteratorBuilder::from_spec(spec, …)` builds from the text alone, in
+//!   its time zone (UTC if none is named).
+//!
+//! ```rust
+//! use tkone_schedule::biz_day::WeekendSkipper;
+//! use tkone_schedule::datetime::SpecIteratorBuilder;
+//! use fallible_iterator::FallibleIterator;
+//!
+//! let spec = "YY-MM-8D[1-4]T06:00:00 @2025-01-01[America/Chicago] ..2025-01-12";
+//! let shifts: Vec<_> = SpecIteratorBuilder::from_spec(spec, WeekendSkipper::new())?
+//!     .build()?
+//!     .map(|o| Ok(o.observed().format("%d %H:%M").to_string()))
+//!     .collect()?;
+//! assert_eq!(shifts, ["01 06:00", "02 06:00", "03 06:00", "04 06:00", "09 06:00", "10 06:00", "11 06:00", "12 06:00"]);
+//! # Ok::<(), tkone_schedule::Error>(())
+//! ```
 //!
 //! ### Count — `with_count(n)` (builder option)
 //!
@@ -349,7 +395,7 @@
 //! | cursor | `occurrence.actual().to_rfc3339()` | resuming |
 //! | due at | `occurrence.observed()` | when to run the action |
 //! | end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
-//! | start (for unions, counts) | the schedule's start, RFC 3339 | `resume_with_start` — required for a union spec or `with_count` |
+//! | start (for unions, positions, counts) | the schedule's start, RFC 3339 — unless the spec has `@start` | `resume_with_start` — required for a union, a cycle with positions (`/4W[1,2]`, `8D[1-4]`) or `with_count` |
 //!
 //! ```rust
 //! # use tkone_schedule::biz_day::WeekendSkipper;
@@ -428,6 +474,9 @@
 //!   it is not available when resuming.
 //! - Cadences (`3M`, `2Y`, `1Y-3M`) and step rules (`7D`, `5BD`) stay aligned,
 //!   because every stored occurrence lies on the cadence.
+//! - **A spec with `@start` written in it resumes with `resume_after` alone**,
+//!   whatever it contains: the start comes from the text. The rules below are
+//!   for specs without one.
 //! - **A union spec (`A | B`) needs its start.** A stored occurrence belongs to
 //!   one part, and the other parts' cadences, steps and time grids are not
 //!   aligned to it. Store the start (the `new_with_start` start, or the first
@@ -438,6 +487,8 @@
 //!   [`IntervalMode::Elapsed`]. `resume_with_start` also works for plain specs,
 //!   with the same results as `resume_after`.
 //!
+//! - **So does a cycle with positions** other than the first (`/4W[1,2]`,
+//!   `8D[1-4]`, `3M[1-2]`): a stored occurrence can be anywhere in its cycle.
 //! - **A counted schedule (`with_count`) needs its start too.** Resume it with
 //!   `resume_with_start`, which replays it from the start (at most *n*
 //!   results) to know how many have run; this works for any spec and mode,
@@ -460,6 +511,7 @@ pub mod datetime;
 /// [`time::SpecIteratorBuilder`].
 pub mod time;
 
+mod bounds;
 mod error;
 mod limits;
 mod merge;
@@ -472,6 +524,8 @@ mod resume_tests;
 mod union_tests;
 #[cfg(test)]
 mod limits_tests;
+#[cfg(test)]
+mod bounds_tests;
 
 pub use error::{Error, Result};
 

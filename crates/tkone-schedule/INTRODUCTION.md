@@ -24,11 +24,12 @@ YY-MM-DDT1H:30M:00    every day, every 90 minutes
 ## The format in five minutes
 
 A schedule has a **date part**, a **time part**, or both joined by `T`. Several schedules can
-be combined with `|`, and dates (or times) can be excluded after `!`:
+be combined with `|`, dates (or times) can be excluded after `!`, and the whole can end with a
+start, an end and a time zone:
 
 ```text
-<years>-<months>-<days>[~<adjustment>]  T  <hours>:<minutes>:<seconds>
-<schedule> | <schedule> | …  ! <exclusion> | <exclusion> | …
+<years>-<months>-<days>[/<weeks>][~<adjustment>]  T  <hours>:<minutes>:<seconds>
+<schedule> | <schedule> | …  ! <exclusion> | …  @<start>  ..<end>
 ```
 
 ### Date part
@@ -44,11 +45,36 @@ Read it left to right as "which years, which months, which days".
 | Weekdays | `MON` · `[MON,FRI]` · `[MON-FRI]` · `WED#2` · `FRI#L` · `THU#2L` | every Monday · Mondays and Fridays · Monday to Friday · 2nd Wednesday · last Friday · 2nd-to-last Thursday |
 | Business days | `BD#3` · `BD#L` · `BD#2L` | 3rd business day · last business day · 2nd-to-last business day |
 | Steps | `7D` · `5BD` · `3WD` | every 7 days · every 5 business days · every 3 weekdays |
+| Weeks | `/2W` · `/4W[1,2]` | in every 2nd week · in weeks 1 and 2 of every 4 (after the day rule) |
+| Positions in a cycle | `8D[1-4]` · `3M[1-2]` · `4Y[1,3]` | days 1–4 of every 8 · months 1–2 of every 3 · years 1 and 3 of every 4 |
 
 Ranges such as `[01-06]` are written inside brackets, because `-` also separates the parts.
 
 `2Y` and `3M` are counted from the schedule's start, not from January. Started in February,
 `YY-3M-15` runs in February, May, August and November.
+
+### Weeks and rotations
+
+A week cycle after the day rule keeps only dates in some weeks. Weeks run Monday to Sunday, and
+week 1 is the week the schedule starts in:
+
+```text
+YY-MM-[TUE,THU]/2W            Tuesday and Thursday, every other week
+YY-MM-FRI/2W                  every other Friday
+YY-MM-[MON-FRI]/4W[1,2]       weekdays in weeks 1 and 2 of every 4 (two weeks on, two off)
+```
+
+Positions do the same for days, months and years: a cycle length, then which positions in each
+cycle are on, counted from the start. This is how rotations and shift patterns are written:
+
+```text
+YY-MM-8D[1-4]                 days 1–4 of every 8 (four on, four off)
+YY-MM-14D[1,2,5-7,10,11]      the 2-2-3 pattern over two weeks
+YY-3M[1-2]-15                 the 15th in the first two months of every three
+4Y[1,3]-06-15                 15 June in years 1 and 3 of every four
+```
+
+Months and other filters only remove dates from these cycles; they never restart the count.
 
 ### Adjustment (optional)
 
@@ -109,6 +135,28 @@ YY-MM-[MON-FRI]T09:00:00 ! 2025-12-[24-31]     09:00 on weekdays, but not 24–3
 
 Exclusions apply to the schedule's own date (the scheduled date, before any `~` adjustment) and
 to everything before the `!`, including all parts of a `|` combination.
+
+### Start, end and time zone
+
+A schedule can carry its own start, end and time zone, so the text alone defines it:
+
+```text
+YY-3M-15~NB @2025-02-15 ..2027-02-15                      quarterly from 15 Feb 2025, until 15 Feb 2027
+YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]     every other Tue and Thu at 18:00 London time
+1H:00:00 @2025-01-06T09:00:00[Europe/Paris] ..2025-01-06T17:00   hourly, 09:00 to 17:00 Paris time
+```
+
+- **`@start`** is where the counting begins (cadences, weeks, positions, steps and the time
+  grid) and the earliest time a result can have. The first result is the first match at or after
+  it: `YY-MM-15 @2025-01-10` begins on 15 January.
+- **`..end`** is the latest time a result can have. A date without a time covers that whole day.
+- **The time zone** goes in brackets after a date or time, as in `[Europe/London]` (the
+  RFC 9557 form), and applies to the start, the end and every time in the schedule. A UTC
+  offset such as `+01:00` only fixes the instant it is written on; a zone also decides how the
+  clock changes.
+
+Each is optional. A schedule without a start counts from whenever it is first used, and one
+without an end repeats indefinitely.
 
 ---
 
@@ -172,7 +220,10 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Every N business days | ✗ | ✗ | ✗ | ✓ `5BD` |
 | Both the scheduled and the adjusted date | ✗ | ✗ | ✗ | ✓ |
 | Clock-change behaviour defined | ✗ | ✗ | partly | ✓ |
+| Every other week on several weekdays | ✗ | ✗ | ✓ | ✓ `[TUE,THU]/2W` |
+| Rotations ("4 on, 4 off", weeks 1–2 of 4) | ✗ | ✗ | partly | ✓ `8D[1-4]`, `/4W[1,2]` |
 | Exclude given dates | ✗ | partly | ✓ | ✓ `! …` |
+| Start, end and time zone in the text | ✗ | ✗ | ✓ | ✓ `@… ..…[Zone]` |
 | Combine several rules into one schedule | ✗ | ✗ | partly | ✓ `A \| B` |
 
 *This compares the standard formats. Some products add their own extensions.*
@@ -225,14 +276,14 @@ fixed rules for daylight saving:
 
 ### What a schedule needs besides its text
 
-A schedule's text is read together with three things that are not written in it:
+Only one thing is never written in a schedule:
 
-- **a start**, from which `2Y`, `3M`, day steps such as `7D`, and time steps are counted;
-- **a time zone**, whose wall clock the times are read on;
 - **a holiday calendar**, which decides what a business day is.
 
-Where a schedule ends, and how it is stored and picked up again later, are up to the system
-that runs it. The [README](README.md) covers what the tkone library offers for these.
+A start and a time zone are needed to read a schedule. They can be written in it (`@…`,
+`[Zone]`) or supplied by the system that runs it. How a schedule is stored and picked up again
+later is up to that system. The [README](README.md) covers what the tkone library offers for
+this.
 
 ---
 
@@ -257,6 +308,10 @@ that runs it. The [README](README.md) covers what the tkone library offers for t
 | Every 15 minutes during market hours, 09:30–16:00, Mon–Fri | `YY-MM-[MON-FRI]T09:[30,45]:00 \| YY-MM-[MON-FRI]T10-15:15M:00 \| YY-MM-[MON-FRI]T16:00:00` |
 | Reminders at 09:00, 12:00 and 17:00 on the 2nd business day | `YY-MM-BD#2T[09,12,17]:00:00` |
 | Overnight batch at 02:00 on weekdays, except 25 December and 1 January | `YY-MM-[MON-FRI]T02:00:00 ! YY-12-25 \| YY-01-01` |
+| A three-year loan, monthly on the 1st, Modified Following | `YY-MM-01~MF @2025-04-01 ..2028-03-31` |
+| Nurses' rota: day shifts 07:00, two weeks on and two off | `YY-MM-[MON-FRI]/4W[1,2]T07:00:00 @2025-01-06[Europe/London]` |
+| Plant shift pattern: four days on, four off, from 06:00 | `YY-MM-8D[1-4]T06:00:00 @2025-01-01[America/Chicago]` |
+| Fortnightly tutorial on Tuesday and Thursday, term time only | `YY-MM-[TUE,THU]/2WT14:00:00 ! YY-[07-08]-DD @2025-01-07` |
 
 ---
 
@@ -264,17 +319,16 @@ that runs it. The [README](README.md) covers what the tkone library offers for t
 
 The format is deliberately small. Some things it leaves out:
 
-- **No "every other week on several days".** Every 14 days works for one weekday (`14D`), but
-  "every second week on Tuesday and Thursday" does not fit in one rule.
-- **No end or occurrence limit in the text.** The text says *when* a schedule repeats, not when
-  it stops; the end is given alongside it.
+- **No occurrence limit in the text.** A schedule can end at a date (`..end`), but "stop after
+  12 times" is not part of the format.
+- **Weeks always run Monday to Sunday.** There is no Sunday-start or ISO week-number rule.
 - **No holiday data.** Holiday calendars are supplied with a schedule, not written in it.
 
 ---
 
 ## Where to go next
 
-- [README](README.md): using the tkone library: ends, occurrence counts, clock alignment,
+- [README](README.md): using the tkone library: occurrence counts, clock alignment,
   daylight-saving options, plain-English descriptions, and storing and resuming schedules
 - [Date spec reference](src/date/date-spec.md)
 - [Time spec reference](src/time/time-spec.md)

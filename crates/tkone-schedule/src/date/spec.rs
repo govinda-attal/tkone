@@ -25,6 +25,7 @@ use nom::{
 /// | `ForEach` | `YY` / `MM` / `_` | Every value in sequence |
 /// | `Values(set)` | `2025` / `[2024,2025]` | Restricted to an explicit set |
 /// | `NextNth(n)` | `1Y` / `3M` | Advance by *n* units, aligned to the iterator start |
+/// | `Positions{n, set}` | `4Y[1,3]` / `3M[1-2]` | Selected positions of an *n*-cycle from the start |
 ///
 /// # Examples
 ///
@@ -53,6 +54,25 @@ pub enum Cycle {
     /// Advance by *n* years (`nY`) or months (`nM`), keeping alignment to the
     /// iterator's start date.
     NextNth(u32),
+    /// Selected positions of a cycle of *n* years or months, counted from the
+    /// start (1 is the start's year / month): `4Y[1,3]`, `3M[1-2]`.
+    Positions {
+        /// The cycle length *n*.
+        every: u32,
+        /// The positions in each cycle, 1-based.
+        positions: BTreeSet<u32>,
+    },
+}
+
+/// A cycle of weeks after the day rule (`/nW`, `/nW[…]`): only dates in the
+/// selected weeks of each *n*-week cycle are kept. Weeks run Monday to Sunday;
+/// week 1 is the one containing the start.
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct WeekCycle {
+    /// The cycle length *n*.
+    pub every: u32,
+    /// The weeks kept in each cycle, 1-based. `/2W` is `/2W[1]`.
+    pub positions: BTreeSet<u32>,
 }
 
 /// How the day component of a date spec advances.
@@ -77,6 +97,7 @@ pub enum Cycle {
 /// | `NthBizDay{BizDay, Ending(None)}` | `BD#L` | Last business day of the month |
 /// | `NthBizDay{BizDay, Ending(n)}` | `BD#2L` | *n*th-to-last business day |
 /// | `NthBizDay{WeekDay, …}` | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) |
+/// | `Positions{8, {1,2,3,4}}` | `8D[1-4]` | Days 1–4 of every 8-day cycle from the start |
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum DayCycle {
     /// Not produced by the parser (`_` parses as [`DayCycle::ForEach`]). If
@@ -89,6 +110,14 @@ pub enum DayCycle {
     /// Advance by *n* calendar days / business days / weekdays from the current
     /// position. See [`NextNthDayOption`] for the step variant.
     NextNth(u32, NextNthDayOption),
+    /// Selected days of a cycle of *n* calendar days, counted from the start
+    /// (day 1 is the start's day): `8D[1-4]` is "4 on, 4 off".
+    Positions {
+        /// The cycle length *n*.
+        every: u32,
+        /// The days kept in each cycle, 1-based.
+        positions: BTreeSet<u32>,
+    },
     /// Specific day(s) of the month, with an optional overflow handling rule.
     OnDays {
         /// The set of target days-of-month (1–31). Empty only for `LastDay` with
@@ -227,7 +256,7 @@ pub enum BizDayAdjustment {
 /// # Spec format
 ///
 /// ```text
-/// <years>-<months>-<days>[~<adj>]
+/// <years>-<months>-<days>[/<weeks>][~<adj>]
 /// ```
 ///
 /// # Examples
@@ -258,6 +287,9 @@ pub struct Spec {
     pub months: Cycle,
     /// Day-of-month / weekday recurrence rule.
     pub days: DayCycle,
+    /// Optional week cycle (`/2W`, `/4W[1,2]`) that keeps only dates in the
+    /// selected weeks.
+    pub weeks: Option<WeekCycle>,
     /// Optional business day adjustment applied after the raw date is resolved.
     pub biz_day_adj: Option<BizDayAdjustment>,
 }
@@ -280,6 +312,22 @@ fn fmt_list(items: impl IntoIterator<Item = (u32, String)>) -> String {
     match (runs.as_slice(), parts.as_slice()) {
         ([(first, last)], [one]) if first.0 == last.0 => one.clone(),
         _ => format!("[{}]", parts.join(",")),
+    }
+}
+
+/// Positions are always bracketed: `[1]`, `[1-2]`, `[1,3]`.
+fn fmt_positions(positions: &BTreeSet<u32>) -> String {
+    let list = fmt_list(positions.iter().map(|&p| (p, p.to_string())));
+    if list.starts_with('[') { list } else { format!("[{list}]") }
+}
+
+impl fmt::Display for WeekCycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "/{}W", self.every)?;
+        if self.positions != BTreeSet::from([1]) {
+            write!(f, "{}", fmt_positions(&self.positions))?;
+        }
+        Ok(())
     }
 }
 
@@ -323,6 +371,9 @@ impl<'a> fmt::Display for CycleDisplayer<'a> {
                     write!(f, "{}M", n)
                 }
             }
+            Cycle::Positions { every, positions } => {
+                write!(f, "{every}{}{}", if self.is_year { 'Y' } else { 'M' }, fmt_positions(positions))
+            }
         }
     }
 }
@@ -357,6 +408,7 @@ impl fmt::Display for DayCycle {
                 };
                 write!(f, "{}{}", n, suffix)
             }
+            DayCycle::Positions { every, positions } => write!(f, "{every}D{}", fmt_positions(positions)),
             DayCycle::OnDays { days, option } => {
                 // If specific option like L is present and days is empty
                 if days.is_empty() && matches!(option, LastDayOption::LastDay) {
@@ -437,6 +489,9 @@ impl fmt::Display for Spec {
             self.months.display(false),
             self.days
         )?;
+        if let Some(weeks) = &self.weeks {
+            write!(f, "{weeks}")?;
+        }
 
         // Handle Adjustment
         if let Some(adj) = &self.biz_day_adj {
@@ -459,6 +514,19 @@ impl FromStr for Spec {
 }
 
 impl Spec {
+    /// Whether a cycle has positions other than the first (`/4W[1,2]`,
+    /// `8D[1-4]`, `3M[2]`). An occurrence may then fall anywhere in its
+    /// cycle, so the cycle cannot be counted from it: resuming needs the
+    /// schedule's start.
+    pub(crate) fn needs_start(&self) -> bool {
+        let first_only = |positions: &BTreeSet<u32>| positions.len() == 1 && positions.contains(&1);
+        let cycle = |c: &Cycle| matches!(c, Cycle::Positions { positions, .. } if !first_only(positions));
+        cycle(&self.years)
+            || cycle(&self.months)
+            || matches!(&self.days, DayCycle::Positions { positions, .. } if !first_only(positions))
+            || self.weeks.as_ref().is_some_and(|w| !first_only(&w.positions))
+    }
+
     /// Describes the spec in plain English, to check it reads as intended
     /// before it is scheduled.
     ///
@@ -504,14 +572,16 @@ pub fn parse_spec(input: &str) -> Result<Spec> {
         parse_year_cycle,
         preceded(char('-'), parse_month_cycle),
         preceded(char('-'), parse_day_cycle),
+        opt(parse_week_cycle),
         opt(preceded(multispace0, parse_adjustment)),
     );
 
     let spec = match all_consuming(full_parser).parse(input) {
-        Ok((_, (years, months, days, biz_day_adj))) => Spec {
+        Ok((_, (years, months, days, weeks, biz_day_adj))) => Spec {
             years,
             months,
             days,
+            weeks,
             biz_day_adj,
         },
         Err(_) => return Err(Error::InvalidDateSpec(format!("failed to parse: {input}"))),
@@ -521,7 +591,39 @@ pub fn parse_spec(input: &str) -> Result<Spec> {
 }
 
 /// Reject values the grammar accepts but no calendar can satisfy.
+/// A cycle of `every` with positions 1..=every.
+fn validate_cycle(what: &str, every: u32, positions: &BTreeSet<u32>) -> core::result::Result<(), String> {
+    if every == 0 {
+        return Err(format!("{what} cycle must be at least 1"));
+    }
+    if let Some(p) = positions.iter().find(|p| !(1..=every).contains(*p)) {
+        return Err(format!("{what} position {p} is out of range 1-{every}"));
+    }
+    Ok(())
+}
+
 fn validate(spec: &Spec) -> core::result::Result<(), String> {
+    if let Cycle::Positions { every, positions } = &spec.years {
+        validate_cycle("year", *every, positions)?;
+        if matches!(spec.months, Cycle::NextNth(_) | Cycle::Positions { .. }) {
+            return Err("a year cycle with positions cannot be combined with a month cycle".into());
+        }
+    }
+    if let Cycle::Positions { every, positions } = &spec.months {
+        validate_cycle("month", *every, positions)?;
+        if matches!(spec.years, Cycle::NextNth(_)) {
+            return Err("a month cycle with positions cannot be combined with a year step".into());
+        }
+    }
+    if let DayCycle::Positions { every, positions } = &spec.days {
+        validate_cycle("day", *every, positions)?;
+    }
+    if let Some(weeks) = &spec.weeks {
+        validate_cycle("week", weeks.every, &weeks.positions)?;
+        if matches!(spec.days, DayCycle::NextNth(..)) {
+            return Err("a week cycle (`/nW`) cannot follow a day step (`nD`, `nBD`, `nWD`)".into());
+        }
+    }
     if let Cycle::NextNth(0) = spec.years {
         return Err("year step must be at least 1".into());
     }
@@ -600,7 +702,22 @@ fn parse_cycle_single_val(input: &'_ str) -> Res<'_, Cycle> {
 fn parse_cycle_next_nth<'a>(input: &'a str, unit: char) -> Res<'a, Cycle> {
     let (input, num) = parse_u32(input)?;
     let (input, _) = char(unit).parse(input)?;
-    Ok((input, Cycle::NextNth(num)))
+    let (input, positions) = opt(parse_u32_list).parse(input)?;
+    Ok((
+        input,
+        match positions {
+            Some(positions) => Cycle::Positions { every: num, positions },
+            None => Cycle::NextNth(num),
+        },
+    ))
+}
+
+/// `/nW` or `/nW[…]` after the day rule.
+fn parse_week_cycle(input: &'_ str) -> Res<'_, WeekCycle> {
+    let (input, every) = preceded(char('/'), parse_u32).parse(input)?;
+    let (input, _) = char('W').parse(input)?;
+    let (input, positions) = opt(parse_u32_list).parse(input)?;
+    Ok((input, WeekCycle { every, positions: positions.unwrap_or_else(|| BTreeSet::from([1])) }))
 }
 
 /// `_` is accepted as a synonym of `YY` / `MM` (every year / month).
@@ -751,7 +868,18 @@ fn parse_day_next_nth(input: &'_ str) -> Res<'_, DayCycle> {
         "WD" => NextNthDayOption::WeekDay,
         _ => NextNthDayOption::Regular,
     };
+    // Positions are only for calendar-day cycles (`8D[1-4]`); `nBD[…]` and
+    // `nWD[…]` do not parse.
+    if opt == NextNthDayOption::Regular {
+        if let (input, Some(positions)) = opt_positions(input)? {
+            return Ok((input, DayCycle::Positions { every: num, positions }));
+        }
+    }
     Ok((input, DayCycle::NextNth(num, opt)))
+}
+
+fn opt_positions(input: &'_ str) -> Res<'_, Option<BTreeSet<u32>>> {
+    opt(parse_u32_list).parse(input)
 }
 
 fn parse_day_single_complex(input: &'_ str) -> Res<'_, DayCycle> {
@@ -897,6 +1025,7 @@ mod table_tests {
                         days: set(vec![29]),
                         option: LastDayOption::LastDay,
                     },
+                    weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Weekday(Direction::Nearest)),
                 },
             },
@@ -909,6 +1038,7 @@ mod table_tests {
                     years: Cycle::ForEach,
                     months: Cycle::NextNth(1),
                     days: DayCycle::NextNth(1, NextNthDayOption::WeekDay),
+                    weeks: None,
                     biz_day_adj: None,
                 },
             },
@@ -924,6 +1054,7 @@ mod table_tests {
                         days: set(vec![31]),
                         option: LastDayOption::LastDay,
                     },
+                    weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
             },
@@ -939,6 +1070,7 @@ mod table_tests {
                         weekdays: set(vec![WeekdayStartingMonday(Weekday::Tue)]),
                         option: WeekdayOption::Ending(Some(2)),
                     },
+                    weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
             },
@@ -955,6 +1087,7 @@ mod table_tests {
                         weekdays: set(vec![WeekdayStartingMonday(Weekday::Tue)]),
                         option: WeekdayOption::Ending(Some(2)),
                     },
+                    weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
             },
@@ -970,6 +1103,7 @@ mod table_tests {
                         days: set(vec![5, 10, 15]),
                         option: LastDayOption::NA,
                     },
+                    weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
             },
@@ -988,6 +1122,7 @@ mod table_tests {
                         ]),
                         option: WeekdayOption::NA,
                     },
+                    weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
             },
@@ -1001,6 +1136,7 @@ mod table_tests {
                     years: Cycle::Values(set(vec![2023, 2025])),
                     months: Cycle::ForEach,
                     days: DayCycle::NextNth(30, NextNthDayOption::BizDay),
+                    weeks: None,
                     biz_day_adj: None,
                 },
             },
@@ -1016,6 +1152,7 @@ mod table_tests {
                         days: set(vec![]),
                         option: LastDayOption::LastDay,
                     },
+                    weeks: None,
                     biz_day_adj: None,
                 },
             },

@@ -3,11 +3,11 @@
 ## Format
 
 ```text
-YEAR-MONTH-DAY[~ADJUSTMENT]
-SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …
+YEAR-MONTH-DAY[/WEEKS][~ADJUSTMENT]
+SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …  @START ..END
 ```
 
-All three components are required. The optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), and dates removed after `!` ([Exclusions](#exclusions-optional)).
+All three components are required. The optional `/WEEKS` suffix keeps only some weeks ([Week cycles](#week-cycles-optional)), and the optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), dates removed after `!` ([Exclusions](#exclusions-optional)), and a start, end and time zone added at the end ([Start, end and time zone](#start-end-and-time-zone-optional)).
 
 ---
 
@@ -19,6 +19,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 |--------|---------|
 | `YY` | Every year (wildcard) |
 | `nY` | Every *n* years from the start year (e.g. `1Y`, `2Y`, `3Y`) |
+| `nY[P,...]` | Years at positions *P* of every *n*-year cycle from the start year (e.g. `4Y[1,3]`) |
 | `YYYY` | Specific year only (e.g. `2025`) |
 | `[Y1,Y2,...]` | Enumerated years only (e.g. `[2025,2026]`) |
 | `[Y1-Y2,...]` | Inclusive ranges inside a list (e.g. `[2025-2027]`, `[2025-2027,2030]`) |
@@ -29,6 +30,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 |--------|---------|
 | `MM` | Every month (wildcard) |
 | `nM` | Every *n* months from the start month (e.g. `1M`, `3M`, `6M`) |
+| `nM[P,...]` | Months at positions *P* of every *n*-month cycle from the start month (e.g. `3M[1-2]`) |
 | `MM` (2-digit) | Specific month only (e.g. `01`, `06`, `12`) |
 | `[M1,M2,...]` | Enumerated months only (e.g. `[01,06]`, `[03,09]`) |
 | `[M1-M2,...]` | Inclusive ranges inside a list (e.g. `[01-06]`, `[01-03,10-12]`) |
@@ -39,6 +41,7 @@ All three components are required. The optional `~ADJUSTMENT` suffix shifts the 
 |--------|---------|
 | `DD` | Every calendar day |
 | `nD` | Every *n* calendar days (e.g. `4D`, `7D`, `14D`) |
+| `nD[P,...]` | Days at positions *P* of every *n*-day cycle from the start (e.g. `8D[1-4]` = four on, four off) |
 | `nBD` | Every *n* business days (using configured processor) |
 | `nWD` | Every *n* weekdays (Mon–Fri only, using WeekendSkipper) |
 | `DD` (2-digit) | Fixed day-of-month (e.g. `01`, `15`) |
@@ -102,6 +105,71 @@ steps (`7D`, `5BD`) or have its own `!`.
 > *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way, combined with
 > any written in the spec. `.with_count(n)` stops after `n` results counted from the start
 > (excluded dates are not counted); a counted schedule is resumed with `resume_with_start`.
+
+### Week cycles (optional)
+
+`/nW` after the day rule keeps only the dates in every *n*th week, and `/nW[P,...]` the dates in
+weeks at positions *P* of every *n*-week cycle. Weeks run Monday to Sunday; week 1 is the week
+containing the start, and the count carries across months and years.
+
+| Spec | Meaning |
+|------|---------|
+| `YY-MM-[TUE,THU]/2W` | Tuesday and Thursday, every other week |
+| `YY-MM-FRI/2W` | Every other Friday |
+| `YY-MM-MON/2W[2]` | Mondays in the weeks *not* containing the start |
+| `YY-MM-[MON-FRI]/4W[1,2]` | Weekdays in weeks 1 and 2 of every 4 (two on, two off) |
+
+A week cycle works with any calendar day rule, adjustments and month or year filters, but not
+after a day step (`7D/2W` is rejected).
+
+### Positions inside a cycle
+
+`nY[…]`, `nM[…]` and `nD[…]` pick positions of a cycle counted from the start (1 is the start's
+year, month or day), written like any list (`[1,3]`, `[1-4]`, `[1,2,5-7]`). They express
+rotations and shift patterns:
+
+| Spec | Meaning |
+|------|---------|
+| `YY-MM-8D[1-4]` | Days 1–4 of every 8 (four on, four off) |
+| `YY-MM-14D[1,2,5-7,10,11]` | The 2-2-3 pattern over 14 days |
+| `YY-3M[1-2]-15` | The 15th in months 1 and 2 of every 3 |
+| `4Y[1,3]-06-15` | 15 June in years 1 and 3 of every 4 |
+
+Unlike a plain `nD` step, a day cycle with positions never restarts: a month filter
+(`YY-[01-02]-8D[1-4]`) only removes dates. A year cycle with positions cannot be combined with a
+month cycle, and `nBD[…]` / `nWD[…]` are not supported.
+
+> *Library:* a cycle with positions other than the first (`/4W[1,2]`, `8D[1-4]`) can be at any
+> position when an occurrence is stored, so resuming needs the schedule's start: written in the
+> spec (`@…`), or given to `resume_with_start`.
+
+### Start, end and time zone (optional)
+
+`<spec> @<start> ..<end>` ends the spec with a start and/or an end, each a date or datetime with
+an optional UTC offset and an optional time zone in RFC 9557 brackets:
+
+```text
+YY-3M-15~NB @2025-02-15 ..2027-02-15
+YY-MM-[TUE,THU]/2W @2025-01-07T09:00:00[Europe/London]
+YY-MM-15 ..2025-12-31
+```
+
+- **`@start`** anchors the spec (cadences, week cycles, positions and steps count from it) and is
+  an inclusive lower bound: the first result is the first match at or after it.
+  `YY-MM-15 @2025-01-10` begins on 15 January. A step rule (`7D`) begins on the start itself,
+  or on the next business day for `nBD`/`nWD`.
+- **`..end`** is an inclusive upper bound; a date-only end covers the whole day.
+- **`[Zone]`** names the IANA time zone the start and end are read in; a `+hh:mm` offset fixes a
+  single instant instead.
+
+They apply to the whole spec, after any `|` and `!`. With a written start, a stored schedule is
+resumed with plain `resume_after`, even for a union or a cycle with positions.
+
+> *Library:* a start or end given to the builder (`new_with_start`, `resume_with_start`,
+> `with_end`, `with_end_spec`) takes precedence over the text. `new_after(dtm)` and
+> `resume_after(last)` take a cursor, not a start, so the written start still anchors the
+> schedule. `SpecIteratorBuilder::from_spec(spec, bdp)` builds from the text alone, in its
+> time zone (UTC if none is named).
 
 ---
 

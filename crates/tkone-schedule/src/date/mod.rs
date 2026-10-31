@@ -54,6 +54,7 @@ mod spec;
 mod tests;
 
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
+pub(crate) use iter::{needs_start, resume_needs_start};
 
 /// Describes a date spec in plain English, like [`Spec::describe`], but also
 /// accepts a union (`A | B`), whose parts are joined with ", and also ".

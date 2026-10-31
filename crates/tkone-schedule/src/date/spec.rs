@@ -96,6 +96,7 @@ pub struct WeekCycle {
 /// | `NthBizDay{BizDay, Starting(n)}` | `BD#3` | *n*th business day of the month |
 /// | `NthBizDay{BizDay, Ending(None)}` | `BD#L` | Last business day of the month |
 /// | `NthBizDay{BizDay, Ending(n)}` | `BD#2L` | *n*th-to-last business day |
+/// | `NthBizDay{BizDay, [Starting(1)…Starting(5)]}` | `BD#[1-5]` | 1st to 5th business days |
 /// | `NthBizDay{WeekDay, …}` | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) |
 /// | `Positions{8, {1,2,3,4}}` | `8D[1-4]` | Days 1–4 of every 8-day cycle from the start |
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
@@ -134,13 +135,14 @@ pub enum DayCycle {
         option: WeekdayOption,
     },
     /// The *n*th business day (`BD#n`) or weekday (`WD#n`) of the month,
-    /// counted from the end with `L` (`BD#L`, `BD#2L`). A month with fewer
-    /// such days has no occurrence.
+    /// counted from the end with `L` (`BD#L`, `BD#2L`), or several of them
+    /// (`BD#[1-5]`, `BD#[1,L]`). A month with fewer such days has no
+    /// occurrence for the missing positions.
     NthBizDay {
         /// Which days count.
         calendar: BizDayCalendar,
-        /// Which of them to use: `Starting(Some(n))` or `Ending(…)`.
-        option: WeekdayOption,
+        /// Which of them to use, each `Starting(Some(n))` or `Ending(…)`.
+        options: Vec<WeekdayOption>,
     },
 }
 
@@ -223,6 +225,7 @@ pub enum NextNthDayOption {
 /// | `~NB` | `BizDay(Next)` | non-biz day | roll to next business day |
 /// | `~PB` | `BizDay(Prev)` | non-biz day | roll to previous business day |
 /// | `~MF` | `ModifiedFollowing` | non-biz day | next business day, or previous if that is in the next month |
+/// | `~SB` | `SkipNonBizDay` | non-biz day | drop the date (no result) |
 /// | `~MP` | `ModifiedPreceding` | non-biz day | previous business day, or next if that is in the previous month |
 /// | `~3P` | `Prev(3)` | always | 3 business days earlier |
 /// | `~2N` | `Next(2)` | always | 2 business days later |
@@ -236,6 +239,10 @@ pub enum BizDayAdjustment {
     /// Roll to a nearby business day using the iterator's
     /// [`crate::biz_day::BizDayProcessor`].
     BizDay(Direction),
+    /// Skip (`~SB`): a date that is not a business day produces no result,
+    /// instead of moving to one. `YY-MM-[MON-FRI]/2W~SB` is "business days,
+    /// every other week".
+    SkipNonBizDay,
     /// Modified Following (`~MF`): roll to the next business day, unless that
     /// is in a later month, in which case roll to the previous one.
     ModifiedFollowing,
@@ -312,6 +319,14 @@ fn fmt_list(items: impl IntoIterator<Item = (u32, String)>) -> String {
     match (runs.as_slice(), parts.as_slice()) {
         ([(first, last)], [one]) if first.0 == last.0 => one.clone(),
         _ => format!("[{}]", parts.join(",")),
+    }
+}
+
+/// The position of a `Starting` business-day option (1 for `NA`).
+fn n_of(option: &WeekdayOption) -> u8 {
+    match option {
+        WeekdayOption::Starting(n) | WeekdayOption::Ending(n) => n.unwrap_or(1),
+        WeekdayOption::NA => 1,
     }
 }
 
@@ -444,16 +459,37 @@ impl fmt::Display for DayCycle {
                     write!(f, "{}", fmt_list(items))
                 }
             }
-            DayCycle::NthBizDay { calendar, option } => {
+            DayCycle::NthBizDay { calendar, options } => {
                 let unit = match calendar {
                     BizDayCalendar::BizDay => "BD",
                     BizDayCalendar::WeekDay => "WD",
                 };
-                match option {
-                    WeekdayOption::Ending(None) => write!(f, "{unit}#L"),
-                    WeekdayOption::Ending(Some(n)) => write!(f, "{unit}#{n}L"),
-                    WeekdayOption::Starting(n) => write!(f, "{unit}#{}", n.unwrap_or(1)),
-                    WeekdayOption::NA => write!(f, "{unit}#1"),
+                // Positions from the start (runs as ranges), then from the end.
+                let starting: Vec<(u32, String)> = options
+                    .iter()
+                    .filter_map(|o| match o {
+                        WeekdayOption::Starting(_) | WeekdayOption::NA => {
+                            let n = u32::from(n_of(o));
+                            Some((n, n.to_string()))
+                        }
+                        WeekdayOption::Ending(_) => None,
+                    })
+                    .collect();
+                let mut parts: Vec<String> = Vec::new();
+                if !starting.is_empty() {
+                    let list = fmt_list(starting);
+                    parts.push(list.trim_start_matches('[').trim_end_matches(']').to_string());
+                }
+                for o in options {
+                    match o {
+                        WeekdayOption::Ending(None | Some(1)) => parts.push("L".into()),
+                        WeekdayOption::Ending(Some(n)) => parts.push(format!("{n}L")),
+                        _ => {}
+                    }
+                }
+                match (options.len(), parts.as_slice()) {
+                    (1, [one]) => write!(f, "{unit}#{one}"),
+                    _ => write!(f, "{unit}#[{}]", parts.join(",")),
                 }
             }
         }
@@ -471,6 +507,7 @@ impl fmt::Display for BizDayAdjustment {
             BizDayAdjustment::Weekday(Direction::Next) => write!(f, "~NW"),
             BizDayAdjustment::Weekday(Direction::Prev) => write!(f, "~PW"),
             BizDayAdjustment::Weekday(Direction::Nearest) => write!(f, "~W"),
+            BizDayAdjustment::SkipNonBizDay => write!(f, "~SB"),
             BizDayAdjustment::ModifiedFollowing => write!(f, "~MF"),
             BizDayAdjustment::ModifiedPreceding => write!(f, "~MP"),
             BizDayAdjustment::Next(n) => write!(f, "~{}N", n),
@@ -649,11 +686,14 @@ fn validate(spec: &Spec) -> core::result::Result<(), String> {
         } if !(1..=5).contains(n) => {
             return Err(format!("weekday occurrence #{n} is out of range 1-5"));
         }
-        DayCycle::NthBizDay {
-            option: WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)),
-            ..
-        } if !(1..=23).contains(n) => {
-            return Err(format!("business day #{n} is out of range 1-23"));
+        DayCycle::NthBizDay { options, .. } => {
+            for option in options {
+                if let WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)) = option {
+                    if !(1..=23).contains(n) {
+                        return Err(format!("business day #{n} is out of range 1-23"));
+                    }
+                }
+            }
         }
         _ => {}
     }
@@ -847,15 +887,41 @@ fn parse_day_weekday_complex(input: &'_ str) -> Res<'_, DayCycle> {
     ))
 }
 
-/// `BD#n`, `BD#L`, `BD#nL`, and the same with `WD`.
+/// One position in `BD#[…]`: `n`, `n-m` (from the start), `L` or `nL` (from
+/// the end).
+fn parse_biz_position(input: &'_ str) -> Res<'_, Vec<WeekdayOption>> {
+    alt((
+        value(vec![WeekdayOption::Ending(None)], char('L')),
+        map_res(
+            (map_res(digit1, str::parse::<u8>), opt(preceded(char('-'), map_res(digit1, str::parse::<u8>))), opt(char('L'))),
+            |(lo, hi, last)| match (hi, last) {
+                (None, Some(_)) => Ok(vec![WeekdayOption::Ending(Some(lo))]),
+                (None, None) => Ok(vec![WeekdayOption::Starting(Some(lo))]),
+                (Some(hi), None) if lo <= hi => Ok((lo..=hi).map(|n| WeekdayOption::Starting(Some(n))).collect()),
+                _ => Err("invalid business day range"),
+            },
+        ),
+    ))
+    .parse(input)
+}
+
+/// `BD#n`, `BD#L`, `BD#nL`, `BD#[1-5]`, `BD#[1,L]`, and the same with `WD`.
 fn parse_day_nth_biz(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, calendar) = alt((
         value(BizDayCalendar::BizDay, tag("BD")),
         value(BizDayCalendar::WeekDay, tag("WD")),
     ))
     .parse(input)?;
-    let (input, option) = parse_occurrence(input)?;
-    Ok((input, DayCycle::NthBizDay { calendar, option }))
+    let list = preceded(char('#'), delimited(char('['), separated_list1(char(','), parse_biz_position), char(']')));
+    let (input, options) = alt((list.map(|ps: Vec<Vec<WeekdayOption>>| ps.concat()), parse_occurrence.map(|o| vec![o]))).parse(input)?;
+    // Keep the first of any repeated position.
+    let mut unique: Vec<WeekdayOption> = Vec::new();
+    for o in options {
+        if !unique.contains(&o) {
+            unique.push(o);
+        }
+    }
+    Ok((input, DayCycle::NthBizDay { calendar, options: unique }))
 }
 
 fn parse_day_next_nth(input: &'_ str) -> Res<'_, DayCycle> {
@@ -936,6 +1002,7 @@ fn parse_day_cycle(input: &'_ str) -> Res<'_, DayCycle> {
 fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
     let (input, _) = char('~').parse(input)?;
     alt((
+        value(BizDayAdjustment::SkipNonBizDay, tag("SB")),
         value(BizDayAdjustment::ModifiedFollowing, tag("MF")),
         value(BizDayAdjustment::ModifiedPreceding, tag("MP")),
         value(BizDayAdjustment::Weekday(Direction::Prev), tag("PW")),

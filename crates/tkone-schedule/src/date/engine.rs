@@ -66,6 +66,19 @@ pub(super) fn next_after<BDP: BizDayProcessor>(
     }
 }
 
+/// Whether the spec's `~SB` drops this raw occurrence (it is not a business
+/// day).
+pub(super) fn skipped<BDP: BizDayProcessor>(
+    spec: &Spec,
+    raw: &Occurrence<NaiveDateTime>,
+    ctx: &IterContext<BDP>,
+) -> Result<bool> {
+    match spec.biz_day_adj {
+        Some(BizDayAdjustment::SkipNonBizDay) => Ok(!ctx.bd_processor.is_biz_day(raw.observed())?),
+        _ => Ok(false),
+    }
+}
+
 /// Apply the spec's `~` business day adjustment to a raw occurrence.
 ///
 /// `~nP` / `~nN` shift unconditionally. The directional variants only shift
@@ -83,7 +96,8 @@ pub(super) fn adjust<BDP: BizDayProcessor>(
     let (actual, observed) = (*actual, *observed);
     let bdp = &ctx.bd_processor;
     let adjusted = match adj {
-        BizDayAdjustment::NA => return Ok(raw),
+        // `~SB` drops dates rather than moving them (see `skipped`).
+        BizDayAdjustment::NA | BizDayAdjustment::SkipNonBizDay => return Ok(raw),
         BizDayAdjustment::Prev(n) => {
             return Ok(Occurrence::AdjustedEarlier(actual, bdp.sub(&observed, *n)?))
         }
@@ -411,7 +425,7 @@ fn calendar_days<BDP: BizDayProcessor>(
             dates.sort();
             dates.into_iter().map(Occurrence::Exact).collect()
         }
-        DayCycle::NthBizDay { calendar, option } => {
+        DayCycle::NthBizDay { calendar, options } => {
             let ws = WeekendSkipper::new();
             let mut biz = Vec::new();
             for day in month() {
@@ -424,12 +438,21 @@ fn calendar_days<BDP: BizDayProcessor>(
                     biz.push(day);
                 }
             }
-            let index = match option {
-                WeekdayOption::Starting(n) => usize::from(n.unwrap_or(1)).checked_sub(1),
-                WeekdayOption::Ending(n) => biz.len().checked_sub(usize::from(n.unwrap_or(1))),
-                WeekdayOption::NA => Some(0),
-            };
-            index.and_then(|i| biz.get(i)).map(|d| Occurrence::Exact(*d)).into_iter().collect()
+            let mut dates: Vec<NaiveDate> = options
+                .iter()
+                .filter_map(|option| {
+                    let index = match option {
+                        WeekdayOption::Starting(n) => usize::from(n.unwrap_or(1)).checked_sub(1),
+                        WeekdayOption::Ending(n) => biz.len().checked_sub(usize::from(n.unwrap_or(1))),
+                        WeekdayOption::NA => Some(0),
+                    };
+                    index.and_then(|i| biz.get(i)).copied()
+                })
+                .collect();
+            // `BD#[1,L]` in a one-business-day month names the same date twice.
+            dates.sort();
+            dates.dedup();
+            dates.into_iter().map(Occurrence::Exact).collect()
         }
         DayCycle::NextNth(..) => Vec::new(),
     })

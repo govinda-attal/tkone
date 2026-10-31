@@ -115,6 +115,9 @@ fn test_resume_date_specs() {
         ("YY-[03,06]-BD#2L", ny(2025, 3, 28, 0, 0)),
         ("YY-MM-WD#1~1N", ny(2025, 1, 1, 0, 0)),
         ("YY-MM-[TUE,THU]/2W", ny(2025, 1, 7, 0, 0)),
+        ("YY-MM-BD#[1-3,L]", ny(2025, 1, 1, 0, 0)),
+        ("YY-MM-DD~SB", ny(2025, 1, 2, 0, 0)),
+        ("YY-MM-[TUE,THU]/2W~SB", ny(2025, 1, 7, 0, 0)),
     ] {
         check_date(spec, start);
     }

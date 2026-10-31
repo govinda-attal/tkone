@@ -34,6 +34,12 @@ fn count(n: u32, unit: &str) -> String {
 /// Like [`join`], but three or more consecutive keys read as a range:
 /// `"Monday to Friday"`, `"1st to 10th and 15th"`.
 fn join_runs(items: impl IntoIterator<Item = (u32, String)>) -> String {
+    join(&run_labels(items))
+}
+
+/// The labels of `join_runs` before joining: three or more consecutive keys
+/// become one `"first to last"` label.
+fn run_labels(items: impl IntoIterator<Item = (u32, String)>) -> Vec<String> {
     let mut runs: Vec<Vec<(u32, String)>> = Vec::new();
     for (key, label) in items {
         match runs.last_mut() {
@@ -41,14 +47,12 @@ fn join_runs(items: impl IntoIterator<Item = (u32, String)>) -> String {
             _ => runs.push(vec![(key, label)]),
         }
     }
-    let parts: Vec<String> = runs
-        .into_iter()
+    runs.into_iter()
         .flat_map(|run| match run.as_slice() {
             [(_, first), .., (_, last)] if run.len() >= 3 => vec![format!("{first} to {last}")],
             _ => run.into_iter().map(|(_, label)| label).collect(),
         })
-        .collect();
-    join(&parts)
+        .collect()
 }
 
 fn weekday(wd: Weekday) -> &'static str {
@@ -162,18 +166,26 @@ fn calendar_days(days: &DayCycle) -> Days {
                 }
             }
         }
-        DayCycle::NthBizDay { calendar, option } => {
+        DayCycle::NthBizDay { calendar, options } => {
             let unit = match calendar {
                 BizDayCalendar::BizDay => "business day",
                 BizDayCalendar::WeekDay => "weekday",
             };
-            let which = match option {
-                WeekdayOption::Ending(None | Some(1)) => "last".to_string(),
-                WeekdayOption::Ending(Some(n)) => format!("{}-to-last", ordinal(u32::from(*n))),
-                WeekdayOption::Starting(n) => ordinal(u32::from(n.unwrap_or(1))),
-                WeekdayOption::NA => ordinal(1),
-            };
-            Days::On(format!("on the {which} {unit}"), None)
+            let starting = options.iter().filter_map(|o| match o {
+                WeekdayOption::Starting(n) => Some(u32::from(n.unwrap_or(1))),
+                WeekdayOption::NA => Some(1),
+                WeekdayOption::Ending(_) => None,
+            });
+            let mut parts = run_labels(starting.map(|n| (n, ordinal(n))));
+            for option in options {
+                match option {
+                    WeekdayOption::Ending(None | Some(1)) => parts.push("last".to_string()),
+                    WeekdayOption::Ending(Some(n)) => parts.push(format!("{}-to-last", ordinal(u32::from(*n)))),
+                    _ => {}
+                }
+            }
+            let units = if options.len() == 1 { unit.to_string() } else { format!("{unit}s") };
+            Days::On(format!("on the {} {units}", join(&parts)), None)
         }
         DayCycle::Positions { every, positions } => Days::Every(format!(
             "on {}, counted from the start",
@@ -231,6 +243,7 @@ fn adjustment(adj: &BizDayAdjustment) -> String {
         BizDayAdjustment::BizDay(d) => {
             format!(", moved to the {} business day when it is not one", dir(d))
         }
+        BizDayAdjustment::SkipNonBizDay => ", skipped when it is not a business day".to_string(),
         BizDayAdjustment::ModifiedFollowing => ", moved to the next business day when it is not one, \
              or to the previous one if that is in the next month"
             .to_string(),
@@ -308,6 +321,9 @@ mod tests {
             ("YY-MM-BD#L", "on the last business day of every month"),
             ("YY-[03,06,09,12]-BD#2L", "on the 2nd-to-last business day of March, June, September and December"),
             ("YY-MM-WD#1", "on the 1st weekday of every month"),
+            ("YY-MM-BD#[1-5]", "on the 1st to 5th business days of every month"),
+            ("YY-MM-BD#[1,L]", "on the 1st and last business days of every month"),
+            ("YY-MM-BD#[1,3,2L,L]", "on the 1st, 3rd, 2nd-to-last and last business days of every month"),
             ("YY-MM-[TUE,THU]/2W", "every Tuesday and Thursday, in every 2nd week, counted from the start's week"),
             ("YY-MM-[MON-FRI]/4W[1,2]", "every Monday to Friday, in weeks 1 and 2 of every 4-week cycle, counted from the start's week"),
             ("YY-MM-FRI/2W~NB", "every Friday, in every 2nd week, counted from the start's week, moved to the next business day when it is not one"),
@@ -327,6 +343,7 @@ mod tests {
             ("YY-MM-DD~NB", "every day, moved to the next business day when it is not one"),
             ("YY-1M-L~W", "on the last day of every month, moved to the nearest weekday when it falls on a weekend"),
             ("YY-MM-L~2P", "on the last day of every month, moved 2 business days earlier"),
+            ("YY-MM-[MON-FRI]/2W~SB", "every Monday to Friday, in every 2nd week, counted from the start's week, skipped when it is not a business day"),
             (
                 "YY-MM-31L~MF",
                 "on the 31st of every month (or the last day, in shorter months), moved to the next business day \

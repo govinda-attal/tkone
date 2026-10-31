@@ -1595,3 +1595,101 @@ fn test_cycle_parsing() {
     let dt: crate::datetime::Spec = "YY-MM-[TUE,THU]/2WT18:00:00".parse().unwrap();
     assert_eq!((dt.date_spec.as_str(), dt.time_spec.as_str()), ("YY-MM-[TUE,THU]/2W", "18:00:00"));
 }
+
+// ---------------------------------------------------------------------------
+// Group 24: Lists of business-day positions (BD#[…]) and skipping (~SB)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_business_day_position_lists() {
+    use crate::date::Spec;
+    // Jan 2025: business days 1, 2, 3, 6, 7, …, 30, 31; Feb 1 is a Saturday.
+    assert_eq!(
+        dates_from("YY-MM-BD#[1-5]", (2025, 1, 1), 10),
+        ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-02-03", "2025-02-04", "2025-02-05", "2025-02-06", "2025-02-07"]
+    );
+    assert_eq!(dates_from("YY-MM-BD#[1,L]", (2025, 1, 1), 4), ["2025-01-01", "2025-01-31", "2025-02-03", "2025-02-28"]);
+    assert_eq!(dates_from("YY-MM-BD#[L,3,2L,1]", (2025, 1, 1), 4), ["2025-01-01", "2025-01-03", "2025-01-30", "2025-01-31"]);
+    // With a holiday calendar.
+    let tz = chrono_tz::America::New_York;
+    let after = tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-BD#[10,11]", HolidayOn15Jan, after)
+        .build()
+        .unwrap()
+        .take(2)
+        .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(got, ["01-14", "01-16"]);
+    for (input, shown) in [
+        ("YY-MM-BD#[1-5]", "YY-MM-BD#[1-5]"),
+        ("YY-MM-BD#[1,2,3]", "YY-MM-BD#[1-3]"),
+        ("YY-MM-BD#[L,1]", "YY-MM-BD#[1,L]"),
+        ("YY-MM-BD#[1,3,2L,L]", "YY-MM-BD#[1,3,2L,L]"),
+        ("YY-MM-BD#[3]", "YY-MM-BD#3"),
+        ("YY-MM-WD#[1,L]", "YY-MM-WD#[1,L]"),
+        ("YY-MM-BD#[1,1,2]", "YY-MM-BD#[1-2]"),
+    ] {
+        assert_eq!(input.parse::<Spec>().unwrap().to_string(), shown, "display of {input}");
+    }
+    for bad in ["YY-MM-BD#[]", "YY-MM-BD#[0]", "YY-MM-BD#[24]", "YY-MM-BD#[3-1]", "YY-MM-BD#[1,]", "YY-MM-BD#[1-3L]"] {
+        assert!(bad.parse::<Spec>().is_err(), "{bad} should be rejected");
+    }
+}
+
+#[test]
+fn test_skip_non_business_days() {
+    let tz = chrono_tz::America::New_York;
+    let day = |m, d| tz.with_ymd_and_hms(2025, m, d, 0, 0, 0).unwrap();
+    let take = |spec: &str, after, n| -> Vec<String> {
+        SpecIteratorBuilder::new_after(spec, HolidayOn15Jan, after)
+            .build()
+            .unwrap()
+            .take(n)
+            .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+            .collect()
+            .unwrap()
+    };
+    // Weekends and the 15 January holiday produce nothing (not moved).
+    assert_eq!(take("YY-MM-DD~SB", day(1, 12), 5), ["01-13", "01-14", "01-16", "01-17", "01-20"]);
+    // The 15th, only when it is a business day: Feb 15 and Mar 15 2025 are Saturdays.
+    assert_eq!(dates_from("YY-MM-15~SB", (2025, 1, 15), 3), ["2025-01-15", "2025-04-15", "2025-05-15"]);
+    // Business days every other week.
+    assert_eq!(
+        take("YY-MM-DD/2W~SB @2025-01-06", day(1, 1), 7),
+        ["01-06", "01-07", "01-08", "01-09", "01-10", "01-20", "01-21"]
+    );
+    // Skipped dates are not counted.
+    assert_eq!(take("YY-MM-15~SB @2025-01-01 x3", day(1, 1), 9), ["04-15", "05-15", "07-15"]);
+    // Display, and with a time part.
+    assert_eq!("YY-MM-DD/2W~SB".parse::<crate::date::Spec>().unwrap().to_string(), "YY-MM-DD/2W~SB");
+    let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after("YY-MM-DD~SBT09:00:00", HolidayOn15Jan, day(1, 14))
+        .build()
+        .unwrap()
+        .take(2)
+        .map(|o| Ok(o.observed().format("%m-%d %H:%M").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(got, ["01-14 09:00", "01-16 09:00"]);
+}
+
+#[test]
+fn test_every_business_day_two_ways() {
+    // `1BD` and `DD~SB` give the same dates, including from a Saturday
+    // written start with the cursor exactly at it.
+    let tz = chrono_tz::America::New_York;
+    let sat = tz.with_ymd_and_hms(2025, 1, 4, 0, 0, 0).unwrap();
+    let take = |spec: &str| -> Vec<String> {
+        SpecIteratorBuilder::new_after(spec, HolidayOn15Jan, sat)
+            .build()
+            .unwrap()
+            .take(10)
+            .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+            .collect()
+            .unwrap()
+    };
+    let expected = ["01-06", "01-07", "01-08", "01-09", "01-10", "01-13", "01-14", "01-16", "01-17", "01-20"];
+    for spec in ["YY-MM-1BD", "YY-MM-DD~SB", "YY-MM-1BD @2025-01-04", "YY-MM-DD~SB @2025-01-04"] {
+        assert_eq!(take(spec), expected, "{spec}");
+    }
+}

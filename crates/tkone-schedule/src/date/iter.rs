@@ -773,11 +773,13 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         // Step rules advance from the previous occurrence: replay from the
         // start, then step back so the first result after `last` is next.
         loop {
-            let before = iter.dtm;
+            // Step back fully, including whether the start has been yielded.
+            let (before, index) = (iter.dtm, iter.index);
             match iter.next()? {
                 Some(occurrence) if *occurrence.actual() <= last => continue,
                 Some(_) => {
                     iter.dtm = before;
+                    iter.index = index;
                     return Ok(iter);
                 }
                 None => return Ok(iter),
@@ -869,17 +871,34 @@ impl<BDP: BizDayProcessor + Clone> NaiveSpecIterator<BDP> {
                 if &self.dtm <= start {
                     self.dtm = *start;
                     self.index += 1;
-                    if self.adjust_start {
-                        return Ok(Some(engine::adjust(&self.spec, Occurrence::Exact(*start), &self.context)?));
+                    if !self.adjust_start {
+                        return Ok(Some(Occurrence::Exact(*start)));
                     }
-                    return Ok(Some(Occurrence::Exact(*start)));
+                    let start = Occurrence::Exact(*start);
+                    if !engine::skipped(&self.spec, &start, &self.context)? {
+                        return Ok(Some(engine::adjust(&self.spec, start, &self.context)?));
+                    }
                 }
             }
         }
 
-        let Some(raw) = engine::next_after(&self.spec, self.dtm, &self.context)? else {
-            return Ok(None);
-        };
+        // `~SB` can drop dates; a calendar with no business days at all
+        // fails instead of looping.
+        let mut raw = None;
+        for _ in 0..10_000 {
+            let Some(next) = engine::next_after(&self.spec, self.dtm, &self.context)? else {
+                return Ok(None);
+            };
+            if !engine::skipped(&self.spec, &next, &self.context)? {
+                raw = Some(next);
+                break;
+            }
+            if self.end.is_some_and(|end| *next.actual() > end) {
+                return Ok(None);
+            }
+            self.dtm = *next.actual();
+        }
+        let raw = raw.ok_or(Error::IteratorNotConverged)?;
         let next_result = engine::adjust(&self.spec, raw, &self.context)?;
 
         if let Some(end) = &self.end {

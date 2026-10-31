@@ -147,6 +147,7 @@
 //! | `BD#3` | 3rd business day of the month |
 //! | `BD#L` | Last business day of the month |
 //! | `BD#2L` | 2nd-to-last business day of the month |
+//! | `BD#[1-5]` / `BD#[1,L]` | Several business days: the first five; the first and last |
 //! | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) instead of business days |
 //!
 //! #### Weeks (`/nW` after the day rule)
@@ -161,7 +162,7 @@
 //! #### Business Day Adjustment (`~`)
 //!
 //! Applied after the raw calendar date is resolved. Directional variants
-//! (`~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~NW`, `~PW`, `~W`) are **conditional** — they only shift
+//! (`~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~SB`, `~NW`, `~PW`, `~W`) are **conditional** — they only act
 //! when the raw date is not already a business/week day. Numeric variants
 //! (`~nP`, `~nN`) are **unconditional** offsets.
 //!
@@ -171,6 +172,7 @@
 //! | `~PB` | Previous business day (shift back if not already a business day) |
 //! | `~MF` | Modified Following: next business day, unless that is in the next month — then previous |
 //! | `~MP` | Modified Preceding: previous business day, unless that is in the previous month — then next |
+//! | `~SB` | Skip: drop the date if it is not a business day (nothing moves) |
 //! | `~B`  | Nearest business day (shift to whichever direction is closer) |
 //! | `~NW` | Next weekday — Mon–Fri (shift forward if not already a weekday) |
 //! | `~PW` | Previous weekday — Mon–Fri (shift back if not already a weekday) |

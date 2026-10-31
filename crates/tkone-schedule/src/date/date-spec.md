@@ -58,7 +58,8 @@ All three components are required. The optional `/WEEKS` suffix keeps only some 
 | `BD#N` | *N*th business day of the month, using the configured processor (e.g. `BD#1`, `BD#3`) |
 | `BD#L` | Last business day of the month |
 | `BD#NL` | *N*th-from-last business day of the month (e.g. `BD#2L`) |
-| `WD#N` / `WD#L` / `WD#NL` | Same as `BD#…`, counting weekdays (Mon–Fri) and ignoring holidays |
+| `BD#[P,...]` | Several business-day positions: numbers and ranges from the start, `L` / `nL` from the end (e.g. `BD#[1-5]`, `BD#[1,L]`, `BD#[1-3,2L,L]`) |
+| `WD#N` / `WD#L` / `WD#NL` / `WD#[…]` | Same as `BD#…`, counting weekdays (Mon–Fri) and ignoring holidays |
 | `[D1,D2,...]` | Enumerated days of month (e.g. `[01,15]`, `[01,10,20,25]`) |
 | `[D1-D2,...]` | Day ranges inside a list (e.g. `[01-10]`, `[01-05,15]`) |
 
@@ -79,12 +80,61 @@ is shown as `[MON-FRI]`, and `[15,01]` as `[01,15]`.
 | `~B`  | If result is not a biz day, move to **nearest** biz day (configured processor) |
 | `~MF` | **Modified Following**: if not a biz day, move to the **next** biz day, unless that is in the next month — then the **previous** one |
 | `~MP` | **Modified Preceding**: if not a biz day, move to the **previous** biz day, unless that is in the previous month — then the **next** one |
+| `~SB` | **Skip**: if not a biz day, **drop** the date — no result, nothing moved (configured processor) |
 | `~nN` | **Unconditional**: add *n* biz days (e.g. `~2N`) |
 | `~nP` | **Unconditional**: subtract *n* biz days (e.g. `~3P`) |
 
 `~NW`/`~PW`/`~W` always use the built-in WeekendSkipper (Sat/Sun only).  
-`~NB`/`~PB`/`~B` use the configured `BizDayProcessor` and can account for custom holidays.  
+`~NB`/`~PB`/`~B`/`~MF`/`~MP`/`~SB` use the configured `BizDayProcessor` and can account for custom holidays.  
 `~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.
+
+### Ways to use `~SB`
+
+`~SB` drops any date that is not a business day, instead of moving it. It works on top of any
+calendar day rule, so it turns "these dates" into "these dates, when they are business days".
+The examples below use a holiday calendar where 26 May, 25 December and 26 December 2025 are
+holidays, as well as every weekend.
+
+| Use | Spec | Results |
+|-----|------|---------|
+| Every business day | `YY-MM-DD~SB` | Thu 22 May, Fri 23 May, Tue 27 May, … (weekend and 26 May skipped) |
+| A fixed day, only when it is a business day | `YY-MM-26~SB` | Wed 26 Feb, Wed 26 Mar, Thu 26 Jun, … (Jan, Apr, May, Jul, Oct, Dec skipped) |
+| Chosen weekdays, except holidays | `YY-MM-[MON,WED,FRI]~SB` | Mon 19 May, Wed 21 May, Fri 23 May, Wed 28 May, … (Mon 26 May skipped) |
+| A weekday-of-month rule, only when it is a business day | `YY-MM-MON#L~SB` | Mon 27 Jan, Mon 24 Feb, …, Mon 28 Apr, Mon 30 Jun (Mon 26 May skipped) |
+| Business days every other week | `YY-MM-DD/2W~SB` | Mon 19 – Fri 23 May, Mon 2 – Fri 6 Jun, … |
+| A rotation, on business days only | `YY-MM-8D[1-4]~SB` | Thu 22, Fri 23 May, Fri 30 May, Mon 2 Jun, … (on-days that fall on weekends skipped) |
+| A month-end rule, checked on the date it lands on | `YY-MM-31N~SB` | Fri 31 Jan, Mon 31 Mar, Thu 1 May, … (Sat 1 Mar and Sat 31 May skipped) |
+| Business days at a time of day | `YY-MM-DD~SBT09:00:00` | Fri 23 May 09:00, Tue 27 May 09:00, … |
+| Intraday, on business days only | `YY-MM-DD~SBT09-16:30M:00` | …, Fri 23 May 16:30, Tue 27 May 09:00, … (whole days skipped) |
+| A fixed number of business-day occurrences | `YY-MM-26~SB @2025-01-01 x6` | six results, Feb to Nov; skipped dates are not counted |
+| Business days, except a period | `YY-MM-DD~SB ! YY-12-[29-31]` | Mon 22, Tue 23, Wed 24 Dec, Thu 1 Jan, … |
+| One part of a union | `YY-MM-[01,15]~SBT09:00:00 \| YY-MM-L~PBT17:00:00` | 1st and 15th at 09:00 when they are business days; last business day at 17:00 |
+
+How it compares with the other ways of avoiding non-business days:
+
+| You want | Use | Example |
+|----------|-----|---------|
+| The date to move to a business day | `~NB`, `~PB`, `~B`, `~MF`, `~MP` | `YY-MM-MON#L~NB`: 26 May becomes Tue 27 May |
+| The date to move off weekends only, ignoring holidays | `~NW`, `~PW`, `~W` | `YY-MM-15~W` |
+| The date to disappear when it is not a business day | `~SB` | `YY-MM-MON#L~SB`: no result for May |
+| Particular dates to disappear, whatever the calendar says | `! <exclusion>` | `YY-MM-DD ! YY-12-[24-31]` |
+| To count business days | `nBD`, `BD#n`, `BD#[…]` | `YY-MM-2BD`, `YY-MM-BD#[1-5]` |
+
+Notes:
+
+- **The observed date is checked.** With `31N` or `31O`, `~SB` looks at the date the rule lands
+  on in the next month, not at the 31st.
+- **It uses the business-day calendar**, holidays included. For weekends only, use a weekday
+  list such as `[MON-FRI]` instead.
+- **It has no effect on rules that already produce business days**: `nBD`, `BD#n`, `BD#[…]`.
+- **One adjustment per spec.** `~SB` can't be combined with `~NB` in the same rule, for example
+  "skip holidays but move weekends". Use a union of two rules instead, each with its own
+  adjustment, or an exclusion.
+- **Dropped dates are not counted** by `xN` or `with_count`, and a time part has no ticks on a
+  dropped date.
+
+> *Library:* a start given to the builder (`new_with_start`) is still returned as-is, even when it
+> is not a business day. A start written in the spec (`@…`) is skipped like any other date.
 
 ### Week cycles (optional)
 
@@ -1204,6 +1254,47 @@ business day within the month; the 36th is 1 March 2028.
 34. AdjustedLater   actual=2028-01-01 Sat  observed=2028-01-03 Mon
 35. 2028-02-01 Tue
 36. 2028-03-01 Wed
+```
+
+---
+
+### 43. `YY-MM-BD#[1-3,L] @2025-01-01` — First three and last business day of each month
+
+Several positions in one rule: numbers and ranges count from the start of the month, `L` and `nL`
+from the end. A date named twice (in a month with very few business days) is yielded once.
+
+```text
+ 1. 2025-01-01 Wed
+ 2. 2025-01-02 Thu
+ 3. 2025-01-03 Fri
+ 4. 2025-01-31 Fri
+ 5. 2025-02-03 Mon
+ 6. 2025-02-04 Tue
+ 7. 2025-02-05 Wed
+ 8. 2025-02-28 Fri
+ 9. 2025-03-03 Mon
+10. 2025-03-04 Tue
+11. 2025-03-05 Wed
+12. 2025-03-31 Mon
+```
+
+---
+
+### 44. `YY-MM-15~SB @2025-01-01` — The 15th, only when it is a business day
+
+`~SB` drops a date that is not a business day instead of moving it. February, March, June and
+November 2025 have the 15th on a weekend, so they have no occurrence. Dropped dates are not
+counted by `xN`.
+
+```text
+ 1. 2025-01-15 Wed
+ 2. 2025-04-15 Tue
+ 3. 2025-05-15 Thu
+ 4. 2025-07-15 Tue
+ 5. 2025-08-15 Fri
+ 6. 2025-09-15 Mon
+ 7. 2025-10-15 Wed
+ 8. 2025-12-15 Mon
 ```
 
 ---

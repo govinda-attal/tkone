@@ -43,7 +43,7 @@ Read it left to right as "which years, which months, which days".
 | Days | `DD` · `15` · `[01,15]` · `[01-10]` · `L` | every day · the 15th · the 1st and 15th · the 1st to 10th · the last day |
 | Short months | `31L` · `31N` · `31O` | the 31st, or: the last day · the 1st of next month · overflow into next month |
 | Weekdays | `MON` · `[MON,FRI]` · `[MON-FRI]` · `WED#2` · `FRI#L` · `THU#2L` | every Monday · Mondays and Fridays · Monday to Friday · 2nd Wednesday · last Friday · 2nd-to-last Thursday |
-| Business days | `BD#3` · `BD#L` · `BD#2L` | 3rd business day · last business day · 2nd-to-last business day |
+| Business days | `BD#3` · `BD#L` · `BD#2L` · `BD#[1-5]` · `BD#[1,L]` | 3rd business day · last · 2nd-to-last · first five · first and last |
 | Steps | `7D` · `5BD` · `3WD` | every 7 days · every 5 business days · every 3 weekdays |
 
 Ranges such as `[01-06]` are written inside brackets, because `-` also separates the parts.
@@ -62,8 +62,14 @@ per market if needed, so the same schedule text works for London and New York.
 |------------|---------|
 | `~NB` · `~PB` · `~B` | if not a business day: move to the next · previous · nearest one |
 | `~MF` · `~MP` | Modified Following · Modified Preceding: as `~NB` · `~PB`, but never into another month |
+| `~SB` | if not a business day: skip it (no occurrence) instead of moving it |
 | `~NW` · `~PW` · `~W` | if on a weekend: move to the next · previous · nearest weekday |
 | `~2N` · `~3P` | always move 2 business days later · 3 business days earlier |
+
+The moving adjustments always produce a date. `~SB` instead *drops* a date that isn't a
+business day, so it can sit on top of any rule: `YY-MM-15~SB` is the 15th only when it is a
+business day, `YY-MM-[MON,WED,FRI]~SB` is those weekdays except holidays, and `YY-MM-DD/2W~SB`
+is business days every other week.
 
 ### Time part
 
@@ -247,7 +253,8 @@ which the schedule text can hold (`@2025-04-01 x36`, `..2028-03-31`).
 ### For rostering and operations
 
 Rotations are written as cycles from a start: weeks on and off (`/4W[1,2]`), days on and off
-(`8D[1-4]`), or a mix of patterns joined with `|`. Exclusions take out holidays or term breaks,
+(`8D[1-4]`), or a mix of patterns joined with `|`. `~SB` keeps only business days, so
+`YY-MM-DD/2W~SB` is "business days, every other week". Exclusions take out holidays or term breaks,
 and the time zone keeps shift times right across clock changes.
 
 ---
@@ -307,9 +314,10 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Every other week on several weekdays | ✗ | ✗ | ✓ | ✓ `[TUE,THU]/2W` |
 | Rotations ("4 on, 4 off", weeks 1–2 of 4) | ✗ | ✗ | partly | ✓ `8D[1-4]`, `/4W[1,2]` |
 | **Business days** | | | | |
-| Nth business day of the month (with holidays) | ✗ | ✗ | ✗ | ✓ `BD#3`, `BD#L` |
+| Nth business day of the month (with holidays) | ✗ | ✗ | ✗ | ✓ `BD#3`, `BD#[1-5]` |
 | Move to the next business day (with holidays) | ✗ | ✗ | ✗ | ✓ `~NB` |
 | Modified Following / Preceding | ✗ | ✗ | ✗ | ✓ `~MF`, `~MP` |
+| Skip dates that aren't business days | ✗ | ✓ calendars | ✗ | ✓ `~SB` |
 | N business days before a date | ✗ | ✗ | ✗ | ✓ `~2P` |
 | Every N business days | ✗ | ✗ | ✗ | ✓ `5BD` |
 | Both the scheduled and the adjusted date | ✗ | ✗ | ✗ | ✓ |
@@ -340,6 +348,8 @@ no month end, no business days, and "one month after January 31" is left to the 
 | A three-year loan: 36 payments on the 1st, Modified Following | `YY-MM-01~MF @2025-04-01 x36` |
 | Payroll on the last business day of the month | `YY-MM-BD#L` |
 | Settlement on the 3rd business day of the month | `YY-MM-BD#3` |
+| Month-end close tasks on the first three business days and the last | `YY-MM-BD#[1-3,L]` |
+| Coupon on the 15th, but only when it is a business day | `YY-MM-15~SB` |
 | Quarterly expiry: 3rd Friday of Mar/Jun/Sep/Dec, preceding if a holiday | `YY-[03,06,09,12]-FRI#3~PB` |
 | Weekly sweep every 5 business days | `YY-MM-5BD` |
 | Every 15 months | `1Y-3M-15` |
@@ -379,8 +389,6 @@ The format is deliberately small. Some things it leaves out:
 
 - **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; there is
   no duration.
-- **No business-day cycles with positions.** `8D[1-4]` counts calendar days; "business days 1–5
-  of every 10" (`10BD[1-5]`) is not supported.
 - **One start for every part.** All parts of a `|` combination count from the same start;
   a part can't be offset by a week or a day.
 - **Weeks always run Monday to Sunday.** There is no Sunday-start or ISO week-number rule.

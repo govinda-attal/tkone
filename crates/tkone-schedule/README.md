@@ -146,6 +146,8 @@ cargo run -p tkone-schedule --example time_recurrence
 | `BD#2L` | 2nd-to-last business day of the month |
 | `BD#[1-5]` / `BD#[1,L]` | Several business days: the first five; the first and last |
 | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) instead of business days |
+| `EAS` / `EAS-2` / `EAS+1` | Easter Sunday · Good Friday · Easter Monday (days from Easter Sunday) |
+| `OEAS` / `OEAS+1` | The same for Orthodox Easter |
 
 #### Weeks (`/nW` after the day rule)
 

@@ -171,7 +171,8 @@ date-spec     = years "-" months "-" days [ weeks ]
 years         = list / %s"YY" / "_" / number %s"Y" [ list ] / number
 months        = list / %s"MM" / "_" / number %s"M" [ list ] / number
 
-days          = weekday-list
+days          = easter
+              / weekday-list
               / list
               / biz-nth
               / weekday "#" occurrence
@@ -191,6 +192,8 @@ biz-nth       = ( %s"BD" / %s"WD" ) "#"
                 ( occurrence / "[" biz-pos *( "," biz-pos ) "]" )
 biz-pos       = %s"L" / number %s"L" / span
 
+easter        = ( %s"OEAS" / %s"EAS" ) [ ( "+" / "-" ) number ]
+
 weeks         = "/" number %s"W" [ list ]
 
 adjustment    = "~" ( %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
@@ -199,6 +202,10 @@ adjustment    = "~" ( %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
 ~~~
 
 `number %s"D" list` is only valid for calendar days: `5BD[…]` and `3WD[…]` do not parse.
+
+`easter` counts calendar days from Easter Sunday: `EAS` is Western Easter, `OEAS` Orthodox
+Easter. `EAS-2` is Good Friday and `EAS+1` Easter Monday. The offset needs its sign: `EAS2` does
+not parse.
 
 ## Time spec {#time-spec}
 
@@ -278,6 +285,8 @@ A schedule that matches the grammar is still rejected if any of these rules is b
 | A year cycle with positions is not combined with a month step or month cycle | `4Y[1]-3M-15` |
 | A month cycle with positions is not combined with a year step | `1Y-3M[1]-15` |
 | A week cycle does not follow a day step | `YY-MM-7D/2W` |
+| An Easter offset is -80 to +250 days | `YY-MM-EAS-81`, `YY-MM-EAS+251` |
+| A week cycle does not follow an Easter rule | `YY-MM-EAS/2W` |
 
 ## Time specs {#time-specs}
 
@@ -338,7 +347,7 @@ A date spec is evaluated in layers:
      position 1.
 2. **Days.** The day rule picks dates in eligible months:
    - **Calendar rules** depend only on the month: `DD`, a day number or list, `L`, `31L` / `31N` /
-     `31O`, weekdays, `DAY#n`, `BD#n`, `BD#[…]` and `nD[…]`.
+     `31O`, weekdays, `DAY#n`, `BD#n`, `BD#[…]`, `nD[…]` and Easter rules.
      - A day the month does not have is skipped (`31`), clamped to the last day (`31L`), moved to
        the 1st of the next month (`31N`), or carried into the next month by the missing days
        (`31O`). With `N` and `O` the occurrence is *adjusted later*: actual is the last day,
@@ -346,6 +355,12 @@ A date spec is evaluated in layers:
      - `BD#…` counts the month's business days using the holiday calendar; `WD#…` counts
        weekdays (Monday to Friday). A position the month does not have produces nothing.
      - `nD[…]` keeps days whose position in an *n*-day cycle from the start is listed.
+     - `EAS±n` / `OEAS±n` is Easter Sunday plus or minus *n* calendar days, with Easter Sunday
+       computed by the Gregorian computus (`EAS`) or the Julian computus given as a Gregorian
+       date (`OEAS`). It is one date a year, kept when it falls in an eligible month: `YY-04-EAS`
+       is Easter Sunday only in the years it is in April. The offset range keeps every Western
+       Easter date in its own year; a late Orthodox Easter plus a large offset can fall in
+       January of the next year.
    - **Step rules** (`nD`, `nBD`, `nWD`) advance from the previous occurrence. With an `nM` month
      cadence, the month step and the day step form a single clock (`YY-1M-7D` = +1 month and +7
      days each time). Otherwise the step continues while it stays in eligible months, and
@@ -446,6 +461,8 @@ union before the `!`.
 | `YY-MM-BD#3` · `YY-MM-BD#[1-3,2L,L]` · `YY-MM-WD#[1,L]` | date |
 | `YY-MM-5BD` · `YY-1M-7D` · `YY-MM-8D[1-4]` · `YY-3M[1-2]-15` · `4Y[1,3]-06-15` | date |
 | `YY-MM-[TUE,THU]/2W` · `YY-MM-[MON-FRI]/4W[1,2]~SB` | date |
+| `YY-MM-EAS` · `YY-MM-EAS-2` · `YY-MM-OEAS+1~NB` · `YY-04-EAS` · `YY-MM-EAS+39` | date |
+| `YY-MM-[MON-FRI] ! YY-MM-EAS-2 \| YY-MM-EAS+1` | date |
 | `YY-MM-DD ! YY-12-25 \| YY-01-01` · `YY-MM-BD#3 \| YY-MM-L~PB` | date |
 | `YY-MM-01~MF @2025-04-01 x36` · `YY-MM-15 x3 ..2025-12-31 @2025-01-01` | date |
 | `YY-1M-31L~MF @2025-01-31 ..+30Y` · `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` · `YY-3M-L @2025-03-31 ..+5Y6M x20` | date |
@@ -455,6 +472,7 @@ union before the `!`.
 | `1H:00:00 @2025-01-06T09:00[Europe/Paris] ..2025-01-06T17:00` · `HH:30M:00 @2025-01-06T09:00 ..+1D` | time |
 | `YY-MM-DDT09:00:00` · `YY-MM-THUT9:00:00` · `YY-MM-SATT9-16:00:00` | datetime |
 | `YY-MM-DD~NBT09:00:00` · `YY-MM-[TUE,THU]/2WT18:00:00` · `YY-MM-DDT_:_:_` | datetime |
+| `YY-MM-EAS-2T09:00:00` | datetime |
 | `YY-MM-DDT09:00:00 \| YY-MM-15T12:00:00 ! YY-12-25 @2025-01-01[Europe/London] ..2025-12-31 x10` | datetime |
 
 ## Rejected {#rejected}
@@ -468,6 +486,7 @@ union before the `!`.
 | `YY-MM-DD /2W` | whitespace before a week cycle |
 | `YY-MM-DD~NA` | not an adjustment |
 | `YY-MM-BD#[1-3L]` | a range counted from the end |
+| `YY-MM-EAS2` · `YY-MM-EASTER` · `YY-MM-EAS+-1` | an Easter offset is a sign and a number |
 | `YY-MMx3` | a count must stand alone |
 | `YY-MM-15 @2025-01-01 ..+6M1Y` | duration units out of order |
 | `YY-MM-15 @2025-01-01 ..+8H` | a duration has no hours |
@@ -531,7 +550,8 @@ date-spec     = years "-" months "-" days [ weeks ]
 years         = list / %s"YY" / "_" / number %s"Y" [ list ] / number
 months        = list / %s"MM" / "_" / number %s"M" [ list ] / number
 
-days          = weekday-list
+days          = easter
+              / weekday-list
               / list
               / biz-nth
               / weekday "#" occurrence
@@ -550,6 +570,8 @@ occurrence    = %s"L" / number [ %s"L" ]
 biz-nth       = ( %s"BD" / %s"WD" ) "#"
                 ( occurrence / "[" biz-pos *( "," biz-pos ) "]" )
 biz-pos       = %s"L" / number %s"L" / span
+
+easter        = ( %s"OEAS" / %s"EAS" ) [ ( "+" / "-" ) number ]
 
 weeks         = "/" number %s"W" [ list ]
 

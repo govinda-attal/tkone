@@ -46,6 +46,7 @@
 #![doc = include_str!("date-spec.md")]
 
 mod describe;
+mod easter;
 mod engine;
 mod iter;
 mod spec;
@@ -78,7 +79,8 @@ fn describe_one(spec: &str) -> crate::Result<String> {
     Ok(spec.parse::<Spec>()?.describe())
 }
 
+pub use easter::Easter;
 pub use spec::{
     parse_spec, BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
-    WeekdayOption,
+    WeekdayOption, EASTER_OFFSETS,
 };

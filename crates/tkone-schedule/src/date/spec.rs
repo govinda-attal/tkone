@@ -1,3 +1,4 @@
+use super::easter::Easter;
 use crate::{biz_day::Direction, prelude::*, utils::WeekdayStartingMonday};
 use chrono::Weekday;
 
@@ -98,6 +99,9 @@ pub struct WeekCycle {
 /// | `NthBizDay{BizDay, Ending(n)}` | `BD#2L` | *n*th-to-last business day |
 /// | `NthBizDay{BizDay, [Starting(1)…Starting(5)]}` | `BD#[1-5]` | 1st to 5th business days |
 /// | `NthBizDay{WeekDay, …}` | `WD#3` / `WD#L` | Same, counting weekdays (Mon–Fri) |
+/// | `Easter{Western, 0}` | `EAS` | Easter Sunday |
+/// | `Easter{Western, -2}` | `EAS-2` | 2 days before Easter Sunday (Good Friday) |
+/// | `Easter{Orthodox, 1}` | `OEAS+1` | the day after Orthodox Easter Sunday |
 /// | `Positions{8, {1,2,3,4}}` | `8D[1-4]` | Days 1–4 of every 8-day cycle from the start |
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum DayCycle {
@@ -144,7 +148,22 @@ pub enum DayCycle {
         /// Which of them to use, each `Starting(Some(n))` or `Ending(…)`.
         options: Vec<WeekdayOption>,
     },
+    /// A day counted in calendar days from Easter Sunday (`EAS`, `EAS-2`,
+    /// `OEAS+1`). The month rule still filters: `YY-04-EAS` is Easter Sunday
+    /// in the years it falls in April.
+    Easter {
+        /// Which Easter.
+        easter: Easter,
+        /// Calendar days after (positive) or before (negative) Easter Sunday,
+        /// within [`EASTER_OFFSETS`].
+        offset: i32,
+    },
 }
+
+/// The offsets an Easter rule accepts. Every Western Easter (22 March to 25
+/// April) plus any of them is in Easter's own year, from 1 January to
+/// 31 December.
+pub const EASTER_OFFSETS: std::ops::RangeInclusive<i32> = -80..=250;
 
 /// The days counted by [`DayCycle::NthBizDay`].
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
@@ -492,6 +511,16 @@ impl fmt::Display for DayCycle {
                     _ => write!(f, "{unit}#[{}]", parts.join(",")),
                 }
             }
+            DayCycle::Easter { easter, offset } => {
+                let name = match easter {
+                    Easter::Western => "EAS",
+                    Easter::Orthodox => "OEAS",
+                };
+                match offset {
+                    0 => write!(f, "{name}"),
+                    _ => write!(f, "{name}{offset:+}"),
+                }
+            }
         }
     }
 }
@@ -660,6 +689,9 @@ fn validate(spec: &Spec) -> core::result::Result<(), String> {
         if matches!(spec.days, DayCycle::NextNth(..)) {
             return Err("a week cycle (`/nW`) cannot follow a day step (`nD`, `nBD`, `nWD`)".into());
         }
+        if matches!(spec.days, DayCycle::Easter { .. }) {
+            return Err("a week cycle (`/nW`) cannot follow an Easter rule (`EAS`, `OEAS`)".into());
+        }
     }
     if let Cycle::NextNth(0) = spec.years {
         return Err("year step must be at least 1".into());
@@ -685,6 +717,13 @@ fn validate(spec: &Spec) -> core::result::Result<(), String> {
             ..
         } if !(1..=5).contains(n) => {
             return Err(format!("weekday occurrence #{n} is out of range 1-5"));
+        }
+        DayCycle::Easter { offset, .. } if !EASTER_OFFSETS.contains(offset) => {
+            return Err(format!(
+                "Easter offset {offset:+} is out of range {}..+{}",
+                EASTER_OFFSETS.start(),
+                EASTER_OFFSETS.end()
+            ));
         }
         DayCycle::NthBizDay { options, .. } => {
             for option in options {
@@ -983,8 +1022,26 @@ fn parse_day_literals(input: &'_ str) -> Res<'_, DayCycle> {
     .parse(input)
 }
 
+/// `EAS` or `OEAS`, then an optional signed offset in days: `EAS-2`,
+/// `OEAS+1`. The offset is range-checked in `validate`.
+fn parse_day_easter(input: &'_ str) -> Res<'_, DayCycle> {
+    let (input, easter) = alt((
+        value(Easter::Orthodox, tag("OEAS")),
+        value(Easter::Western, tag("EAS")),
+    ))
+    .parse(input)?;
+    let (input, offset) = opt(pair(
+        alt((value(1, char('+')), value(-1, char('-')))),
+        map_res(digit1, str::parse::<i32>),
+    ))
+    .parse(input)?;
+    let offset = offset.map_or(0, |(sign, n)| sign * n);
+    Ok((input, DayCycle::Easter { easter, offset }))
+}
+
 fn parse_day_cycle(input: &'_ str) -> Res<'_, DayCycle> {
     alt((
+        parse_day_easter,
         parse_day_weekday_list,
         parse_day_int_list,
         parse_day_nth_biz,

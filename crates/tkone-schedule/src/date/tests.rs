@@ -1693,3 +1693,99 @@ fn test_every_business_day_two_ways() {
         assert_eq!(take(spec), expected, "{spec}");
     }
 }
+
+/// Like `dates_from`, but strictly after the cursor `after` (`new_after`),
+/// so the cursor itself is not a result.
+fn dates_after(spec: &str, after: (i32, u32, u32), n: usize) -> Vec<String> {
+    let tz = chrono_tz::America::New_York;
+    let after = tz.with_ymd_and_hms(after.0, after.1, after.2, 0, 0, 0).unwrap();
+    SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after)
+        .build()
+        .unwrap()
+        .take(n)
+        .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+        .collect()
+        .unwrap()
+}
+
+#[test]
+fn test_easter() {
+    // Good Friday and Easter Monday, Western and Orthodox.
+    assert_eq!(dates_after("YY-MM-EAS-2", (2025, 1, 1), 3), ["2025-04-18", "2026-04-03", "2027-03-26"]);
+    assert_eq!(dates_after("YY-MM-EAS+1", (2025, 1, 1), 3), ["2025-04-21", "2026-04-06", "2027-03-29"]);
+    assert_eq!(dates_after("YY-MM-OEAS+1", (2025, 1, 1), 3), ["2025-04-21", "2026-04-13", "2027-05-03"]);
+    // Shrove Tuesday, Ascension: offsets cross into other months.
+    assert_eq!(dates_after("YY-MM-EAS-47", (2025, 1, 1), 1), ["2025-03-04"]);
+    assert_eq!(dates_after("YY-MM-EAS+39", (2025, 1, 1), 1), ["2025-05-29"]);
+    // A start after this year's date moves to next year's.
+    assert_eq!(dates_after("YY-MM-EAS-2", (2025, 5, 1), 1), ["2026-04-03"]);
+    // The month rule filters: Easter Sunday only in the years it is in April.
+    assert_eq!(dates_after("YY-04-EAS", (2024, 1, 1), 3), ["2025-04-20", "2026-04-05", "2028-04-16"]);
+    // The ends of the offset range stay in Easter's year for Western Easter...
+    assert_eq!(dates_after("YY-MM-EAS-80", (2008, 1, 1), 1), ["2008-01-03"]);
+    assert_eq!(dates_after("YY-MM-EAS-80", (2284, 12, 31), 1), ["2285-01-01"]);
+    assert_eq!(dates_after("YY-MM-EAS+250", (2038, 1, 1), 1), ["2038-12-31"]);
+    // ...but a late Orthodox Easter can reach into the next year.
+    assert_eq!(dates_after("YY-MM-OEAS+250", (2174, 1, 1), 1), ["2174-01-14"]);
+    // Bounds.
+    assert_eq!(dates_after("YY-MM-EAS-2 @2025-01-01 ..+3Y", (2024, 1, 1), 9), ["2025-04-18", "2026-04-03", "2027-03-26"]);
+}
+
+#[test]
+fn test_easter_adjusted_and_combined() {
+    let tz = chrono_tz::America::New_York;
+    let day = |y, m, d| tz.with_ymd_and_hms(y, m, d, 0, 0, 0).unwrap();
+    // Easter Sunday, moved to the next business day.
+    let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-EAS~NB", WeekendSkipper::new(), day(2025, 1, 1))
+        .build()
+        .unwrap()
+        .take(1)
+        .collect()
+        .unwrap();
+    assert_eq!(got, [Occurrence::AdjustedLater(day(2025, 4, 20), day(2025, 4, 21))]);
+    // Weekdays except Good Friday and Easter Monday.
+    assert_eq!(
+        dates_after("YY-MM-[MON-FRI] ! YY-MM-EAS-2 | YY-MM-EAS+1", (2025, 4, 15), 4),
+        ["2025-04-16", "2025-04-17", "2025-04-22", "2025-04-23"]
+    );
+    // Both as one union.
+    assert_eq!(
+        dates_after("YY-MM-EAS-2 | YY-MM-EAS+1", (2025, 1, 1), 4),
+        ["2025-04-18", "2025-04-21", "2026-04-03", "2026-04-06"]
+    );
+    // With a time.
+    let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after("YY-MM-OEAS-2T09:00:00", WeekendSkipper::new(), day(2026, 1, 1))
+        .build()
+        .unwrap()
+        .take(1)
+        .map(|o| Ok(o.observed().format("%Y-%m-%d %H:%M").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(got, ["2026-04-10 09:00"]);
+}
+
+#[test]
+fn test_easter_parsing() {
+    use crate::date::{DayCycle, Easter, Spec};
+    for spec in ["YY-MM-EAS", "YY-MM-EAS-2", "YY-MM-OEAS+1", "YY-MM-EAS-80~NB", "2025-[03-05]-EAS+250"] {
+        assert_eq!(spec.parse::<Spec>().unwrap().to_string(), spec);
+    }
+    assert_eq!("YY-MM-EAS+0".parse::<Spec>().unwrap().to_string(), "YY-MM-EAS");
+    assert_eq!(
+        "YY-MM-OEAS-2".parse::<Spec>().unwrap().days,
+        DayCycle::Easter { easter: Easter::Orthodox, offset: -2 }
+    );
+    for bad in [
+        "YY-MM-EAS-81",
+        "YY-MM-EAS+251",
+        "YY-MM-EAS+99999999999",
+        "YY-MM-EAS/2W",
+        "YY-MM-EAS+",
+        "YY-MM-EAS+-1",
+        "YY-MM-EASTER",
+        "YY-MM-eas",
+        "YY-MM-EAS2",
+    ] {
+        assert!(bad.parse::<Spec>().is_err(), "{bad} should be rejected");
+    }
+}

@@ -33,7 +33,8 @@ date-spec     = years "-" months "-" days [ weeks ]
 years         = list / %s"YY" / "_" / number %s"Y" [ list ] / number
 months        = list / %s"MM" / "_" / number %s"M" [ list ] / number
 
-days          = weekday-list
+days          = easter
+              / weekday-list
               / list
               / biz-nth
               / weekday "#" occurrence
@@ -52,6 +53,8 @@ occurrence    = %s"L" / number [ %s"L" ]
 biz-nth       = ( %s"BD" / %s"WD" ) "#"
                 ( occurrence / "[" biz-pos *( "," biz-pos ) "]" )
 biz-pos       = %s"L" / number %s"L" / span
+
+easter        = ( %s"OEAS" / %s"EAS" ) [ ( "+" / "-" ) number ]
 
 weeks         = "/" number %s"W" [ list ]
 

@@ -9,7 +9,7 @@
 //! Day rules come in two kinds:
 //!
 //! - *Calendar* rules (`DD`, `15`, `[01,15]`, `L`, `31L`, `31N`, `31O`, `MON`,
-//!   `[MON,FRI]`, `WED#2`, `FRI#L`, `BD#3`, `BD#L`, `8D[1-4]`) are a function of the period
+//!   `[MON,FRI]`, `WED#2`, `FRI#L`, `BD#3`, `BD#L`, `8D[1-4]`, `EAS-2`) are a function of the period
 //!   (and, for `BD#`, the business day calendar): list the matching days and
 //!   take the first one after the cursor.
 //! - *Step* rules (`nD`, `nBD`, `nWD`) advance from the previous occurrence.
@@ -454,6 +454,17 @@ fn calendar_days<BDP: BizDayProcessor>(
             dates.dedup();
             dates.into_iter().map(Occurrence::Exact).collect()
         }
+        // The offset may carry an Easter into a neighbouring year (only
+        // Orthodox Easter can, late in an offset's range): try all three.
+        DayCycle::Easter { easter, offset } => (p.year.saturating_sub(1)..=p.year.saturating_add(1))
+            .filter_map(|year| {
+                let sunday = easter.sunday(year)?;
+                let days = Days::new(u64::from(offset.unsigned_abs()));
+                if *offset < 0 { sunday.checked_sub_days(days) } else { sunday.checked_add_days(days) }
+            })
+            .filter(|d| (first..=last).contains(d))
+            .map(Occurrence::Exact)
+            .collect(),
         DayCycle::NextNth(..) => Vec::new(),
     })
 }

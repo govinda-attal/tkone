@@ -62,11 +62,19 @@ All three components are required. The optional `/WEEKS` suffix keeps only some 
 | `WD#N` / `WD#L` / `WD#NL` / `WD#[…]` | Same as `BD#…`, counting weekdays (Mon–Fri) and ignoring holidays |
 | `[D1,D2,...]` | Enumerated days of month (e.g. `[01,15]`, `[01,10,20,25]`) |
 | `[D1-D2,...]` | Day ranges inside a list (e.g. `[01-10]`, `[01-05,15]`) |
+| `EAS` / `EAS±n` | Western Easter Sunday, or *n* calendar days after (`+`) or before (`-`) it (e.g. `EAS-2` Good Friday, `EAS+1` Easter Monday, `EAS+39` Ascension) |
+| `OEAS` / `OEAS±n` | The same for Orthodox Easter (e.g. `OEAS+1` Orthodox Easter Monday) |
 
 Ranges are only written inside brackets, because `-` also separates the year, month and day.
 They are inclusive and must run forwards (`[06-01]` and `[FRI-MON]` are rejected). When a spec is
 written back out, consecutive values become ranges and lists are sorted: `[MON,TUE,WED,THU,FRI]`
 is shown as `[MON-FRI]`, and `[15,01]` as `[01,15]`.
+
+An Easter rule is one date a year. The offset is -80 to +250 days, which keeps every Western
+Easter date in its own year, and the sign is required (`EAS2` is rejected). The month rule still
+filters: `YY-04-EAS` is Easter Sunday only in the years it falls in April. Easter is computed
+(Gregorian computus for `EAS`, Julian for `OEAS`, given as a Gregorian date), so it needs no
+holiday data and works for any year.
 
 ### Business Day Adjustment (optional)
 
@@ -1340,13 +1348,31 @@ moves into the next month.
 
 ---
 
+### 46. `YY-MM-EAS-2 | YY-MM-EAS+1 | YY-MM-OEAS+1 @2025-01-01 x8` — Easter holidays
+
+Good Friday and Easter Monday, plus Orthodox Easter Monday. In 2025 both Easters fall on
+20 April, so the two Mondays are one date and appear once.
+
+```text
+ 1. 2025-04-18 Fri
+ 2. 2025-04-21 Mon
+ 3. 2026-04-03 Fri
+ 4. 2026-04-06 Mon
+ 5. 2026-04-13 Mon
+ 6. 2027-03-26 Fri
+ 7. 2027-03-29 Mon
+ 8. 2027-05-03 Mon
+```
+
+---
+
 ## Behaviour Notes
 
 ### How a spec is evaluated
 
 The year and month rules pick the **eligible months**; the day rule picks dates inside them.
 
-- **Calendar day rules** (`DD`, `15`, `[01,15]`, `L`, `31L/N/O`, `MON`, `[MON,FRI]`, `WED#2`, `FRI#L`) list the matching days of each eligible month; the next occurrence is the first one after the previous.
+- **Calendar day rules** (`DD`, `15`, `[01,15]`, `L`, `31L/N/O`, `MON`, `[MON,FRI]`, `WED#2`, `FRI#L`, `EAS-2`) list the matching days of each eligible month; the next occurrence is the first one after the previous.
 - **Step day rules** (`nD`, `nBD`, `nWD`) advance from the previous occurrence — see the two notes below.
 
 `nY` / `nM` cadences are aligned to the iterator's start (or the `new_after` cursor).

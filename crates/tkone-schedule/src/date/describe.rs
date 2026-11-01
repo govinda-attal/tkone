@@ -4,6 +4,7 @@
 
 use chrono::Weekday;
 
+use super::easter::Easter;
 use super::spec::{
     BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
     WeekdayOption,
@@ -125,6 +126,20 @@ fn stride(k: u32) -> String {
     format!("every {} month, counted from the start's month", ordinal(k))
 }
 
+/// `"on Easter Sunday"`, `"2 days before Easter Sunday"`, `"1 day after
+/// Orthodox Easter Sunday"`.
+fn easter_day(easter: Easter, offset: i32) -> String {
+    let sunday = match easter {
+        Easter::Western => "Easter Sunday",
+        Easter::Orthodox => "Orthodox Easter Sunday",
+    };
+    match offset {
+        0 => format!("on {sunday}"),
+        n if n < 0 => format!("{} before {sunday}", count(n.unsigned_abs(), "day")),
+        n => format!("{} after {sunday}", count(n.unsigned_abs(), "day")),
+    }
+}
+
 /// A calendar day rule, either "every …" (every matching day of the eligible
 /// months) or "on the …" (selected days of each eligible month), plus a note
 /// on short months.
@@ -195,7 +210,7 @@ fn calendar_days(days: &DayCycle) -> Days {
                 cycle("day", *every, positions)
             }
         )),
-        DayCycle::NextNth(..) => unreachable!("step rules are described separately"),
+        DayCycle::NextNth(..) | DayCycle::Easter { .. } => unreachable!("described separately"),
     }
 }
 
@@ -258,6 +273,16 @@ fn adjustment(adj: &BizDayAdjustment) -> String {
 pub(crate) fn describe(spec: &Spec) -> String {
     let mut out = match &spec.days {
         DayCycle::NextNth(n, unit) => step_days(spec, *n, unit),
+        // One date a year: the month rule only says when it is kept.
+        DayCycle::Easter { easter, offset } => {
+            let mut out = easter_day(*easter, *offset);
+            match months(spec) {
+                Months::All | Months::Stride(1) => {}
+                Months::In(ms) => out += &format!(", when it falls in {ms}"),
+                Months::Stride(k) => out += &format!(", when it falls in {}", stride(k)),
+            }
+            out + &years(spec)
+        }
         days => {
             // For a calendar rule, every month from the start is every month.
             let months = match months(spec) {
@@ -297,6 +322,11 @@ mod tests {
         for (spec, expected) in [
             ("YY-MM-DD", "every day"),
             ("YY-MM-15", "on the 15th of every month"),
+            ("YY-MM-EAS", "on Easter Sunday"),
+            ("YY-MM-EAS-2", "2 days before Easter Sunday"),
+            ("YY-MM-OEAS+1~NB", "1 day after Orthodox Easter Sunday, moved to the next business day when it is not one"),
+            ("YY-04-EAS", "on Easter Sunday, when it falls in April"),
+            ("2025-MM-EAS+39", "39 days after Easter Sunday, in 2025"),
             ("YY-1M-15", "on the 15th of every month"),
             ("YY-3M-15", "on the 15th of every 3rd month, counted from the start's month"),
             ("1Y-3M-15", "on the 15th of every 15th month, counted from the start's month"),

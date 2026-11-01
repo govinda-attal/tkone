@@ -44,6 +44,7 @@ Read it left to right as "which years, which months, which days".
 | Short months | `31L` · `31N` · `31O` | the 31st, or: the last day · the 1st of next month · overflow into next month |
 | Weekdays | `MON` · `[MON,FRI]` · `[MON-FRI]` · `WED#2` · `FRI#L` · `THU#2L` | every Monday · Mondays and Fridays · Monday to Friday · 2nd Wednesday · last Friday · 2nd-to-last Thursday |
 | Business days | `BD#3` · `BD#L` · `BD#2L` · `BD#[1-5]` · `BD#[1,L]` | 3rd business day · last · 2nd-to-last · first five · first and last |
+| Easter | `EAS` · `EAS-2` · `EAS+1` · `OEAS+1` | Easter Sunday · Good Friday · Easter Monday · Orthodox Easter Monday |
 | Steps | `7D` · `5BD` · `3WD` | every 7 days · every 5 business days · every 3 weekdays |
 
 Ranges such as `[01-06]` are written inside brackets, because `-` also separates the parts.
@@ -324,6 +325,7 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Every 3 months, counted from the start | ✗ | by hand | ✓ | ✓ `3M` |
 | Every other week on several weekdays | ✗ | ✗ | ✓ | ✓ `[TUE,THU]/2W` |
 | Rotations ("4 on, 4 off", weeks 1–2 of 4) | ✗ | ✗ | partly | ✓ `8D[1-4]`, `/4W[1,2]` |
+| Easter and the holidays around it | ✗ | ✗ | ✗ | ✓ `EAS-2`, `OEAS+1` |
 | **Business days** | | | | |
 | Nth business day of the month (with holidays) | ✗ | ✗ | ✗ | ✓ `BD#3`, `BD#[1-5]` |
 | Move to the next business day (with holidays) | ✗ | ✗ | ✗ | ✓ `~NB` |
@@ -378,6 +380,8 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Reminders at 09:00, 12:00 and 17:00 on the 2nd business day | `YY-MM-BD#2T[09,12,17]:00:00` |
 | Overnight batch at 02:00 on weekdays, except 25 December and 1 January | `YY-MM-[MON-FRI]T02:00:00 ! YY-12-25 \| YY-01-01` |
 | Annual review on 15 June every two years | `2Y-06-15` |
+| Good Friday and Easter Monday | `YY-MM-EAS-2 \| YY-MM-EAS+1` |
+| Weekdays, except Good Friday and Easter Monday | `YY-MM-[MON-FRI] ! YY-MM-EAS-2 \| YY-MM-EAS+1` |
 
 ### Intraday
 
@@ -423,7 +427,9 @@ The format is deliberately small. Some things it leaves out:
   Day *k* of the cycle is the start's weekday plus *k* − 1, so `14D[1,3]` from a Sunday is
   Sunday and Tuesday. With a week cycle instead, `YY-MM-[SUN,TUE]/2W` pairs each Sunday with the
   *following* week's Tuesday, because Sunday ends a Monday-to-Sunday week.
-- **No holiday data.** Holiday calendars are supplied with a schedule, not written in it.
+- **No holiday data.** Holiday calendars are supplied with a schedule, not written in it. A
+  schedule can name Easter-based dates (`YY-MM-EAS-2` is Good Friday), but which days a market
+  closes is the calendar's job.
 
 ---
 

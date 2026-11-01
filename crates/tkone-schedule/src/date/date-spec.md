@@ -152,6 +152,21 @@ containing the start, and the count carries across months and years.
 A week cycle works with any calendar day rule, adjustments and month or year filters, but not
 after a day step (`7D/2W` is rejected).
 
+**Weeks that begin on another day.** The week start only matters for a week cycle with several
+days that include Sunday: `YY-MM-[SUN,TUE]/2W @2025-01-05` gives Sun 5, Tue 14, Sun 19, Tue 28
+January, because each Sunday ends a Monday-to-Sunday week and its Tuesday falls in the next one.
+A single day (`SUN/2W`) and plain weekday lists (`[MON-THU,SUN]`) are not affected. To use a
+week that begins on Sunday, or any other day, count days from a start on that day with
+[positions](#positions-inside-a-cycle): day *k* of the cycle is the start's weekday plus
+*k* − 1.
+
+| Spec | Meaning |
+|------|---------|
+| `YY-MM-14D[1,3] @2025-01-05` | Sunday and Tuesday, every other week (Sun 5, Tue 7, Sun 19, Tue 21, …) |
+| `YY-MM-14D[1-5] @2025-01-05` | Sunday to Thursday, every other week |
+| `YY-MM-21D[1-5] @2025-01-05` | Sunday to Thursday, one week in three |
+| `YY-MM-14D[1-4] @2025-01-03` | Friday to Monday, every other week (the start is a Friday) |
+
 ### Positions inside a cycle
 
 `nY[…]`, `nM[…]` and `nD[…]` pick positions of a cycle counted from the start (1 is the start's

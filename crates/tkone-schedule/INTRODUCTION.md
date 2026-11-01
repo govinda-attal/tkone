@@ -151,6 +151,10 @@ YY-MM-FRI/2W                  every other Friday
 YY-MM-[MON-FRI]/4W[1,2]       weekdays in weeks 1 and 2 of every 4 (two weeks on, two off)
 ```
 
+Where the week begins only matters when a week cycle picks several days that include a Sunday.
+For a week that begins on another day, count days from the start with positions, described
+next; [What it doesn't do](#what-it-doesnt-do-yet) has examples.
+
 Positions do the same for days, months and years: a cycle length, then which positions in each
 cycle are on, counted from the start. This is how rotations and shift patterns are written:
 
@@ -397,11 +401,28 @@ no month end, no business days, and "one month after January 31" is left to the 
 
 The format is deliberately small. Some things it leaves out:
 
-- **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; there is
-  no duration.
+- **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; an
+  occurrence has no length.
 - **One start for every part.** All parts of a `|` combination count from the same start;
   a part can't be offset by a week or a day.
-- **Weeks always run Monday to Sunday.** There is no Sunday-start or ISO week-number rule.
+- **Weeks run Monday to Sunday.** There is no setting for another first day of the week, and no
+  ISO week numbers. Neither is needed for most schedules. A weekday list picks days by name in
+  any week (`[MON-THU,SUN]` is a Sunday-to-Thursday working week), and a single day every other
+  week (`SUN/2W`) is the same whichever day the week begins. Only a week cycle with several days
+  including Sunday depends on it. For that, count days from a start on the first day of your
+  week: a 14-day cycle is a two-week cycle that begins on the start's weekday.
+
+  | Week beginning on Sunday (or any other day) | Schedule |
+  |---------------------------------------------|----------|
+  | Sunday and Tuesday, every other week | `YY-MM-14D[1,3] @2025-01-05` (a Sunday) |
+  | Sunday to Thursday, every other week | `YY-MM-14D[1-5] @2025-01-05` |
+  | Sunday to Thursday, one week in three | `YY-MM-21D[1-5] @2025-01-05` |
+  | Friday to Monday, every other week | `YY-MM-14D[1-4] @2025-01-03` (a Friday) |
+  | Sunday and Tuesday at 09:00 New York time, every other week | `YY-MM-14D[1,3]T09:00:00 @2025-01-05[America/New_York]` |
+
+  Day *k* of the cycle is the start's weekday plus *k* − 1, so `14D[1,3]` from a Sunday is
+  Sunday and Tuesday. With a week cycle instead, `YY-MM-[SUN,TUE]/2W` pairs each Sunday with the
+  *following* week's Tuesday, because Sunday ends a Monday-to-Sunday week.
 - **No holiday data.** Holiday calendars are supplied with a schedule, not written in it.
 
 ---

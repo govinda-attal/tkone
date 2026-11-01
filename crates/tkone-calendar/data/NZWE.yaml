@@ -1,0 +1,93 @@
+# Wellington: New Zealand's public holidays and Wellington Anniversary Day. A holiday on
+# a weekend moves to the next free weekday ("Mondayised"). Waitangi Day and
+# Anzac Day move only from 2014, and to the Monday even when it is already a
+# holiday (Anzac Day and Easter Monday share 26 April 2038). The calendar ends in 2052, the last year of
+# Matariki in the Act.
+code: NZWE
+name: Wellington
+kind: settlement
+zone: Pacific/Auckland
+weekend: [SAT, SUN]
+valid_from: "1990-01-01"
+valid_until: "2052-12-31"
+confirmed_until: "2027-12-31"   # checked against employment.govt.nz, 2010-2027
+substitute: next-free-weekday
+sources:
+  - Holidays Act 2003 (New Zealand)
+  - https://www.employment.govt.nz/leave-and-holidays/public-holidays/public-holidays-and-anniversary-dates
+  - https://www.employment.govt.nz/leave-and-holidays/public-holidays/previous-years-public-holidays-and-anniversary-dates
+  - Te Kāhui o Matariki Public Holiday Act 2022, Schedule 1
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Day after New Year's Day
+    rule: "YY-01-02"
+  - name: Wellington Anniversary Day
+    rule: "YY-01-MON ! YY-01-[01-18,26-31]"
+    note: The Monday nearest 22 January.
+  - name: Waitangi Day
+    rule: "YY-02-06"
+    until: 2013
+    substitute: none
+  - name: Waitangi Day
+    rule: "YY-02-06"
+    from: 2014
+    substitute: next-weekday
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+  - name: Easter Monday
+    rule: "YY-MM-EAS+1"
+  - name: Anzac Day
+    rule: "YY-04-25"
+    until: 2013
+    substitute: none
+  - name: Anzac Day
+    rule: "YY-04-25"
+    from: 2014
+    substitute: next-weekday
+  - name: King's Birthday
+    rule: "YY-06-MON#1"
+  - name: Matariki
+    source: Te Kāhui o Matariki Public Holiday Act 2022, Schedule 1
+    dates:
+      2022: "2022-06-24"
+      2023: "2023-07-14"
+      2024: "2024-06-28"
+      2025: "2025-06-20"
+      2026: "2026-07-10"
+      2027: "2027-06-25"
+      2028: "2028-07-14"
+      2029: "2029-07-06"
+      2030: "2030-06-21"
+      2031: "2031-07-11"
+      2032: "2032-07-02"
+      2033: "2033-06-24"
+      2034: "2034-07-07"
+      2035: "2035-06-29"
+      2036: "2036-07-18"
+      2037: "2037-07-10"
+      2038: "2038-06-25"
+      2039: "2039-07-15"
+      2040: "2040-07-06"
+      2041: "2041-07-19"
+      2042: "2042-07-11"
+      2043: "2043-07-03"
+      2044: "2044-06-24"
+      2045: "2045-07-07"
+      2046: "2046-06-29"
+      2047: "2047-07-19"
+      2048: "2048-07-03"
+      2049: "2049-06-25"
+      2050: "2050-07-15"
+      2051: "2051-06-30"
+      2052: "2052-06-21"
+  - name: Labour Day
+    rule: "YY-10-MON#4"
+  - name: Christmas Day
+    rule: "YY-12-25"
+  - name: Boxing Day
+    rule: "YY-12-26"
+  - name: Queen Elizabeth II Memorial Day
+    dates: ["2022-09-26"]
+    source: Queen Elizabeth II Memorial Day Act 2022 (listed on employment.govt.nz's previous years page)

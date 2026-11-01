@@ -1,0 +1,40 @@
+# T2 (TARGET2 until 2023): the euro area's payment system, run by the
+# Eurosystem. Its closing days are the settlement holidays for euro payments.
+# The six days apply "until further notice" (ECB, 14 December 2000); the 2023
+# move to T2 did not change them.
+code: EUTA
+name: T2 / TARGET2 (euro payments)
+kind: settlement
+zone: Europe/Berlin
+weekend: [SAT, SUN]
+valid_from: "1999-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2026-12-31"
+substitute: none
+sources:
+  - https://www.ecb.europa.eu/paym/target/t2/html/index.en.html
+  - https://www.ecb.europa.eu/press/pr/date/2000/html/pr001214_4.en.html
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+    from: 2000
+  - name: Easter Monday
+    rule: "YY-MM-EAS+1"
+    from: 2000
+  - name: Labour Day
+    rule: "YY-05-01"
+    from: 2000
+  - name: Christmas Day
+    rule: "YY-12-25"
+  - name: Christmas Holiday
+    rule: "YY-12-26"
+    from: 2000
+  - name: New Year's Eve (millennium)
+    dates: ["1999-12-31"]
+    source: https://www.ecb.europa.eu/press/pr/date/1999/html/pr990331.en.html
+  - name: New Year's Eve (euro cash changeover)
+    dates: ["2001-12-31"]
+    source: https://www.ecb.europa.eu/press/pr/date/2000/html/pr000525_2.en.html

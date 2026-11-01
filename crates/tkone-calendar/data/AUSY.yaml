@@ -1,0 +1,46 @@
+# Sydney: the days banks in Sydney do not settle, New South Wales' bank
+# holidays. A holiday on a weekend moves to the next free weekday, except
+# Anzac Day.
+code: AUSY
+name: Sydney
+kind: settlement
+zone: Australia/Sydney
+weekend: [SAT, SUN]
+valid_from: "1990-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2027-12-31"   # checked against nsw.gov.au, 2023-2027
+substitute: next-free-weekday
+sources:
+  - Banks and Bank Holidays Act 1912 (NSW)
+  - Public Holidays Act 2010 (NSW)
+  - https://www.nsw.gov.au/about-nsw/public-holidays
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Australia Day
+    rule: "YY-01-26"
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+  - name: Easter Monday
+    rule: "YY-MM-EAS+1"
+  - name: Anzac Day
+    rule: "YY-04-25"
+    substitute: none
+    note: Not moved off a weekend by law; 2026 and 2027 have additional days by order.
+  - name: Anzac Day additional day
+    dates: ["2026-04-27", "2027-04-26"]
+    source: Public Holidays Amendment (Anzac Day) Order 2026, a two-year trial (https://www.nsw.gov.au/about-nsw/public-holidays)
+  - name: King's Birthday
+    rule: "YY-06-MON#2"
+  - name: Bank Holiday
+    rule: "YY-08-MON#1"
+  - name: Labour Day
+    rule: "YY-10-MON#1"
+  - name: Christmas Day
+    rule: "YY-12-25"
+  - name: Boxing Day
+    rule: "YY-12-26"
+  - name: National Day of Mourning for Queen Elizabeth II
+    dates: ["2022-09-22"]
+    source: Proclamation by the Governor-General, September 2022

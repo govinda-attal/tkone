@@ -1,0 +1,40 @@
+[package]
+name        = "tkone-calendar"
+version.workspace   = true
+edition.workspace   = true
+license.workspace   = true
+authors.workspace   = true
+repository.workspace = true
+homepage.workspace  = true
+description = "Holiday calendars for tkone-schedule: business days from schedule rules and published dates, with sources."
+keywords    = ["holiday", "calendar", "business-day", "schedule", "finance"]
+categories  = ["date-and-time"]
+readme      = "README.md"
+
+[features]
+default = []
+# Load calendars from YAML at runtime, and build the compile tool.
+yaml = ["dep:serde_yaml_ng"]
+
+[dependencies]
+chrono         = { workspace = true }
+chrono-tz      = { workspace = true }
+fallible-iterator = { workspace = true }
+regex          = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+serde_yaml_ng  = { workspace = true, optional = true }
+thiserror      = { workspace = true }
+tkone-schedule = { workspace = true }
+
+[[bin]]
+name = "tkone-calendar-compile"
+path = "tools/compile.rs"
+required-features = ["yaml"]
+
+[lints]
+workspace = true
+
+[[example]]
+name = "dump"
+required-features = ["yaml"]

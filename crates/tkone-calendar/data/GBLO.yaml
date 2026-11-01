@@ -1,0 +1,76 @@
+# London: bank holidays in England and Wales, the days banks in London do not
+# settle. The London Stock Exchange closes on the same days.
+code: GBLO
+name: London (England and Wales bank holidays)
+kind: settlement
+zone: Europe/London
+weekend: [SAT, SUN]
+valid_from: "1990-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2028-12-31"   # checked against https://www.gov.uk/bank-holidays.json
+substitute: next-free-weekday
+sources:
+  - Banking and Financial Dealings Act 1971, Schedule 1
+  - https://www.gov.uk/bank-holidays
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+  - name: Easter Monday
+    rule: "YY-MM-EAS+1"
+
+  - name: Early May bank holiday
+    rule: "YY-05-MON#1"
+    except: ["1995-05-01", "2020-05-04"]
+    source: Royal Proclamations moving it to VE Day (8 May) for the 50th and 75th anniversaries
+  - name: Early May bank holiday (VE Day)
+    dates: ["1995-05-08"]
+    source: Royal Proclamation of 22 June 1994 (quoted in https://www.edms.org.uk/1994-95/871.htm)
+  - name: Early May bank holiday (VE Day)
+    dates: ["2020-05-08"]
+    source: https://www.gov.uk/bank-holidays.json
+
+  - name: Spring bank holiday
+    rule: "YY-05-MON#L"
+    except: ["2002-05-27", "2012-05-28", "2022-05-30"]
+    source: Royal Proclamations moving it next to the Golden, Diamond and Platinum Jubilee holidays
+  - name: Spring bank holiday
+    dates: ["2002-06-04"]
+    source: London Gazette 56043, 28 November 2000 (https://www.thegazette.co.uk/notice/L-56043-1001)
+  - name: Spring bank holiday
+    dates: ["2012-06-04"]
+    source: London Gazette 59806, 9 June 2011 (https://www.thegazette.co.uk/notice/L-59806-1377705)
+  - name: Spring bank holiday
+    dates: ["2022-06-02"]
+    source: https://www.gov.uk/bank-holidays.json
+
+  - name: Summer bank holiday
+    rule: "YY-08-MON#L"
+  - name: Christmas Day
+    rule: "YY-12-25"
+  - name: Boxing Day
+    rule: "YY-12-26"
+
+  - name: Millennium celebrations
+    dates: ["1999-12-31"]
+    source: London Gazette 55541, 2 July 1999 (https://www.thegazette.co.uk/notice/L-55541-3)
+  - name: Golden Jubilee of Queen Elizabeth II
+    dates: ["2002-06-03"]
+    source: London Gazette 56043, 28 November 2000 (https://www.thegazette.co.uk/notice/L-56043-1001)
+  - name: Wedding of Prince William and Catherine Middleton
+    dates: ["2011-04-29"]
+    source: London Gazette (https://www.thegazette.co.uk/notice/L-59637-1268656)
+  - name: Diamond Jubilee of Queen Elizabeth II
+    dates: ["2012-06-05"]
+    source: London Gazette 59806, 9 June 2011 (https://www.thegazette.co.uk/notice/L-59806-1377705)
+  - name: Platinum Jubilee of Queen Elizabeth II
+    dates: ["2022-06-03"]
+    source: https://www.gov.uk/bank-holidays.json
+  - name: State Funeral of Queen Elizabeth II
+    dates: ["2022-09-19"]
+    source: https://www.gov.uk/bank-holidays.json
+  - name: Coronation of King Charles III
+    dates: ["2023-05-08"]
+    source: https://www.gov.uk/bank-holidays.json

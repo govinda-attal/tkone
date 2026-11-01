@@ -1,0 +1,32 @@
+# Checks the holiday calendars: the data is valid and compiled, the crate's
+# tests pass, and every calendar matches QuantLib's or explains why not.
+name: calendar
+
+on:
+  push:
+    paths: ["crates/tkone-calendar/**", "crates/tkone-schedule/src/**", ".github/workflows/calendar.yml"]
+  pull_request:
+    paths: ["crates/tkone-calendar/**", "crates/tkone-schedule/src/**", ".github/workflows/calendar.yml"]
+
+jobs:
+  check:
+    name: Data valid, compiled and tested
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: compiled/calendars.json is up to date
+        run: cargo run -p tkone-calendar --features yaml --bin tkone-calendar-compile -- --check
+      - run: cargo test -p tkone-calendar --features yaml
+
+  quantlib:
+    name: Matches QuantLib
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install QuantLib==1.44  # bump deliberately: a new release can change calendars
+      - run: python crates/tkone-calendar/tools/compare_quantlib.py

@@ -1,0 +1,996 @@
+[
+  {
+    "code": "AUSY",
+    "name": "Sydney",
+    "kind": "settlement",
+    "zone": "Australia/Sydney",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2027-12-31",
+    "substitute": "next-free-weekday",
+    "sources": [
+      "Banks and Bank Holidays Act 1912 (NSW)",
+      "Public Holidays Act 2010 (NSW)",
+      "https://www.nsw.gov.au/about-nsw/public-holidays"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Australia Day",
+        "rule": "YY-01-26"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Easter Monday",
+        "rule": "YY-MM-EAS+1"
+      },
+      {
+        "name": "Anzac Day",
+        "rule": "YY-04-25",
+        "substitute": "none",
+        "note": "Not moved off a weekend by law; 2026 and 2027 have additional days by order."
+      },
+      {
+        "name": "Anzac Day additional day",
+        "dates": [
+          "2026-04-27",
+          "2027-04-26"
+        ],
+        "source": "Public Holidays Amendment (Anzac Day) Order 2026, a two-year trial (https://www.nsw.gov.au/about-nsw/public-holidays)"
+      },
+      {
+        "name": "King's Birthday",
+        "rule": "YY-06-MON#2"
+      },
+      {
+        "name": "Bank Holiday",
+        "rule": "YY-08-MON#1"
+      },
+      {
+        "name": "Labour Day",
+        "rule": "YY-10-MON#1"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Boxing Day",
+        "rule": "YY-12-26"
+      },
+      {
+        "name": "National Day of Mourning for Queen Elizabeth II",
+        "dates": [
+          "2022-09-22"
+        ],
+        "source": "Proclamation by the Governor-General, September 2022"
+      }
+    ]
+  },
+  {
+    "code": "CATO",
+    "name": "Toronto",
+    "kind": "settlement",
+    "zone": "America/Toronto",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2026-12-31",
+    "substitute": "next-free-weekday",
+    "sources": [
+      "Bills of Exchange Act (Canada), section 42 (https://laws-lois.justice.gc.ca/eng/acts/B-4/page-2.html)",
+      "https://www.ontario.ca/document/your-guide-employment-standards-act-0/public-holidays",
+      "https://www.payments.ca/systems-services/payment-systems/system-closure-schedule",
+      "https://nbc.ca/contact-us/bank-holiday-calendar.html"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Family Day",
+        "rule": "YY-02-MON#3",
+        "from": 2008
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Victoria Day",
+        "rule": "YY-05-MON ! YY-05-[01-17,25-31]",
+        "note": "The Monday before 25 May."
+      },
+      {
+        "name": "Canada Day",
+        "rule": "YY-07-01"
+      },
+      {
+        "name": "Civic Holiday",
+        "rule": "YY-08-MON#1"
+      },
+      {
+        "name": "Labour Day",
+        "rule": "YY-09-MON#1"
+      },
+      {
+        "name": "National Day for Truth and Reconciliation",
+        "rule": "YY-09-30",
+        "from": 2021
+      },
+      {
+        "name": "Thanksgiving",
+        "rule": "YY-10-MON#2"
+      },
+      {
+        "name": "Remembrance Day",
+        "rule": "YY-11-11"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Boxing Day",
+        "rule": "YY-12-26"
+      }
+    ]
+  },
+  {
+    "code": "EUTA",
+    "name": "T2 / TARGET2 (euro payments)",
+    "kind": "settlement",
+    "zone": "Europe/Berlin",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1999-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2026-12-31",
+    "sources": [
+      "https://www.ecb.europa.eu/paym/target/t2/html/index.en.html",
+      "https://www.ecb.europa.eu/press/pr/date/2000/html/pr001214_4.en.html"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2",
+        "from": 2000
+      },
+      {
+        "name": "Easter Monday",
+        "rule": "YY-MM-EAS+1",
+        "from": 2000
+      },
+      {
+        "name": "Labour Day",
+        "rule": "YY-05-01",
+        "from": 2000
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Christmas Holiday",
+        "rule": "YY-12-26",
+        "from": 2000
+      },
+      {
+        "name": "New Year's Eve (millennium)",
+        "dates": [
+          "1999-12-31"
+        ],
+        "source": "https://www.ecb.europa.eu/press/pr/date/1999/html/pr990331.en.html"
+      },
+      {
+        "name": "New Year's Eve (euro cash changeover)",
+        "dates": [
+          "2001-12-31"
+        ],
+        "source": "https://www.ecb.europa.eu/press/pr/date/2000/html/pr000525_2.en.html"
+      }
+    ]
+  },
+  {
+    "code": "GBLO",
+    "name": "London (England and Wales bank holidays)",
+    "kind": "settlement",
+    "zone": "Europe/London",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2028-12-31",
+    "substitute": "next-free-weekday",
+    "sources": [
+      "Banking and Financial Dealings Act 1971, Schedule 1",
+      "https://www.gov.uk/bank-holidays"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Easter Monday",
+        "rule": "YY-MM-EAS+1"
+      },
+      {
+        "name": "Early May bank holiday",
+        "rule": "YY-05-MON#1",
+        "except": [
+          "1995-05-01",
+          "2020-05-04"
+        ],
+        "source": "Royal Proclamations moving it to VE Day (8 May) for the 50th and 75th anniversaries"
+      },
+      {
+        "name": "Early May bank holiday (VE Day)",
+        "dates": [
+          "1995-05-08"
+        ],
+        "source": "Royal Proclamation of 22 June 1994 (quoted in https://www.edms.org.uk/1994-95/871.htm)"
+      },
+      {
+        "name": "Early May bank holiday (VE Day)",
+        "dates": [
+          "2020-05-08"
+        ],
+        "source": "https://www.gov.uk/bank-holidays.json"
+      },
+      {
+        "name": "Spring bank holiday",
+        "rule": "YY-05-MON#L",
+        "except": [
+          "2002-05-27",
+          "2012-05-28",
+          "2022-05-30"
+        ],
+        "source": "Royal Proclamations moving it next to the Golden, Diamond and Platinum Jubilee holidays"
+      },
+      {
+        "name": "Spring bank holiday",
+        "dates": [
+          "2002-06-04"
+        ],
+        "source": "London Gazette 56043, 28 November 2000 (https://www.thegazette.co.uk/notice/L-56043-1001)"
+      },
+      {
+        "name": "Spring bank holiday",
+        "dates": [
+          "2012-06-04"
+        ],
+        "source": "London Gazette 59806, 9 June 2011 (https://www.thegazette.co.uk/notice/L-59806-1377705)"
+      },
+      {
+        "name": "Spring bank holiday",
+        "dates": [
+          "2022-06-02"
+        ],
+        "source": "https://www.gov.uk/bank-holidays.json"
+      },
+      {
+        "name": "Summer bank holiday",
+        "rule": "YY-08-MON#L"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Boxing Day",
+        "rule": "YY-12-26"
+      },
+      {
+        "name": "Millennium celebrations",
+        "dates": [
+          "1999-12-31"
+        ],
+        "source": "London Gazette 55541, 2 July 1999 (https://www.thegazette.co.uk/notice/L-55541-3)"
+      },
+      {
+        "name": "Golden Jubilee of Queen Elizabeth II",
+        "dates": [
+          "2002-06-03"
+        ],
+        "source": "London Gazette 56043, 28 November 2000 (https://www.thegazette.co.uk/notice/L-56043-1001)"
+      },
+      {
+        "name": "Wedding of Prince William and Catherine Middleton",
+        "dates": [
+          "2011-04-29"
+        ],
+        "source": "London Gazette (https://www.thegazette.co.uk/notice/L-59637-1268656)"
+      },
+      {
+        "name": "Diamond Jubilee of Queen Elizabeth II",
+        "dates": [
+          "2012-06-05"
+        ],
+        "source": "London Gazette 59806, 9 June 2011 (https://www.thegazette.co.uk/notice/L-59806-1377705)"
+      },
+      {
+        "name": "Platinum Jubilee of Queen Elizabeth II",
+        "dates": [
+          "2022-06-03"
+        ],
+        "source": "https://www.gov.uk/bank-holidays.json"
+      },
+      {
+        "name": "State Funeral of Queen Elizabeth II",
+        "dates": [
+          "2022-09-19"
+        ],
+        "source": "https://www.gov.uk/bank-holidays.json"
+      },
+      {
+        "name": "Coronation of King Charles III",
+        "dates": [
+          "2023-05-08"
+        ],
+        "source": "https://www.gov.uk/bank-holidays.json"
+      }
+    ]
+  },
+  {
+    "code": "NZAU",
+    "name": "Auckland",
+    "kind": "settlement",
+    "zone": "Pacific/Auckland",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2052-12-31",
+    "confirmed_until": "2027-12-31",
+    "substitute": "next-free-weekday",
+    "sources": [
+      "Holidays Act 2003 (New Zealand)",
+      "https://www.employment.govt.nz/leave-and-holidays/public-holidays/public-holidays-and-anniversary-dates",
+      "https://www.employment.govt.nz/leave-and-holidays/public-holidays/previous-years-public-holidays-and-anniversary-dates",
+      "Te Kāhui o Matariki Public Holiday Act 2022, Schedule 1"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Day after New Year's Day",
+        "rule": "YY-01-02"
+      },
+      {
+        "name": "Auckland Anniversary Day",
+        "rule": "YY-01-MON | YY-02-01 ! YY-01-[01-25] | YY-02-[TUE-SUN]",
+        "note": "The Monday nearest 29 January, which can be 1 February."
+      },
+      {
+        "name": "Waitangi Day",
+        "rule": "YY-02-06",
+        "until": 2013,
+        "substitute": "none"
+      },
+      {
+        "name": "Waitangi Day",
+        "rule": "YY-02-06",
+        "from": 2014,
+        "substitute": "next-weekday"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Easter Monday",
+        "rule": "YY-MM-EAS+1"
+      },
+      {
+        "name": "Anzac Day",
+        "rule": "YY-04-25",
+        "until": 2013,
+        "substitute": "none"
+      },
+      {
+        "name": "Anzac Day",
+        "rule": "YY-04-25",
+        "from": 2014,
+        "substitute": "next-weekday"
+      },
+      {
+        "name": "King's Birthday",
+        "rule": "YY-06-MON#1"
+      },
+      {
+        "name": "Matariki",
+        "dates": {
+          "2022": "2022-06-24",
+          "2023": "2023-07-14",
+          "2024": "2024-06-28",
+          "2025": "2025-06-20",
+          "2026": "2026-07-10",
+          "2027": "2027-06-25",
+          "2028": "2028-07-14",
+          "2029": "2029-07-06",
+          "2030": "2030-06-21",
+          "2031": "2031-07-11",
+          "2032": "2032-07-02",
+          "2033": "2033-06-24",
+          "2034": "2034-07-07",
+          "2035": "2035-06-29",
+          "2036": "2036-07-18",
+          "2037": "2037-07-10",
+          "2038": "2038-06-25",
+          "2039": "2039-07-15",
+          "2040": "2040-07-06",
+          "2041": "2041-07-19",
+          "2042": "2042-07-11",
+          "2043": "2043-07-03",
+          "2044": "2044-06-24",
+          "2045": "2045-07-07",
+          "2046": "2046-06-29",
+          "2047": "2047-07-19",
+          "2048": "2048-07-03",
+          "2049": "2049-06-25",
+          "2050": "2050-07-15",
+          "2051": "2051-06-30",
+          "2052": "2052-06-21"
+        },
+        "source": "Te Kāhui o Matariki Public Holiday Act 2022, Schedule 1"
+      },
+      {
+        "name": "Labour Day",
+        "rule": "YY-10-MON#4"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Boxing Day",
+        "rule": "YY-12-26"
+      },
+      {
+        "name": "Queen Elizabeth II Memorial Day",
+        "dates": [
+          "2022-09-26"
+        ],
+        "source": "Queen Elizabeth II Memorial Day Act 2022 (listed on employment.govt.nz's previous years page)"
+      }
+    ]
+  },
+  {
+    "code": "NZWE",
+    "name": "Wellington",
+    "kind": "settlement",
+    "zone": "Pacific/Auckland",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2052-12-31",
+    "confirmed_until": "2027-12-31",
+    "substitute": "next-free-weekday",
+    "sources": [
+      "Holidays Act 2003 (New Zealand)",
+      "https://www.employment.govt.nz/leave-and-holidays/public-holidays/public-holidays-and-anniversary-dates",
+      "https://www.employment.govt.nz/leave-and-holidays/public-holidays/previous-years-public-holidays-and-anniversary-dates",
+      "Te Kāhui o Matariki Public Holiday Act 2022, Schedule 1"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Day after New Year's Day",
+        "rule": "YY-01-02"
+      },
+      {
+        "name": "Wellington Anniversary Day",
+        "rule": "YY-01-MON ! YY-01-[01-18,26-31]",
+        "note": "The Monday nearest 22 January."
+      },
+      {
+        "name": "Waitangi Day",
+        "rule": "YY-02-06",
+        "until": 2013,
+        "substitute": "none"
+      },
+      {
+        "name": "Waitangi Day",
+        "rule": "YY-02-06",
+        "from": 2014,
+        "substitute": "next-weekday"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Easter Monday",
+        "rule": "YY-MM-EAS+1"
+      },
+      {
+        "name": "Anzac Day",
+        "rule": "YY-04-25",
+        "until": 2013,
+        "substitute": "none"
+      },
+      {
+        "name": "Anzac Day",
+        "rule": "YY-04-25",
+        "from": 2014,
+        "substitute": "next-weekday"
+      },
+      {
+        "name": "King's Birthday",
+        "rule": "YY-06-MON#1"
+      },
+      {
+        "name": "Matariki",
+        "dates": {
+          "2022": "2022-06-24",
+          "2023": "2023-07-14",
+          "2024": "2024-06-28",
+          "2025": "2025-06-20",
+          "2026": "2026-07-10",
+          "2027": "2027-06-25",
+          "2028": "2028-07-14",
+          "2029": "2029-07-06",
+          "2030": "2030-06-21",
+          "2031": "2031-07-11",
+          "2032": "2032-07-02",
+          "2033": "2033-06-24",
+          "2034": "2034-07-07",
+          "2035": "2035-06-29",
+          "2036": "2036-07-18",
+          "2037": "2037-07-10",
+          "2038": "2038-06-25",
+          "2039": "2039-07-15",
+          "2040": "2040-07-06",
+          "2041": "2041-07-19",
+          "2042": "2042-07-11",
+          "2043": "2043-07-03",
+          "2044": "2044-06-24",
+          "2045": "2045-07-07",
+          "2046": "2046-06-29",
+          "2047": "2047-07-19",
+          "2048": "2048-07-03",
+          "2049": "2049-06-25",
+          "2050": "2050-07-15",
+          "2051": "2051-06-30",
+          "2052": "2052-06-21"
+        },
+        "source": "Te Kāhui o Matariki Public Holiday Act 2022, Schedule 1"
+      },
+      {
+        "name": "Labour Day",
+        "rule": "YY-10-MON#4"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Boxing Day",
+        "rule": "YY-12-26"
+      },
+      {
+        "name": "Queen Elizabeth II Memorial Day",
+        "dates": [
+          "2022-09-26"
+        ],
+        "source": "Queen Elizabeth II Memorial Day Act 2022 (listed on employment.govt.nz's previous years page)"
+      }
+    ]
+  },
+  {
+    "code": "USNY",
+    "name": "New York (Federal Reserve holidays)",
+    "kind": "settlement",
+    "zone": "America/New_York",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2030-12-31",
+    "substitute": "sunday-to-monday",
+    "sources": [
+      "https://www.federalreserve.gov/aboutthefed/k8.htm",
+      "https://www.frbservices.org/about/holiday-schedules",
+      "5 U.S.C. 6103 (federal holidays)"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Birthday of Martin Luther King, Jr.",
+        "rule": "YY-01-MON#3"
+      },
+      {
+        "name": "Washington's Birthday",
+        "rule": "YY-02-MON#3"
+      },
+      {
+        "name": "Memorial Day",
+        "rule": "YY-05-MON#L"
+      },
+      {
+        "name": "Juneteenth National Independence Day",
+        "rule": "YY-06-19",
+        "from": 2022,
+        "note": "A federal holiday from 2021; the Federal Reserve observes it from 2022."
+      },
+      {
+        "name": "Independence Day",
+        "rule": "YY-07-04"
+      },
+      {
+        "name": "Labor Day",
+        "rule": "YY-09-MON#1"
+      },
+      {
+        "name": "Columbus Day",
+        "rule": "YY-10-MON#2"
+      },
+      {
+        "name": "Veterans Day",
+        "rule": "YY-11-11"
+      },
+      {
+        "name": "Thanksgiving Day",
+        "rule": "YY-11-THU#4"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      }
+    ]
+  },
+  {
+    "code": "XNYS",
+    "name": "New York Stock Exchange",
+    "kind": "exchange",
+    "zone": "America/New_York",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1990-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2028-12-31",
+    "substitute": "nearest-weekday",
+    "sources": [
+      "NYSE Rule 7.2 (holidays)",
+      "https://www.nyse.com/markets/hours-calendars"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01",
+        "substitute": "sunday-to-monday"
+      },
+      {
+        "name": "Martin Luther King, Jr. Day",
+        "rule": "YY-01-MON#3",
+        "from": 1998
+      },
+      {
+        "name": "Washington's Birthday",
+        "rule": "YY-02-MON#3"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Memorial Day",
+        "rule": "YY-05-MON#L"
+      },
+      {
+        "name": "Juneteenth National Independence Day",
+        "rule": "YY-06-19",
+        "from": 2022
+      },
+      {
+        "name": "Independence Day",
+        "rule": "YY-07-04"
+      },
+      {
+        "name": "Labor Day",
+        "rule": "YY-09-MON#1"
+      },
+      {
+        "name": "Thanksgiving Day",
+        "rule": "YY-11-THU#4"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Funeral of President Richard Nixon",
+        "dates": [
+          "1994-04-27"
+        ],
+        "source": "National day of mourning (https://money.cnn.com/2004/06/07/markets/nyse_reagan/index.htm)"
+      },
+      {
+        "name": "September 11 attacks",
+        "dates": [
+          "2001-09-11",
+          "2001-09-12",
+          "2001-09-13",
+          "2001-09-14"
+        ],
+        "source": "Closed 11-14 September, reopened 17 September (https://mondovisione.com/media-and-resources/news/nyse-honors-attack-victims-and-marks-us-equities-markets-reopening-monday-septem-2011124/)"
+      },
+      {
+        "name": "Funeral of President Ronald Reagan",
+        "dates": [
+          "2004-06-11"
+        ],
+        "source": "NYSE notice (https://mondovisione.com/media-and-resources/news/nyse-to-close-on-friday-june-11-to-observe-national-day-of-mourning-for-presiden-2011124/)"
+      },
+      {
+        "name": "Funeral of President Gerald Ford",
+        "dates": [
+          "2007-01-02"
+        ],
+        "source": "National day of mourning (https://money.cnn.com/2006/12/28/markets/ford_nyse/index.htm)"
+      },
+      {
+        "name": "Hurricane Sandy",
+        "dates": [
+          "2012-10-29",
+          "2012-10-30"
+        ],
+        "source": "Closed 29-30 October, reopened 31 October (https://www.npr.org/2012/10/30/163960661/new-york-stock-exchange-to-reopen-wednesday)"
+      },
+      {
+        "name": "Funeral of President George H. W. Bush",
+        "dates": [
+          "2018-12-05"
+        ],
+        "source": "ICE press release (https://ir.theice.com/press/news-details/2018/New-York-Stock-Exchange-to-Honor-President-George-H-W-Bush/default.aspx)"
+      },
+      {
+        "name": "Funeral of President Jimmy Carter",
+        "dates": [
+          "2025-01-09"
+        ],
+        "source": "ICE press release (https://ir.theice.com/press/news-details/2024/The-New-York-Stock-Exchange-Will-Close-Markets-on-January-9-to-Honor-the-Passing-of-Former-President-Jimmy-Carter-on-National-Day-of-Mourning/default.aspx)"
+      }
+    ]
+  },
+  {
+    "code": "ZAJO",
+    "name": "Johannesburg",
+    "kind": "settlement",
+    "zone": "Africa/Johannesburg",
+    "weekend": [
+      "SAT",
+      "SUN"
+    ],
+    "valid_from": "1995-01-01",
+    "valid_until": "2099-12-31",
+    "confirmed_until": "2026-12-31",
+    "substitute": "sunday-to-monday",
+    "sources": [
+      "Public Holidays Act 36 of 1994 (South Africa)"
+    ],
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "rule": "YY-01-01"
+      },
+      {
+        "name": "Human Rights Day",
+        "rule": "YY-03-21"
+      },
+      {
+        "name": "Good Friday",
+        "rule": "YY-MM-EAS-2"
+      },
+      {
+        "name": "Family Day",
+        "rule": "YY-MM-EAS+1"
+      },
+      {
+        "name": "Freedom Day",
+        "rule": "YY-04-27"
+      },
+      {
+        "name": "Workers' Day",
+        "rule": "YY-05-01"
+      },
+      {
+        "name": "Youth Day",
+        "rule": "YY-06-16"
+      },
+      {
+        "name": "National Women's Day",
+        "rule": "YY-08-09"
+      },
+      {
+        "name": "Heritage Day",
+        "rule": "YY-09-24"
+      },
+      {
+        "name": "Day of Reconciliation",
+        "rule": "YY-12-16"
+      },
+      {
+        "name": "Christmas Day",
+        "rule": "YY-12-25"
+      },
+      {
+        "name": "Day of Goodwill",
+        "rule": "YY-12-26"
+      },
+      {
+        "name": "General election",
+        "dates": [
+          "1999-06-02"
+        ],
+        "source": "Proclamation R. 58 of 1999, Government Gazette 20079 (14 May 1999)"
+      },
+      {
+        "name": "Millennium",
+        "dates": [
+          "1999-12-31"
+        ],
+        "source": "Notice R. 54 of 1999 (https://www.gov.za/documents/notices/public-holidays-act-declaration-31-december-1999-and-2-january-2000-public)"
+      },
+      {
+        "name": "Millennium",
+        "rule": "2000-01-02",
+        "source": "Notice R. 54 of 1999; 2 January 2000 was a Sunday, so the Act made Monday 3 January the day off"
+      },
+      {
+        "name": "Local government election",
+        "dates": [
+          "2000-12-05"
+        ],
+        "source": "Proclamation R. 72 of 2000 (https://www.polity.org.za/polity/govdocs/proclamations/2000/proc072.html)"
+      },
+      {
+        "name": "General election",
+        "dates": [
+          "2004-04-14"
+        ],
+        "source": "Notice R. 17 of 2004, Government Gazette 26075 (19 February 2004)"
+      },
+      {
+        "name": "Local government election",
+        "dates": [
+          "2006-03-01"
+        ],
+        "source": "https://www.gov.za/af/news/1-march-declared-public-holiday-local-government-elections-27-jan-2006"
+      },
+      {
+        "name": "Human Rights Day falling on Good Friday",
+        "dates": [
+          "2008-05-02"
+        ],
+        "source": "Notice R. 7 of 2008 (https://www.gov.za/documents/public-holidays-act-declaration-2-may-2008-public-holiday)"
+      },
+      {
+        "name": "General election",
+        "dates": [
+          "2009-04-22"
+        ],
+        "source": "Notice 17 of 2009 (https://www.sanews.gov.za/node/13044)"
+      },
+      {
+        "name": "Local government election",
+        "dates": [
+          "2011-05-18"
+        ],
+        "source": "https://www.sanews.gov.za/node/15773"
+      },
+      {
+        "name": "Christmas Day falling on a Sunday",
+        "dates": [
+          "2011-12-27"
+        ],
+        "source": "Declared by Acting President Motlanthe, 14 December 2011 (https://www.sanews.gov.za/node/2360)"
+      },
+      {
+        "name": "General election",
+        "dates": [
+          "2014-05-07"
+        ],
+        "source": "https://www.gov.za/ss/documents/notices/public-holidays-act-declaration-seventh-day-may-2014-public-holiday-25-feb-2014"
+      },
+      {
+        "name": "Local government election",
+        "dates": [
+          "2016-08-03"
+        ],
+        "source": "https://www.gov.za/speeches/president-jacob-zuma-declares-3-august-2016-public-holiday-24-jun-2016-0000"
+      },
+      {
+        "name": "Christmas Day falling on a Sunday",
+        "dates": [
+          "2016-12-27"
+        ],
+        "source": "Declared by President Zuma, 19 September 2016 (https://sanews.gov.za/node/32352)"
+      },
+      {
+        "name": "General election",
+        "dates": [
+          "2019-05-08"
+        ],
+        "source": "https://www.gov.za/documents/notices/public-holidays-act-declaration-8-may-2019-public-holiday-26-feb-2019"
+      },
+      {
+        "name": "Local government election",
+        "dates": [
+          "2021-11-01"
+        ],
+        "source": "Proclamation Notice 38 of 2021"
+      },
+      {
+        "name": "Christmas Day falling on a Sunday",
+        "dates": [
+          "2022-12-27"
+        ],
+        "source": "Proclamation Notice 108 of 2022 (https://www.sanews.gov.za/node/61105)"
+      },
+      {
+        "name": "Rugby World Cup victory",
+        "dates": [
+          "2023-12-15"
+        ],
+        "source": "Proclamation Notice 143 of 2023"
+      },
+      {
+        "name": "General election",
+        "dates": [
+          "2024-05-29"
+        ],
+        "source": "Proclamation Notice 157 of 2024"
+      },
+      {
+        "name": "Local government election",
+        "dates": [
+          "2026-11-04"
+        ],
+        "source": "Proclamation Notice 346 of 2026 (https://www.gov.za/news/media-statements/president-cyril-ramaphosa-declares-election-day)"
+      }
+    ]
+  }
+]

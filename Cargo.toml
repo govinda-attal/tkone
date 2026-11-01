@@ -7,6 +7,7 @@ members = [
     "crates/tkone-utils",
     "crates/example-app",
     "crates/tkone-tempo",
+    "crates/tkone-calendar",
 ]
 
 [workspace.package]
@@ -22,6 +23,7 @@ homepage    = "https://github.com/govinda-attal/tkone"
 tkone-schedule        = { path = "crates/tkone-schedule",        version = "0.1.0" }
 tkone-trigger         = { path = "crates/tkone-trigger",         version = "0.1.0" }
 tkone-trigger-macros  = { path = "crates/tkone-trigger-macros",  version = "0.1.0" }
+tkone-calendar        = { path = "crates/tkone-calendar",        version = "0.1.0" }
 
 # ── external ──────────────────────────────────────────────────────────────────
 chrono            = "0.4"
@@ -32,6 +34,9 @@ nom               = "8.0"
 proc-macro2       = "1"
 quote             = "1"
 regex             = "1"
+serde             = { version = "1", features = ["derive"] }
+serde_json        = "1"
+serde_yaml_ng     = "0.10"
 syn               = { version = "2", features = ["full"] }
 thiserror         = "2.0"
 tokio             = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }

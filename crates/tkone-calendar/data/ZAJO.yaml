@@ -1,0 +1,100 @@
+# Johannesburg: South Africa's public holidays, from 1995. A holiday on
+# Sunday moves to the Monday; one on Saturday is not moved.
+code: ZAJO
+name: Johannesburg
+kind: settlement
+zone: Africa/Johannesburg
+weekend: [SAT, SUN]
+valid_from: "1995-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2026-12-31"
+substitute: sunday-to-monday
+sources:
+  - Public Holidays Act 36 of 1994 (South Africa)
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Human Rights Day
+    rule: "YY-03-21"
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+  - name: Family Day
+    rule: "YY-MM-EAS+1"
+  - name: Freedom Day
+    rule: "YY-04-27"
+  - name: Workers' Day
+    rule: "YY-05-01"
+  - name: Youth Day
+    rule: "YY-06-16"
+  - name: National Women's Day
+    rule: "YY-08-09"
+  - name: Heritage Day
+    rule: "YY-09-24"
+  - name: Day of Reconciliation
+    rule: "YY-12-16"
+  - name: Christmas Day
+    rule: "YY-12-25"
+  - name: Day of Goodwill
+    rule: "YY-12-26"
+
+
+  # Days declared public holidays by the President under section 2A of the
+  # Act. Each is checked against the notice or the Presidency's announcement.
+  - name: General election
+    dates: ["1999-06-02"]
+    source: Proclamation R. 58 of 1999, Government Gazette 20079 (14 May 1999)
+  - name: Millennium
+    dates: ["1999-12-31"]
+    source: Notice R. 54 of 1999 (https://www.gov.za/documents/notices/public-holidays-act-declaration-31-december-1999-and-2-january-2000-public)
+  - name: Millennium
+    rule: "2000-01-02"
+    source: Notice R. 54 of 1999; 2 January 2000 was a Sunday, so the Act made Monday 3 January the day off
+  - name: Local government election
+    dates: ["2000-12-05"]
+    source: Proclamation R. 72 of 2000 (https://www.polity.org.za/polity/govdocs/proclamations/2000/proc072.html)
+  - name: General election
+    dates: ["2004-04-14"]
+    source: Notice R. 17 of 2004, Government Gazette 26075 (19 February 2004)
+  - name: Local government election
+    dates: ["2006-03-01"]
+    source: https://www.gov.za/af/news/1-march-declared-public-holiday-local-government-elections-27-jan-2006
+  - name: Human Rights Day falling on Good Friday
+    dates: ["2008-05-02"]
+    source: Notice R. 7 of 2008 (https://www.gov.za/documents/public-holidays-act-declaration-2-may-2008-public-holiday)
+  - name: General election
+    dates: ["2009-04-22"]
+    source: Notice 17 of 2009 (https://www.sanews.gov.za/node/13044)
+  - name: Local government election
+    dates: ["2011-05-18"]
+    source: https://www.sanews.gov.za/node/15773
+  - name: Christmas Day falling on a Sunday
+    dates: ["2011-12-27"]
+    source: Declared by Acting President Motlanthe, 14 December 2011 (https://www.sanews.gov.za/node/2360)
+  - name: General election
+    dates: ["2014-05-07"]
+    source: https://www.gov.za/ss/documents/notices/public-holidays-act-declaration-seventh-day-may-2014-public-holiday-25-feb-2014
+  - name: Local government election
+    dates: ["2016-08-03"]
+    source: https://www.gov.za/speeches/president-jacob-zuma-declares-3-august-2016-public-holiday-24-jun-2016-0000
+  - name: Christmas Day falling on a Sunday
+    dates: ["2016-12-27"]
+    source: Declared by President Zuma, 19 September 2016 (https://sanews.gov.za/node/32352)
+  - name: General election
+    dates: ["2019-05-08"]
+    source: https://www.gov.za/documents/notices/public-holidays-act-declaration-8-may-2019-public-holiday-26-feb-2019
+  - name: Local government election
+    dates: ["2021-11-01"]
+    source: Proclamation Notice 38 of 2021
+  - name: Christmas Day falling on a Sunday
+    dates: ["2022-12-27"]
+    source: Proclamation Notice 108 of 2022 (https://www.sanews.gov.za/node/61105)
+  - name: Rugby World Cup victory
+    dates: ["2023-12-15"]
+    source: Proclamation Notice 143 of 2023
+  - name: General election
+    dates: ["2024-05-29"]
+    source: Proclamation Notice 157 of 2024
+  - name: Local government election
+    dates: ["2026-11-04"]
+    source: Proclamation Notice 346 of 2026 (https://www.gov.za/news/media-statements/president-cyril-ramaphosa-declares-election-day)

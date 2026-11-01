@@ -1,0 +1,51 @@
+# Toronto: the days banks in Toronto are closed: the bank holidays of the
+# Bills of Exchange Act, Ontario's public holidays and the Civic Holiday. A
+# holiday on a weekend moves to the next free weekday.
+#
+# Payments Canada's systems close on fewer days: not on Family Day or the
+# Civic Holiday. Checked against Payments Canada's 2026 closures and National
+# Bank's Ontario holiday calendar for 2025 and 2026. 19 September 2022 (the
+# Queen's funeral) was not a bank holiday: Payments Canada stayed open.
+code: CATO
+name: Toronto
+kind: settlement
+zone: America/Toronto
+weekend: [SAT, SUN]
+valid_from: "1990-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2026-12-31"
+substitute: next-free-weekday
+sources:
+  - Bills of Exchange Act (Canada), section 42 (https://laws-lois.justice.gc.ca/eng/acts/B-4/page-2.html)
+  - https://www.ontario.ca/document/your-guide-employment-standards-act-0/public-holidays
+  - https://www.payments.ca/systems-services/payment-systems/system-closure-schedule
+  - https://nbc.ca/contact-us/bank-holiday-calendar.html
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Family Day
+    rule: "YY-02-MON#3"
+    from: 2008
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+  - name: Victoria Day
+    rule: "YY-05-MON ! YY-05-[01-17,25-31]"
+    note: The Monday before 25 May.
+  - name: Canada Day
+    rule: "YY-07-01"
+  - name: Civic Holiday
+    rule: "YY-08-MON#1"
+  - name: Labour Day
+    rule: "YY-09-MON#1"
+  - name: National Day for Truth and Reconciliation
+    rule: "YY-09-30"
+    from: 2021
+  - name: Thanksgiving
+    rule: "YY-10-MON#2"
+  - name: Remembrance Day
+    rule: "YY-11-11"
+  - name: Christmas Day
+    rule: "YY-12-25"
+  - name: Boxing Day
+    rule: "YY-12-26"

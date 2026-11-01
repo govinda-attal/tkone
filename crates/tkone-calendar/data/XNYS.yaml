@@ -1,0 +1,62 @@
+# The New York Stock Exchange. A holiday on Saturday closes the Friday before,
+# and one on Sunday the Monday after, except New Year's Day on a Saturday,
+# which closes nothing (the Friday is the last trading day of the year).
+code: XNYS
+name: New York Stock Exchange
+kind: exchange
+zone: America/New_York
+weekend: [SAT, SUN]
+valid_from: "1990-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2028-12-31"   # checked against nyse.com, 2026-2028
+substitute: nearest-weekday
+sources:
+  - NYSE Rule 7.2 (holidays)
+  - https://www.nyse.com/markets/hours-calendars
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+    substitute: sunday-to-monday
+  - name: Martin Luther King, Jr. Day
+    rule: "YY-01-MON#3"
+    from: 1998
+  - name: Washington's Birthday
+    rule: "YY-02-MON#3"
+  - name: Good Friday
+    rule: "YY-MM-EAS-2"
+  - name: Memorial Day
+    rule: "YY-05-MON#L"
+  - name: Juneteenth National Independence Day
+    rule: "YY-06-19"
+    from: 2022
+  - name: Independence Day
+    rule: "YY-07-04"
+  - name: Labor Day
+    rule: "YY-09-MON#1"
+  - name: Thanksgiving Day
+    rule: "YY-11-THU#4"
+  - name: Christmas Day
+    rule: "YY-12-25"
+
+  - name: Funeral of President Richard Nixon
+    dates: ["1994-04-27"]
+    source: National day of mourning (https://money.cnn.com/2004/06/07/markets/nyse_reagan/index.htm)
+  - name: September 11 attacks
+    dates: ["2001-09-11", "2001-09-12", "2001-09-13", "2001-09-14"]
+    source: Closed 11-14 September, reopened 17 September (https://mondovisione.com/media-and-resources/news/nyse-honors-attack-victims-and-marks-us-equities-markets-reopening-monday-septem-2011124/)
+  - name: Funeral of President Ronald Reagan
+    dates: ["2004-06-11"]
+    source: NYSE notice (https://mondovisione.com/media-and-resources/news/nyse-to-close-on-friday-june-11-to-observe-national-day-of-mourning-for-presiden-2011124/)
+  - name: Funeral of President Gerald Ford
+    dates: ["2007-01-02"]
+    source: National day of mourning (https://money.cnn.com/2006/12/28/markets/ford_nyse/index.htm)
+  - name: Hurricane Sandy
+    dates: ["2012-10-29", "2012-10-30"]
+    source: Closed 29-30 October, reopened 31 October (https://www.npr.org/2012/10/30/163960661/new-york-stock-exchange-to-reopen-wednesday)
+  - name: Funeral of President George H. W. Bush
+    dates: ["2018-12-05"]
+    source: ICE press release (https://ir.theice.com/press/news-details/2018/New-York-Stock-Exchange-to-Honor-President-George-H-W-Bush/default.aspx)
+  - name: Funeral of President Jimmy Carter
+    dates: ["2025-01-09"]
+    source: ICE press release (https://ir.theice.com/press/news-details/2024/The-New-York-Stock-Exchange-Will-Close-Markets-on-January-9-to-Honor-the-Passing-of-Former-President-Jimmy-Carter-on-National-Day-of-Mourning/default.aspx)

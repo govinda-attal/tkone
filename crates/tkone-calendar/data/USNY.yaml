@@ -1,0 +1,42 @@
+# New York: the Federal Reserve's holidays, the days US dollar payments do not
+# settle. A holiday on Sunday moves to Monday; one on Saturday is not moved
+# (the Federal Reserve stays open the Friday before).
+code: USNY
+name: New York (Federal Reserve holidays)
+kind: settlement
+zone: America/New_York
+weekend: [SAT, SUN]
+valid_from: "1990-01-01"
+valid_until: "2099-12-31"
+confirmed_until: "2030-12-31"   # checked against the Federal Reserve's table, 2020-2030
+substitute: sunday-to-monday
+sources:
+  - https://www.federalreserve.gov/aboutthefed/k8.htm
+  - https://www.frbservices.org/about/holiday-schedules
+  - 5 U.S.C. 6103 (federal holidays)
+
+holidays:
+  - name: New Year's Day
+    rule: "YY-01-01"
+  - name: Birthday of Martin Luther King, Jr.
+    rule: "YY-01-MON#3"
+  - name: Washington's Birthday
+    rule: "YY-02-MON#3"
+  - name: Memorial Day
+    rule: "YY-05-MON#L"
+  - name: Juneteenth National Independence Day
+    rule: "YY-06-19"
+    from: 2022
+    note: A federal holiday from 2021; the Federal Reserve observes it from 2022.
+  - name: Independence Day
+    rule: "YY-07-04"
+  - name: Labor Day
+    rule: "YY-09-MON#1"
+  - name: Columbus Day
+    rule: "YY-10-MON#2"
+  - name: Veterans Day
+    rule: "YY-11-11"
+  - name: Thanksgiving Day
+    rule: "YY-11-THU#4"
+  - name: Christmas Day
+    rule: "YY-12-25"

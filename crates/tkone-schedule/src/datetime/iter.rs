@@ -155,15 +155,23 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
         let limits = Limits { count: self.limits.count.or(bounds.count()), ..self.limits.clone() };
         let count = limits.count;
         let tz = self.dtm.timezone();
-        // A builder end takes precedence over one written in the spec.
-        let end = match end {
-            Some(end) => Some(end),
-            None => bounds.end_in(&tz, self.options.dst_policy)?,
-        };
-        // So does a builder start (`new_with_start`, `resume_with_start`).
+        // A builder start (`new_with_start`, `resume_with_start`) takes
+        // precedence over one written in the spec.
         let text_start = match include_start || self.anchor.is_some() {
             true => None,
             false => bounds.start_in(&tz, self.options.dst_policy)?,
+        };
+        // So does a builder end. A duration counts from the start.
+        let end = match end {
+            Some(end) => Some(end),
+            None => {
+                let start = match (include_start, &self.limits.resume_start) {
+                    (true, _) => Some(self.dtm.clone()),
+                    (false, Some(start)) => Some(start.with_timezone(&tz)),
+                    (false, None) => text_start.clone(),
+                };
+                bounds.end_in(&tz, self.options.dst_policy, start.as_ref())?
+            }
         };
         if let Some(start) = text_start {
             let anchor = Some(start.naive_local());

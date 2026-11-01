@@ -289,7 +289,15 @@ fn assemble<Tz: TimeZone, BDP: BizDayProcessor>(
                 .ok_or(Error::InvalidEndSpec)?;
             Some(*end.observed())
         }
-        BuilderEnd::None => bounds.end_in(&tz, dst_policy)?.map(|end| end.naive_local()),
+        BuilderEnd::None => {
+            // A duration counts from the builder's start, else the written one.
+            let start = match (given_start, &limits.resume_start) {
+                (true, _) => Some(dtm.clone()),
+                (false, Some(start)) => Some(start.with_timezone(&tz)),
+                (false, None) => bounds.start_in(&tz, dst_policy)?,
+            };
+            bounds.end_in(&tz, dst_policy, start.as_ref())?.map(|end| end.naive_local())
+        }
     };
 
     if given_start {

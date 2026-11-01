@@ -146,7 +146,15 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
         let end = match end {
             BuilderEnd::At(end) => Some(end.with_timezone(tz)),
             BuilderEnd::Spec(end_spec) => Some(end_from_spec(&end_spec, &self.dtm, policy)?),
-            BuilderEnd::None => bounds.end_in(tz, policy)?,
+            BuilderEnd::None => {
+                // A duration counts from the builder's start, else the written one.
+                let start = match (given_start, &self.limits.resume_start) {
+                    (true, _) => Some(self.dtm.clone()),
+                    (false, Some(start)) => Some(start.with_timezone(tz)),
+                    (false, None) => bounds.start_in(tz, policy)?,
+                };
+                bounds.end_in(tz, policy, start.as_ref())?
+            }
         };
         // A builder count (`with_count`) takes precedence over one written (`xN`).
         let limits = Limits { count: self.limits.count.or(bounds.count()), ..self.limits.clone() };

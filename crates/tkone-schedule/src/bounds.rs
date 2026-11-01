@@ -2,8 +2,8 @@
 //! `<spec> @<start> ..<end> x<count>`.
 //!
 //! All are optional and apply to the whole spec, including every part of a
-//! union and its exclusions. Each is a date or a datetime, optionally with a
-//! UTC offset and an IANA time zone in RFC 9557 brackets:
+//! union and its exclusions. A start or end is a date or a datetime,
+//! optionally with a UTC offset and an IANA time zone in RFC 9557 brackets:
 //!
 //! ```text
 //! @2025-01-06
@@ -12,6 +12,11 @@
 //! @2025-01-06T09:00:00[Europe/London]
 //! ..2026-01-06                          (a date-only end includes the whole day)
 //! ```
+//!
+//! An end can instead be a duration from the start, in years, months, weeks
+//! and days: `..+30Y`, `..+5Y6M`, `..+2W`. It ends just before the start plus
+//! the duration, so `@2025-01-31 ..+30Y` covers exactly 30 years. A schedule
+//! with a duration needs a start, written or given to the builder.
 //!
 //! The count (`x36`) stops the schedule after that many results, counted from
 //! the start; with an end too, whichever comes first stops it. Excluded
@@ -25,7 +30,7 @@
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-use chrono::{DateTime, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
+use chrono::{DateTime, Days, Duration, FixedOffset, Months, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use regex::Regex;
 
 use crate::prelude::*;
@@ -51,11 +56,31 @@ pub(crate) struct TextTime {
     date_only: bool,
 }
 
+/// `+5Y6M`: years, months, weeks and days, in that order.
+static PERIOD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\+(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?$").unwrap());
+
+/// A duration written as an end (`..+5Y6M`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Period {
+    years: u32,
+    months: u32,
+    weeks: u32,
+    days: u32,
+}
+
+/// An end as written: a time, or a duration from the start.
+#[derive(Debug, Clone, PartialEq)]
+enum End {
+    At(TextTime),
+    After(Period),
+}
+
 /// The start, end and time zone written after a spec.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Bounds {
     start: Option<TextTime>,
-    end: Option<TextTime>,
+    end: Option<End>,
     zone: Option<chrono_tz::Tz>,
     count: Option<usize>,
 }
@@ -97,15 +122,20 @@ pub(crate) fn split_bounds(spec: &str) -> Result<(&str, Bounds)> {
         if spec[i + 2..].contains("..") {
             return Err(invalid("more than one end".into()));
         }
-        let (time, zone) = parse_time(token(i + 2)).map_err(invalid)?;
-        match (bounds.zone, zone) {
-            (Some(a), Some(b)) if a != b => return Err(invalid("the start and end name different time zones".into())),
-            (None, zone) => bounds.zone = zone,
-            _ => {}
+        let text = token(i + 2);
+        if text.starts_with('+') {
+            bounds.end = Some(End::After(parse_period(text).map_err(invalid)?));
+        } else {
+            let (time, zone) = parse_time(text).map_err(invalid)?;
+            match (bounds.zone, zone) {
+                (Some(a), Some(b)) if a != b => return Err(invalid("the start and end name different time zones".into())),
+                (None, zone) => bounds.zone = zone,
+                _ => {}
+            }
+            bounds.end = Some(End::At(time));
         }
-        bounds.end = Some(time);
     }
-    if let (Some(start), Some(end)) = (&bounds.start, &bounds.end) {
+    if let (Some(start), Some(End::At(end))) = (&bounds.start, &bounds.end) {
         if end.local < start.local && start.offset.is_none() && end.offset.is_none() {
             return Err(invalid("the end is before the start".into()));
         }
@@ -118,6 +148,44 @@ pub(crate) fn split_suffix(spec: &str) -> (&str, &str) {
     let x = COUNT.find(spec).map(|m| m.start());
     let i = [spec.find('@'), spec.find(".."), x].into_iter().flatten().min().unwrap_or(spec.len());
     (spec[..i].trim_end(), spec[i..].trim_start())
+}
+
+fn parse_period(text: &str) -> core::result::Result<Period, String> {
+    let caps = PERIOD
+        .captures(text)
+        .filter(|caps| caps.iter().skip(1).any(|c| c.is_some()))
+        .ok_or_else(|| format!("`{text}` is not a duration (e.g. +30Y, +5Y6M, +2W, +90D)"))?;
+    let field = |i: usize| -> core::result::Result<u32, String> {
+        caps.get(i).map_or(Ok(0), |m| m.as_str().parse().map_err(|_| format!("`{text}` is too long")))
+    };
+    let period = Period { years: field(1)?, months: field(2)?, weeks: field(3)?, days: field(4)? };
+    if period == (Period { years: 0, months: 0, weeks: 0, days: 0 }) {
+        return Err(format!("the duration `{text}` must not be zero"));
+    }
+    Ok(period)
+}
+
+impl Period {
+    /// `local` plus the period: months as `31L` counts them (the last day of a
+    /// shorter month), then weeks and days.
+    fn after(&self, local: NaiveDateTime) -> Option<NaiveDateTime> {
+        let months = self.years.checked_mul(12)?.checked_add(self.months)?;
+        let days = u64::from(self.weeks) * 7 + u64::from(self.days);
+        local.checked_add_months(Months::new(months))?.checked_add_days(Days::new(days))
+    }
+
+    /// `"5 years and 6 months"`.
+    fn describe(&self) -> String {
+        let parts: Vec<String> = [(self.years, "year"), (self.months, "month"), (self.weeks, "week"), (self.days, "day")]
+            .into_iter()
+            .filter(|(n, _)| *n > 0)
+            .map(|(n, unit)| format!("{n} {unit}{}", if n == 1 { "" } else { "s" }))
+            .collect();
+        match parts.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => parts.join(""),
+        }
+    }
 }
 
 fn parse_time(text: &str) -> core::result::Result<(TextTime, Option<chrono_tz::Tz>), String> {
@@ -186,8 +254,10 @@ impl Bounds {
         if let Some(start) = &self.start {
             out += &format!(", from {}", when(start));
         }
-        if let Some(end) = &self.end {
-            out += &format!("{} {}", if self.start.is_some() { " until" } else { ", until" }, when(end));
+        match &self.end {
+            Some(End::At(end)) => out += &format!("{} {}", if self.start.is_some() { " until" } else { ", until" }, when(end)),
+            Some(End::After(period)) => out += &format!("{} {}", if self.start.is_some() { " for" } else { ", for" }, period.describe()),
+            None => {}
         }
         if let Some(zone) = self.zone {
             out += &format!(" ({})", zone.name());
@@ -200,19 +270,48 @@ impl Bounds {
         self.start.as_ref().map(|t| self.resolve(t, t.local, tz, policy)).transpose()
     }
 
-    /// The end as an instant in `tz`; a date-only end is the end of that day.
-    pub(crate) fn end_in<Tz: TimeZone>(&self, tz: &Tz, policy: DstPolicy) -> Result<Option<DateTime<Tz>>> {
-        self.end
-            .as_ref()
-            .map(|t| {
+    /// The end as an instant in `tz`, the last instant results may be at: a
+    /// date-only end is the end of that day, and a duration ends just before
+    /// `start` plus the duration.
+    ///
+    /// `start` is the schedule's start, the builder's or the written one; a
+    /// duration without one is an error.
+    pub(crate) fn end_in<Tz: TimeZone>(
+        &self,
+        tz: &Tz,
+        policy: DstPolicy,
+        start: Option<&DateTime<Tz>>,
+    ) -> Result<Option<DateTime<Tz>>> {
+        match &self.end {
+            None => Ok(None),
+            Some(End::At(t)) => {
                 let local = if t.date_only {
                     t.local.date().and_hms_nano_opt(23, 59, 59, 999_999_999).unwrap()
                 } else {
                     t.local
                 };
-                self.resolve(t, local, tz, policy)
-            })
-            .transpose()
+                self.resolve(t, local, tz, policy).map(Some)
+            }
+            Some(End::After(period)) => {
+                let start = start.ok_or_else(|| {
+                    Error::InvalidSpecBounds("a duration end (`..+…`) needs a start: write `@…`, or give the builder one".into())
+                })?;
+                // Add on the wall clock of the written zone, if any.
+                let zone = self.zone.unwrap_or(chrono_tz::UTC);
+                let local = match self.zone {
+                    Some(_) => start.with_timezone(&zone).naive_local(),
+                    None => start.naive_local(),
+                };
+                let end = period
+                    .after(local)
+                    .ok_or_else(|| Error::InvalidSpecBounds(format!("the duration {} is too long", period.describe())))?;
+                let end = match self.zone {
+                    Some(zone) => resolve_local(&zone, end, policy)?.with_timezone(tz),
+                    None => resolve_local(tz, end, policy)?,
+                };
+                Ok(Some(just_before(&end)))
+            }
+        }
     }
 
     fn resolve<Tz: TimeZone>(&self, t: &TextTime, local: NaiveDateTime, tz: &Tz, policy: DstPolicy) -> Result<DateTime<Tz>> {
@@ -242,7 +341,7 @@ mod tests {
         let (body, b) = split_bounds("YY-MM-15 ! YY-12-15 @2025-01-06 ..2026-01-06").unwrap();
         assert_eq!(body, "YY-MM-15 ! YY-12-15");
         assert!(b.start.is_some());
-        assert!(b.end.as_ref().unwrap().date_only);
+        assert!(matches!(&b.end, Some(End::At(t)) if t.date_only));
 
         let (body, b) = split_bounds("YY-MM-DDT09:00:00 @2025-01-06T09:00:00[Europe/London]").unwrap();
         assert_eq!(body, "YY-MM-DDT09:00:00");
@@ -251,7 +350,7 @@ mod tests {
         let (body, b) = split_bounds("1H:00:00 ..2025-01-06T17:00+01:00").unwrap();
         assert_eq!(body, "1H:00:00");
         assert!(b.start.is_none());
-        assert_eq!(b.end.as_ref().unwrap().offset, FixedOffset::east_opt(3600));
+        assert!(matches!(&b.end, Some(End::At(t)) if t.offset == FixedOffset::east_opt(3600)));
 
         let (body, b) = split_bounds("YY-MM-15").unwrap();
         assert_eq!((body, b), ("YY-MM-15", Bounds::default()));
@@ -297,12 +396,58 @@ mod tests {
         let start = b.start_in(&tz, DstPolicy::Adjust).unwrap().unwrap();
         assert_eq!(start, tz.with_ymd_and_hms(2025, 1, 6, 4, 0, 0).unwrap());
         // The end is read in the text's zone too, and covers the whole day.
-        let end = b.end_in(&chrono_tz::Europe::London, DstPolicy::Adjust).unwrap().unwrap();
+        let end = b.end_in(&chrono_tz::Europe::London, DstPolicy::Adjust, None).unwrap().unwrap();
         assert_eq!(end.naive_local(), NaiveDate::from_ymd_opt(2025, 3, 31).unwrap().and_hms_nano_opt(23, 59, 59, 999_999_999).unwrap());
         let (_, b) = split_bounds("YY-MM-15 @2025-01-06").unwrap();
         assert_eq!(b.start_in(&tz, DstPolicy::Adjust).unwrap().unwrap(), tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap());
         assert_eq!(b.describe(), ", from 6 January 2025");
         let (_, b) = split_bounds("1H:00:00 @2025-01-06T09:00:00[Europe/London] ..2025-01-06T17:00").unwrap();
         assert_eq!(b.describe(), ", from 6 January 2025 09:00:00 until 6 January 2025 17:00:00 (Europe/London)");
+    }
+
+    #[test]
+    fn test_duration() {
+        let period = |text: &str| match split_bounds(text).unwrap().1.end {
+            Some(End::After(p)) => (p.years, p.months, p.weeks, p.days),
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(period("YY-1M-31L @2025-01-31 ..+30Y"), (30, 0, 0, 0));
+        assert_eq!(period("YY-3M-L ..+5Y6M @2025-03-31"), (5, 6, 0, 0));
+        assert_eq!(period("YY-MM-FRI/2W ..+2W x3"), (0, 0, 2, 0));
+        assert_eq!(period("1H:00:00 ..+1Y2M3W4D"), (1, 2, 3, 4));
+        for bad in [
+            "YY-MM-15 ..+",
+            "YY-MM-15 ..+0Y",
+            "YY-MM-15 ..+6M5Y",
+            "YY-MM-15 ..+2H",
+            "YY-MM-15 ..20Y",
+            "YY-MM-15 ..-1Y",
+            "YY-MM-15 ..+1Y ..2030-01-01",
+            "YY-MM-15 ..+99999999999Y",
+        ] {
+            assert!(split_bounds(bad).is_err(), "{bad} should be rejected");
+        }
+
+        let tz = chrono_tz::Europe::London;
+        let at = |y, m, d| tz.with_ymd_and_hms(y, m, d, 0, 0, 0).unwrap();
+        // The end is just before the start plus the duration.
+        let (_, b) = split_bounds("YY-1M-31L @2025-01-31 ..+30Y").unwrap();
+        let end = b.end_in(&tz, DstPolicy::Adjust, Some(&at(2025, 1, 31))).unwrap().unwrap();
+        assert_eq!(end, just_before(&at(2055, 1, 31)));
+        // Months fall back to the last day of a shorter month.
+        let (_, b) = split_bounds("YY-MM-DD ..+1Y").unwrap();
+        let end = b.end_in(&tz, DstPolicy::Adjust, Some(&at(2024, 2, 29))).unwrap().unwrap();
+        assert_eq!(end, just_before(&at(2025, 2, 28)));
+        let (_, b) = split_bounds("YY-MM-DD ..+1M2W3D").unwrap();
+        let end = b.end_in(&tz, DstPolicy::Adjust, Some(&at(2025, 1, 31))).unwrap().unwrap();
+        assert_eq!(end, just_before(&at(2025, 3, 17)));
+        // A duration needs a start.
+        assert!(matches!(b.end_in(&tz, DstPolicy::Adjust, None), Err(Error::InvalidSpecBounds(_))));
+
+        let describe = |text: &str| split_bounds(text).unwrap().1.describe();
+        assert_eq!(describe("YY-1M-31L @2025-01-31 ..+30Y"), ", from 31 January 2025 for 30 years");
+        assert_eq!(describe("YY-1M-31L @2025-01-31 ..+1Y x6"), ", 6 times, from 31 January 2025 for 1 year");
+        assert_eq!(describe("YY-MM-DD ..+5Y6M"), ", for 5 years and 6 months");
+        assert_eq!(describe("YY-MM-DD ..+1Y1M1W1D"), ", for 1 year, 1 month, 1 week and 1 day");
     }
 }

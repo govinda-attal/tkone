@@ -150,8 +150,15 @@ splits into `YY-MM-THU` and `09:00:00`.
 <!-- abnf:bounds -->
 ```abnf
 start         = "@" OWS moment
-end           = ".." OWS moment
+end           = ".." OWS ( moment / duration )
 count         = %s"x" number
+duration      = "+" ( years-part / months-part / weeks-part
+                    / days-part )
+years-part    = number %s"Y" [ months-part / weeks-part
+                               / days-part ]
+months-part   = number %s"M" [ weeks-part / days-part ]
+weeks-part    = number %s"W" [ days-part ]
+days-part     = number %s"D"
 moment        = full-date [ %s"T" clock ] [ offset ]
                 [ "[" zone "]" ]
 full-date     = 4DIGIT "-" 2DIGIT "-" 2DIGIT
@@ -162,8 +169,10 @@ zone          = 1*( ALPHA / DIGIT / "/" / "_" / "-" / "+" )
 ```
 <!-- /abnf -->
 
-`moment` follows RFC 3339 with an optional RFC 9557 time zone suffix. A count token only counts
-when it stands alone, so an `x` inside a zone name such as `America/Mexico_City` is not a count.
+`moment` follows RFC 3339 with an optional RFC 9557 time zone suffix. A `duration` is years,
+months, weeks and days, in that order, each at most once: `+30Y`, `+5Y6M`, `+2W`, `+1M15D`. A
+count token only counts when it stands alone, so an `x` inside a zone name such as
+`America/Mexico_City` is not a count.
 
 ---
 
@@ -215,7 +224,8 @@ A step may exceed the field's range: `25H:00:00` and `HH:90M:00` are valid.
 | A date is a real calendar date | `YY-MM-15 @2025-13-01` |
 | A zone is a known IANA zone | `YY-MM-15 @2025-01-06[Mars/Base]` |
 | A start and an end name the same zone, if both name one | `… @2025-01-06[Europe/London] ..2026-01-06[America/New_York]` |
-| Without offsets, the end is not before the start | `YY-MM-15 @2025-02-06 ..2025-01-06` |
+| Without offsets, an end date is not before the start | `YY-MM-15 @2025-02-06 ..2025-01-06` |
+| A duration is not zero | `YY-MM-15 @2025-01-06 ..+0Y` |
 
 ---
 
@@ -321,6 +331,11 @@ union before the `!`.
   schedule's time zone.
 - **`..end`**: an inclusive upper bound on both actual and observed times. A date without a time
   covers that whole day. Nothing is invented at the boundary.
+- **`..+duration`**: an end the duration after the start, itself excluded. `@2025-01-31 ..+30Y`
+  ends just before 31 January 2055, so a monthly schedule has exactly 360 occurrences. Years and
+  months are added first, falling back to the last day of a shorter month like `31L`
+  (2024-02-29 plus `1Y` is 2025-02-28), then weeks and days, on the wall clock of the written
+  zone if there is one. A schedule with a duration needs a start; without one it is an error.
 - **`[zone]`**: the IANA zone the start and end are read in, and the schedule's time zone. An
   offset fixes the single instant it is written on.
 - **`xN`**: at most *N* occurrences, counted from the start. Excluded or skipped (`~SB`) dates
@@ -353,10 +368,11 @@ union before the `!`.
 | `YY-MM-[TUE,THU]/2W` · `YY-MM-[MON-FRI]/4W[1,2]~SB` | date |
 | `YY-MM-DD ! YY-12-25 \| YY-01-01` · `YY-MM-BD#3 \| YY-MM-L~PB` | date |
 | `YY-MM-01~MF @2025-04-01 x36` · `YY-MM-15 x3 ..2025-12-31 @2025-01-01` | date |
+| `YY-1M-31L~MF @2025-01-31 ..+30Y` · `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` · `YY-3M-L @2025-03-31 ..+5Y6M x20` | date |
 | `09:30:00` · `9:30:00` · `HH:30M:00` · `1H:30M:15S` · `25H:00:00` · `_:_:_` | time |
 | `[09,12,17]:00:00` · `09-16:15M:00` · `0-23:00:00` · `[09-11,14]:[00,30]:00` | time |
 | `HH:MM:SS ! 12:MM:SS` · `09:[30,45]:00 \| 10-15:15M:00 \| 16:00:00` | time |
-| `1H:00:00 @2025-01-06T09:00[Europe/Paris] ..2025-01-06T17:00` | time |
+| `1H:00:00 @2025-01-06T09:00[Europe/Paris] ..2025-01-06T17:00` · `HH:30M:00 @2025-01-06T09:00 ..+1D` | time |
 | `YY-MM-DDT09:00:00` · `YY-MM-THUT9:00:00` · `YY-MM-SATT9-16:00:00` | datetime |
 | `YY-MM-DD~NBT09:00:00` · `YY-MM-[TUE,THU]/2WT18:00:00` · `YY-MM-DDT_:_:_` | datetime |
 | `YY-MM-DDT09:00:00 \| YY-MM-15T12:00:00 ! YY-12-25 @2025-01-01[Europe/London] ..2025-12-31 x10` | datetime |
@@ -373,6 +389,8 @@ union before the `!`.
 | `YY-MM-DD~NA` | not an adjustment |
 | `YY-MM-BD#[1-3L]` | a range counted from the end |
 | `YY-MMx3` | a count must stand alone |
+| `YY-MM-15 @2025-01-01 ..+6M1Y` | duration units out of order |
+| `YY-MM-15 @2025-01-01 ..+8H` | a duration has no hours |
 | `HH:MM` | a time spec has three fields |
 | `YY-MM-DD T09:00:00` | whitespace before `T` |
 | everything in the [validity rules](#2-validity-rules) tables | as stated there |

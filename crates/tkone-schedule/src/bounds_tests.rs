@@ -320,3 +320,105 @@ fn test_count_written_in_the_spec() {
         "on the 1st of every month, moved to the next business day when it is not one, or to the previous one if that is in the next month, 36 times, from 1 April 2025"
     );
 }
+
+#[test]
+fn test_duration_written_in_the_spec() {
+    let bdp = WeekendSkipper::new();
+    let tz = chrono_tz::America::New_York;
+    let all = |spec: &str| -> Vec<String> {
+        date::SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), ny(2025, 1, 1, 0, 0))
+            .build()
+            .unwrap()
+            .map(|o| Ok(o.actual().format("%Y-%m-%d").to_string()))
+            .collect()
+            .unwrap()
+    };
+    // The end is just before the start plus the duration: 30 years of
+    // monthly payments is 360 of them.
+    let loan = all("YY-1M-31L~MF @2025-01-31 ..+30Y");
+    assert_eq!((loan.len(), loan[0].as_str(), loan[359].as_str()), (360, "2025-01-31", "2054-12-31"));
+    // Durations that are not a whole number of periods.
+    let fortnightly = all("YY-MM-FRI/2W~NB @2025-01-03 ..+20Y");
+    assert_eq!((fortnightly.len(), fortnightly[521].as_str()), (522, "2044-12-23"));
+    assert_eq!(all("YY-MM-15~MF | YY-MM-L~MF @2025-01-15 ..+20Y").len(), 480);
+    assert_eq!(all("YY-3M-L @2025-03-31 ..+5Y6M").len(), 22);
+    assert_eq!(all("YY-MM-DD @2025-01-30 ..+1M2W").len(), 43);
+    // With a count too, whichever comes first stops it.
+    assert_eq!(all("YY-MM-15 @2025-01-15 ..+1Y x3").len(), 3);
+    assert_eq!(all("YY-MM-15 @2025-01-15 ..+3M x12").len(), 3);
+    // A builder start takes precedence over the written one, and the duration counts from it.
+    let got: Vec<_> = date::SpecIteratorBuilder::new_with_start("YY-MM-01 @2025-01-01 ..+3M", bdp.clone(), ny(2026, 6, 1, 0, 0))
+        .build()
+        .unwrap()
+        .map(|o| Ok(o.actual().format("%Y-%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(got, ["2026-06-01", "2026-07-01", "2026-08-01"]);
+    // A builder end takes precedence over the duration.
+    let got: Vec<_> = date::SpecIteratorBuilder::new_after("YY-MM-01 @2025-01-01 ..+3M", bdp.clone(), ny(2024, 12, 31, 0, 0))
+        .with_end(ny(2025, 1, 31, 0, 0))
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(got.len(), 1);
+    // Resuming: from the written start, or from a stored one.
+    let spec = "YY-MM-15 @2025-01-15 ..+6M";
+    let continuous: Vec<_> = date::SpecIteratorBuilder::new_after(spec, bdp.clone(), ny(2025, 1, 1, 0, 0)).build().unwrap().collect().unwrap();
+    assert_eq!(continuous.len(), 6);
+    for i in 0..continuous.len() {
+        let next = date::SpecIteratorBuilder::resume_after(spec, bdp.clone(), tz, stored(continuous[i].actual()))
+            .build()
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(next.as_ref(), continuous.get(i + 1), "after #{i}");
+    }
+    let next: Vec<_> = date::SpecIteratorBuilder::resume_with_start(
+        "YY-MM-15 ..+3M",
+        bdp.clone(),
+        tz,
+        stored(&ny(2025, 1, 15, 0, 0)),
+        stored(&ny(2025, 2, 15, 0, 0)),
+    )
+    .build()
+    .unwrap()
+    .map(|o| Ok(o.actual().format("%Y-%m-%d").to_string()))
+    .collect()
+    .unwrap();
+    assert_eq!(next, ["2025-03-15"]);
+    // Without a start there is nothing to count the duration from.
+    for build in [
+        date::SpecIteratorBuilder::new_after("YY-MM-15 ..+1Y", bdp.clone(), ny(2025, 1, 1, 0, 0)).build().map(|_| ()),
+        time::SpecIteratorBuilder::new_after("1H:00:00 ..+1D", ny(2025, 1, 1, 0, 0)).build().map(|_| ()),
+        datetime::SpecIteratorBuilder::new_after("YY-MM-DDT09:00:00 ..+1Y", bdp.clone(), ny(2025, 1, 1, 0, 0)).build().map(|_| ()),
+    ] {
+        assert!(matches!(build, Err(crate::Error::InvalidSpecBounds(_))));
+    }
+    // Time and datetime; the duration is added on the written zone's clock.
+    let times: Vec<_> = time::SpecIteratorBuilder::from_spec("HH:30M:00 @2025-01-06T09:00:00[Europe/London] ..+1D")
+        .unwrap()
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(times.len(), 48);
+    let ticks: Vec<_> = datetime::SpecIteratorBuilder::from_spec("YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London] ..+4W", bdp.clone())
+        .unwrap()
+        .build()
+        .unwrap()
+        .map(|o| Ok(o.actual().format("%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(ticks, ["01-07", "01-09", "01-21", "01-23"]);
+    let ticks: Vec<_> = datetime::SpecIteratorBuilder::new_with_start("YY-MM-DDT09:00:00 ..+3D", bdp, ny(2025, 1, 6, 9, 0))
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(ticks.len(), 3);
+    assert_eq!(
+        date::describe("YY-1M-31L~MF @2025-01-31 ..+30Y").unwrap(),
+        "on the 31st of every month (or the last day, in shorter months), moved to the next business day when it is not one, or to the previous one if that is in the next month, from 31 January 2025 for 30 years"
+    );
+}

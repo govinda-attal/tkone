@@ -173,12 +173,17 @@ YY-3M-15~NB @2025-02-15 ..2027-02-15                      quarterly from 15 Feb 
 YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]     every other Tue and Thu at 18:00 London time
 1H:00:00 @2025-01-06T09:00:00[Europe/Paris] ..2025-01-06T17:00   hourly, 09:00 to 17:00 Paris time
 YY-MM-01~MF @2025-04-01 x36                                36 monthly payments from April 2025
+YY-1M-31L~MF @2025-01-31 ..+30Y                            monthly for 30 years from 31 Jan 2025
 ```
 
 - **`@start`** is where the counting begins (cadences, weeks, positions, steps and the time
   grid) and the earliest time a result can have. The first result is the first match at or after
   it: `YY-MM-15 @2025-01-10` begins on 15 January.
 - **`..end`** is the latest time a result can have. A date without a time covers that whole day.
+- **`..+30Y`** ends after a duration instead: years, months, weeks and days, as in `+30Y`,
+  `+5Y6M` or `+2W`. The schedule covers exactly that long from the start, so 30 years of
+  monthly payments is 360 of them, and 20 years of fortnightly ones is however many fall in
+  20 years. It needs a start, written or supplied.
 - **The time zone** goes in brackets after a date or time, as in `[Europe/London]` (the
   RFC 9557 form), and applies to the start, the end and every time in the schedule. A UTC
   offset such as `+01:00` only fixes the instant it is written on; a zone also decides how the
@@ -187,8 +192,9 @@ YY-MM-01~MF @2025-04-01 x36                                36 monthly payments f
   so `x12` always means twelve. With an end as well, whichever comes first stops the schedule.
 
 Each is optional. A schedule without a start counts from whenever it is first used, so
-`YY-MM-01~MF x36` is a template: "36 monthly payments from whenever the loan starts". One
-without an end or a count repeats indefinitely.
+`YY-MM-01~MF x36` is a template: "36 monthly payments from whenever the loan starts", and so is
+`YY-MM-FRI/2W~NB ..+20Y`: "every other Friday for 20 years". One without an end or a count
+repeats indefinitely.
 
 ---
 
@@ -248,7 +254,8 @@ The common business-day conventions map directly onto adjustments:
 | N business days before / after | `~NP` / `~NN` |
 
 Instalment and coupon schedules are usually defined by a start and a count or a maturity date,
-which the schedule text can hold (`@2025-04-01 x36`, `..2028-03-31`).
+which the schedule text can hold (`@2025-04-01 x36`, `..2028-03-31`), or by a term
+(`..+30Y`).
 
 ### For rostering and operations
 
@@ -330,6 +337,7 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Exclude given dates | ✗ | partly | ✓ | ✓ `! …` |
 | Start, end and time zone in the text | ✗ | ✗ | ✓ | ✓ `@… ..…[Zone]` |
 | Stop after N occurrences | ✗ | partly | ✓ | ✓ `x36` |
+| Run for a term from the start | ✗ | ✗ | ✗ | ✓ `..+30Y` |
 
 *This compares the standard formats. Some products add their own extensions.*
 
@@ -346,6 +354,8 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Quarterly payment on the 15th, counted from the start | `YY-3M-15~NB` |
 | Four quarterly coupons on the 15th | `YY-3M-15~NB @2025-03-15 x4` |
 | A three-year loan: 36 payments on the 1st, Modified Following | `YY-MM-01~MF @2025-04-01 x36` |
+| A 30-year mortgage paid at month end | `YY-1M-31L~MF @2025-01-31 ..+30Y` |
+| A 20-year loan paid every other Friday | `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` |
 | Payroll on the last business day of the month | `YY-MM-BD#L` |
 | Settlement on the 3rd business day of the month | `YY-MM-BD#3` |
 | Month-end close tasks on the first three business days and the last | `YY-MM-BD#[1-3,L]` |

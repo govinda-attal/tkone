@@ -7,8 +7,9 @@ pub enum Error {
     InvalidTimeSpec(String),
     #[error("invalid date-time spec: {0}")]
     InvalidDateTimeSpec(String),
-    /// A start or end written in the spec (`@2025-01-06 ..2026-01-06`) is
-    /// malformed or inconsistent.
+    /// A start or end written in the spec (`@2025-01-06 ..2026-01-06`,
+    /// `..+30Y`) is malformed or inconsistent, or a duration end has no start
+    /// to count from.
     #[error("invalid start or end in spec: {0}")]
     InvalidSpecBounds(String),
     #[error("invalid end spec")]

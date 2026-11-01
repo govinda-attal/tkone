@@ -267,6 +267,9 @@ the text alone defines the schedule:
 - `@start` anchors the schedule (cadences, week cycles, positions, steps,
   the time grid) and is an inclusive lower bound.
 - `..end` is an inclusive upper bound; a date-only end covers the whole day.
+- `..+30Y` ends a duration after the start instead (years, months, weeks and
+  days: `+5Y6M`, `+2W`), itself excluded, so `@2025-01-31 ..+30Y` is exactly
+  30 years: 360 monthly results. It needs a start, written or the builder's.
 - `xN` stops after *N* results counted from the start (excluded ones are not
   counted); with an end too, whichever comes first stops it. Without a
   start it is counted from the first result, or a builder start.

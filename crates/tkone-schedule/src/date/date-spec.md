@@ -214,6 +214,11 @@ YY-MM-15 ..2025-12-31
   `YY-MM-15 @2025-01-10` begins on 15 January. A step rule (`7D`) begins on the start itself,
   or on the next business day for `nBD`/`nWD`.
 - **`..end`** is an inclusive upper bound; a date-only end covers the whole day.
+- **`..+duration`** ends a duration after the start instead, the end itself excluded: years,
+  months, weeks and days in that order (`..+30Y`, `..+5Y6M`, `..+2W`). `YY-1M-31L~MF @2025-01-31
+  ..+30Y` is exactly 360 payments. Months are added like `31L` (2024-02-29 plus `1Y` is
+  2025-02-28). It counts from the builder's start if there is one, else the written start; with
+  neither, building fails with `Error::InvalidSpecBounds`.
 - **`[Zone]`** names the IANA time zone the start and end are read in; a `+hh:mm` offset fixes a
   single instant instead.
 - **`xN`** stops after *N* results, counted from the start (`YY-MM-01~MF @2025-04-01 x36`:
@@ -1295,6 +1300,27 @@ counted by `xN`.
  6. 2025-09-15 Mon
  7. 2025-10-15 Wed
  8. 2025-12-15 Mon
+```
+
+---
+
+### 45. `YY-1M-31L~MF @2025-01-31 ..+30Y` — A 30-year mortgage paid at month end
+
+The term is in the text: the schedule ends just before 31 January 2055, so it has exactly 360
+payments. A month end on a weekend moves back to the Friday, since Modified Following never
+moves into the next month.
+
+```text
+  1. 2025-01-31 Fri
+  2. 2025-02-28 Fri
+  3. 2025-03-31 Mon
+  4. 2025-04-30 Wed
+  5. AdjustedEarlier  actual=2025-05-31 Sat  observed=2025-05-30 Fri
+  6. 2025-06-30 Mon
+...
+358. AdjustedEarlier  actual=2054-10-31 Sat  observed=2054-10-30 Fri
+359. 2054-11-30 Mon
+360. 2054-12-31 Thu
 ```
 
 ---

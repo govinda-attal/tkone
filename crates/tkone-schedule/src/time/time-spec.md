@@ -156,7 +156,8 @@ period: `12:MM:SS` covers the entire 12:00 hour, `12:MM:00` only 12:00:00, 12:01
 Paris time on 6 January. The start anchors the grid and is included when it is on it:
 `HH:15M:00 @2025-01-06T09:07:00` runs at 09:07, 09:22, …. A spec without a step yields its times
 on the start's day. `xN` stops after *N* times: `HH:30M:00 @2025-01-06T09:00:00 x4` is 09:00,
-09:30, 10:00 and 10:30. The syntax and precedence rules are the same as for
+09:30, 10:00 and 10:30. `..+1D` ends a day after the start: `HH:30M:00 @2025-01-06T09:00:00
+..+1D` is 48 times, up to 08:30 the next morning. The syntax and precedence rules are the same as for
 [date specs](crate::date#start-end-and-time-zone-optional); `SpecIteratorBuilder::from_spec(spec)`
 builds from the text alone.
 

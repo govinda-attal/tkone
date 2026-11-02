@@ -27,10 +27,6 @@ name = "payroll"
 path = "src/calendar/payroll.rs"
 
 [[bin]]
-name = "interest-rate-swap"
-path = "src/calendar/interest_rate_swap.rs"
-
-[[bin]]
 name = "store-deliveries"
 path = "src/calendar/store_deliveries.rs"
 

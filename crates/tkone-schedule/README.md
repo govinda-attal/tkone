@@ -20,6 +20,11 @@ A scheduling and recurrence library built on flexible mini-language specs for da
 times, and combined datetimes. Supports business day processing, timezone awareness,
 and fallible iteration.
 
+It is made for operations: payment runs, batch jobs, reports and deadlines
+that must land on the right business day. It does not define financial
+instruments (calculation periods, stubs, fixing offsets, day counts); see
+[INTRODUCTION.md](https://github.com/govinda-attal/tkone/blob/main/crates/tkone-schedule/INTRODUCTION.md#what-it-doesnt-do-yet).
+
 ## Core Concepts
 
 The library is organised around three independent spec types, each with a

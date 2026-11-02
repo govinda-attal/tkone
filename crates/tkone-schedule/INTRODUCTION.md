@@ -10,7 +10,10 @@ server?"*. Business schedules ask harder questions:
 - *"Every 90 minutes, and do the right thing when the clocks change."*
 
 The tkone schedule format exists to state rules like these in one short line of text, and to
-compute them the same way every time.
+compute them the same way every time. It is made for **operations**: the payment runs, batch
+jobs, reports, deadlines and rotas that have to land on the right business day. It does not
+describe the economics of financial instruments; see
+[What it doesn't do](#what-it-doesnt-do-yet).
 
 ```text
 YY-1M-31L~NB                  the 31st of every month (or the last day), then the next business day
@@ -217,8 +220,8 @@ repeats indefinitely.
 
 ### The scheduled date and the observed date are both kept
 
-When a payment due on Saturday the 31st moves to Monday the 2nd, both dates matter: interest
-accrues to the 31st, while cash moves on the 2nd. An adjustment never replaces the date the rule
+When a payment due on Saturday the 31st moves to Monday the 2nd, both dates matter: the
+statement and the reports are dated the 31st, while cash moves on the 2nd. An adjustment never replaces the date the rule
 produced; every occurrence has both:
 
 - the **scheduled** date the rule produced (the 31st)
@@ -246,16 +249,15 @@ fixed rules for daylight saving:
 
 ### What a schedule needs besides its text
 
-Only one thing is never written in a schedule:
-
-- **a holiday calendar**, which decides what a business day is.
+One thing is never written in a schedule: **the holidays themselves**. A schedule can name its
+holiday calendar (`[cal=GBLO]`), but the calendar's data comes from elsewhere.
 
 A start and a time zone are needed to read a schedule. They can be written in it (`@…`,
 `[Zone]`) or supplied by the system that runs it. How a schedule is stored and picked up again
 later is up to that system. The [README](README.md) covers what the tkone library offers for
 this.
 
-### For finance
+### For payments and banking operations
 
 The common business-day conventions map directly onto adjustments:
 
@@ -268,9 +270,8 @@ The common business-day conventions map directly onto adjustments:
 | Nearest business day | `~B` |
 | N business days before / after | `~NP` / `~NN` |
 
-Instalment and coupon schedules are usually defined by a start and a count or a maturity date,
-which the schedule text can hold (`@2025-04-01 x36`, `..2028-03-31`), or by a term
-(`..+30Y`).
+Instalment collections are usually defined by a start and a count or an end date, which the
+schedule text can hold (`@2025-04-01 x36`, `..2028-03-31`), or by a term (`..+30Y`).
 
 ### For rostering and operations
 
@@ -362,22 +363,21 @@ no month end, no business days, and "one month after January 31" is left to the 
 
 ## A few real-world schedules
 
-### Finance
+### Payments and banking operations
 
 | What | Schedule |
 |------|----------|
-| Monthly coupon on the 31st, following business day | `YY-1M-31L~NB` |
-| Swap payment at month end, Modified Following | `YY-1M-L~MF` |
-| Quarterly payment on the 15th, counted from the start | `YY-3M-15~NB` |
-| Four quarterly coupons on the 15th | `YY-3M-15~NB @2025-03-15 x4` |
-| A three-year loan: 36 payments on the 1st, Modified Following | `YY-MM-01~MF @2025-04-01 x36` |
-| A 30-year mortgage paid at month end | `YY-1M-31L~MF @2025-01-31 ..+30Y` |
-| A 20-year loan paid every other Friday | `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` |
+| Rent collected on the 31st, or the last day, next business day | `YY-1M-31L~NB` |
+| Supplier payment run at month end, never into the next month | `YY-1M-L~MF` |
+| Quarterly fee collected on the 15th, counted from the start | `YY-3M-15~NB` |
+| 36 instalments collected on the 1st, Modified Following | `YY-MM-01~MF @2025-04-01 x36` |
+| Loan repayments collected at month end for 30 years | `YY-1M-31L~MF @2025-01-31 ..+30Y [cal=GBLO]` |
+| Direct debits every other Friday for 20 years | `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` |
 | Payroll on the last business day of the month | `YY-MM-BD#L` |
-| Settlement on the 3rd business day of the month | `YY-MM-BD#3` |
+| Settlement run on the 3rd business day of the month | `YY-MM-BD#3` |
 | Month-end close tasks on the first three business days and the last | `YY-MM-BD#[1-3,L]` |
-| Coupon on the 15th, but only when it is a business day | `YY-MM-15~SB` |
-| Quarterly expiry: 3rd Friday of Mar/Jun/Sep/Dec, preceding if a holiday | `YY-[03,06,09,12]-FRI#3~PB` |
+| Standing order on the 15th, only when it is a business day | `YY-MM-15~SB` |
+| Dollar payment run at 16:30 on New York business days | `YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York] [cal=USNY]` |
 | Weekly sweep every 5 business days | `YY-MM-5BD` |
 | Every 15 months | `1Y-3M-15` |
 
@@ -416,6 +416,12 @@ no month end, no business days, and "one month after January 31" is left to the 
 
 The format is deliberately small. Some things it leaves out:
 
+- **It does not define financial instruments.** The dates of a swap, a bond or an option
+  (periods with stubs, dates generated backwards from maturity, fixings a number of business
+  days before an adjusted date, day counts) are trade economics, defined by FpML, ISDA CDM and
+  libraries such as QuantLib. tkone schedules the operations around them: when payments run,
+  reports are due and jobs fire. A spec has one adjustment, so "two business days before the
+  adjusted date" is computed in code (`BizDayProcessor::sub`), not written in one spec.
 - **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; an
   occurrence has no length.
 - **One start for every part.** All parts of a `|` combination count from the same start;

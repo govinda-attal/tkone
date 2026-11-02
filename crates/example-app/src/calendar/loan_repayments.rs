@@ -1,10 +1,10 @@
-//! **Banking: a cross-border loan's repayment schedule.**
+//! **Loan servicing: when to collect a cross-border loan's repayments.**
 //!
-//! A London company borrows US dollars for 25 years from 31 January 2026.
-//! Repayments fall on the last day of each month. A payment moves only
-//! within its month (Modified Following), and must fall on a day that is a
-//! business day in both London, where the borrower pays, and New York, where
-//! dollars settle.
+//! A servicing system collects repayments on a 25-year US dollar loan to a
+//! London company, from 31 January 2026. Collections fall on the last day of
+//! each month. A collection moves only within its month (Modified
+//! Following), and must fall on a day that is a business day in both London,
+//! where the borrower pays, and New York, where dollars settle.
 //!
 //! The schedule names its calendar, so the text stored with the loan fixes
 //! every payment date:
@@ -13,8 +13,9 @@
 //! YY-1M-31L~MF @2026-01-31 ..+25Y [cal=GBLO+USNY]
 //! ```
 //!
-//! Each payment keeps two dates: the scheduled one, which interest accrues
-//! to, and the one cash moves on.
+//! Each collection keeps two dates: the due date the statement shows, and
+//! the day cash actually moves. (The loan's terms, such as its interest,
+//! are the lending system's business; this schedules the collections.)
 //!
 //! ```text
 //! cargo run -p example-app --bin loan-repayments

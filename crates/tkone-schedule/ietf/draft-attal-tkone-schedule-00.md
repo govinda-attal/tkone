@@ -62,7 +62,7 @@ or holidays, it drops short months rather than falling back to the last day, and
 has only one date.
 
 Business schedules need these things. A payment due on the 31st moves to the next business day
-in shorter months; interest accrues to the scheduled date while cash moves on the adjusted one;
+in shorter months; a statement is dated the scheduled day while cash moves on the adjusted one;
 a report runs two business days before month end; a rota runs four days on and four days off.
 
 The tkone schedule format states such rules in one short line of text:
@@ -83,6 +83,10 @@ This document defines the syntax ({{grammar}}), the inputs that are well-formed 
 ({{validity-rules}}), and the occurrences a schedule produces ({{evaluation-rules}}).
 {{conformance-examples}} lists accepted and rejected inputs. A reference implementation is
 available {{TKONE}}.
+
+The format schedules operations: when payments run, jobs fire and reports are due. It does not
+define the economics of financial instruments (calculation periods, stubs, fixing offsets, day
+counts), for which other standards exist.
 
 What a business day is depends on a holiday calendar. A schedule can name its calendar
 (`[cal=GBLO]`), so that the text alone fixes its dates; the calendars themselves are not part

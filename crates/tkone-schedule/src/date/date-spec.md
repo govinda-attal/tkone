@@ -1122,7 +1122,7 @@ All results are `Exact`: the rule only ever picks business days.
 
 Same result as `YY-MM-L~PB`, but reported as `Exact` on the business day itself rather than
 `AdjustedEarlier(last_day, business_day)`. Use `~PB` when the calendar month end matters too
-(for example, accrual to the 31st).
+(for example, a statement dated the 31st).
 
 **Start:** 2025-01-31 (Friday)
 
@@ -1147,7 +1147,7 @@ Same result as `YY-MM-L~PB`, but reported as `Exact` on the business day itself 
 
 ### 35. `YY-1M-L~MF` — Last day of every month, Modified Following
 
-The standard convention for many swaps and loans: roll forward to the next business day, but
+The usual convention for month-end payment runs: roll forward to the next business day, but
 never into the next month.
 
 **`new_after`:** 2025-05-01
@@ -1336,7 +1336,7 @@ counted by `xN`.
 
 ---
 
-### 45. `YY-1M-31L~MF @2025-01-31 ..+30Y` — A 30-year mortgage paid at month end
+### 45. `YY-1M-31L~MF @2025-01-31 ..+30Y` — Repayments collected at month end for 30 years
 
 The term is in the text: the schedule ends just before 31 January 2055, so it has exactly 360
 payments. A month end on a weekend moves back to the Friday, since Modified Following never

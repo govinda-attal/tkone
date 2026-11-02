@@ -10,7 +10,7 @@
 
 ; @section schedule
 schedule      = union [ OWS "!" OWS exclusion ]
-                *( OWS ( start / end ) / RWS count )
+                *( OWS ( start / end / calendar ) / RWS count )
 union         = part *( OWS "|" OWS part )
 exclusion     = excl-part *( OWS "|" OWS excl-part )
 part          = datetime-spec / date-spec / time-spec
@@ -76,6 +76,9 @@ datetime-spec = date-spec %s"T" time-spec
 start         = "@" OWS moment
 end           = ".." OWS ( moment / duration )
 count         = %s"x" number
+calendar      = "[" %s"cal=" cal-code *( "+" cal-code ) "]"
+cal-code      = 1*( %x41-5A / DIGIT / "-" )
+              ; capitals, digits and "-", e.g. GBLO
 duration      = "+" ( years-part / months-part / weeks-part
                     / days-part )
 years-part    = number %s"Y" [ months-part / weeks-part

@@ -141,6 +141,9 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
     /// - With `with_count`, a resumed schedule is replayed from its start.
     fn assemble(&self, given_start: bool, end: BuilderEnd<Tz>) -> Result<SpecIterator<Tz>> {
         let (body, bounds) = split_bounds(&self.spec)?;
+        if let Some(cal) = bounds.calendar() {
+            return Err(Error::Calendar(format!("a time spec has no business days; remove [cal={cal}]")));
+        }
         let tz = &self.timezone;
         let policy = self.dst_policy;
         let end = match end {

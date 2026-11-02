@@ -84,9 +84,10 @@ This document defines the syntax ({{grammar}}), the inputs that are well-formed 
 {{conformance-examples}} lists accepted and rejected inputs. A reference implementation is
 available {{TKONE}}.
 
-What a business day is depends on a holiday calendar. Holiday calendars are not part of the
-format: they are supplied alongside a schedule, so that the same schedule text can be used for
-different markets.
+What a business day is depends on a holiday calendar. A schedule can name its calendar
+(`[cal=GBLO]`), so that the text alone fixes its dates; the calendars themselves are not part
+of the format. A schedule that names none is evaluated with a calendar supplied alongside it,
+so that the same text can be used for different markets.
 
 # Conventions and Definitions
 
@@ -144,7 +145,7 @@ A schedule is a union of parts, optional exclusions, and optional bounds. The ki
 
 ~~~ abnf
 schedule      = union [ OWS "!" OWS exclusion ]
-                *( OWS ( start / end ) / RWS count )
+                *( OWS ( start / end / calendar ) / RWS count )
 union         = part *( OWS "|" OWS part )
 exclusion     = excl-part *( OWS "|" OWS excl-part )
 part          = datetime-spec / date-spec / time-spec
@@ -237,12 +238,15 @@ T(?:HH|_|\[[0-9,\-]+\]|[0-9]{1,2}H|[0-2]?0-9?):
 This keeps the `T` in `TUE`, `THU` and `SAT` from being taken as the separator. `YY-MM-THUT09:00:00`
 splits into `YY-MM-THU` and `09:00:00`.
 
-## Bounds: start, end and count {#bounds-start-end-and-count}
+## Bounds: start, end, count and calendar {#bounds-start-end-count-and-calendar}
 
 ~~~ abnf
 start         = "@" OWS moment
 end           = ".." OWS ( moment / duration )
 count         = %s"x" number
+calendar      = "[" %s"cal=" cal-code *( "+" cal-code ) "]"
+cal-code      = 1*( %x41-5A / DIGIT / "-" )
+              ; capitals, digits and "-", e.g. GBLO
 duration      = "+" ( years-part / months-part / weeks-part
                     / days-part )
 years-part    = number %s"Y" [ months-part / weeks-part
@@ -263,6 +267,12 @@ zone          = 1*( ALPHA / DIGIT / "/" / "_" / "-" / "+" )
 months, weeks and days, in that order, each at most once: `+30Y`, `+5Y6M`, `+2W`, `+1M15D`. A
 count token only counts when it stands alone, so an `x` inside a zone name such as
 `America/Mexico_City` is not a count.
+
+`calendar` names the holiday calendar whose business days the schedule uses: `[cal=GBLO]`, or
+several joined with `+` (`[cal=GBLO+USNY]`). It has the form of an {{RFC9557}} suffix tag, and the
+`=` keeps it apart from a list such as `[2025-2027]`. This document does not define calendar
+codes; it recommends FpML business centre codes (`GBLO`, `USNY`) and ISO 10383 market
+identifier codes (`XNYS`), so that systems that exchange schedules can agree on them.
 
 
 # Validity rules {#validity-rules}
@@ -310,7 +320,9 @@ A step may exceed the field's range: `25H:00:00` and `HH:90M:00` are valid.
 
 | Rule | Rejected example |
 |------|------------------|
-| At most one start, one end and one count | `YY-MM-15 @2025-01-01 @2025-02-01`, `YY-MM-15 x3 x4` |
+| At most one start, one end, one count and one calendar | `YY-MM-15 @2025-01-01 @2025-02-01`, `YY-MM-15 x3 x4`, `YY-MM-15 [cal=GBLO] [cal=USNY]` |
+| A calendar code is not repeated | `YY-MM-15 [cal=GBLO+GBLO]` |
+| A time schedule names no calendar: it has no business days | `09:00:00 [cal=GBLO]` |
 | A count is at least 1 | `YY-MM-15 x0` |
 | A date is a real calendar date | `YY-MM-15 @2025-13-01` |
 | A zone is a known IANA zone | `YY-MM-15 @2025-01-06[Mars/Base]` |
@@ -436,6 +448,13 @@ union before the `!`.
   offset fixes the single instant it is written on.
 - **`xN`**: at most *N* occurrences, counted from the start. Excluded or skipped (`~SB`) dates
   are not counted. With an end too, whichever comes first stops the schedule.
+- **`[cal=…]`**: the holiday calendar for every business-day rule of the schedule: `BD#…`,
+  `nBD`, `~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~SB`, `~nN` and `~nP`. Weekday rules (`WD#…`, `nWD`,
+  `~W`, `~NW`, `~PW`) only know weekends and do not use it. With several codes, a business day is
+  one in every calendar named; their order does not matter. A schedule that names a calendar
+  MUST be evaluated with that calendar; an implementation that does not have it MUST reject the
+  schedule rather than evaluate it with another. Without `[cal=…]`, the calendar is supplied
+  alongside the schedule.
 
 ## Clock changes {#clock-changes}
 
@@ -463,6 +482,7 @@ union before the `!`.
 | `YY-MM-[TUE,THU]/2W` · `YY-MM-[MON-FRI]/4W[1,2]~SB` | date |
 | `YY-MM-EAS` · `YY-MM-EAS-2` · `YY-MM-OEAS+1~NB` · `YY-04-EAS` · `YY-MM-EAS+39` | date |
 | `YY-MM-[MON-FRI] ! YY-MM-EAS-2 \| YY-MM-EAS+1` | date |
+| `YY-MM-BD#3 ~MF [cal=GBLO]` · `YY-1M-31L~MF @2025-01-31 ..+30Y [cal=GBLO+USNY]` · `YY-MM-15~NB [cal=XNYS] x12` | date |
 | `YY-MM-DD ! YY-12-25 \| YY-01-01` · `YY-MM-BD#3 \| YY-MM-L~PB` | date |
 | `YY-MM-01~MF @2025-04-01 x36` · `YY-MM-15 x3 ..2025-12-31 @2025-01-01` | date |
 | `YY-1M-31L~MF @2025-01-31 ..+30Y` · `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` · `YY-3M-L @2025-03-31 ..+5Y6M x20` | date |
@@ -473,6 +493,7 @@ union before the `!`.
 | `YY-MM-DDT09:00:00` · `YY-MM-THUT9:00:00` · `YY-MM-SATT9-16:00:00` | datetime |
 | `YY-MM-DD~NBT09:00:00` · `YY-MM-[TUE,THU]/2WT18:00:00` · `YY-MM-DDT_:_:_` | datetime |
 | `YY-MM-EAS-2T09:00:00` | datetime |
+| `YY-MM-BD#1T09:00:00 @2025-01-06[Europe/London] [cal=GBLO]` | datetime |
 | `YY-MM-DDT09:00:00 \| YY-MM-15T12:00:00 ! YY-12-25 @2025-01-01[Europe/London] ..2025-12-31 x10` | datetime |
 
 ## Rejected {#rejected}
@@ -487,6 +508,7 @@ union before the `!`.
 | `YY-MM-DD~NA` | not an adjustment |
 | `YY-MM-BD#[1-3L]` | a range counted from the end |
 | `YY-MM-EAS2` · `YY-MM-EASTER` · `YY-MM-EAS+-1` | an Easter offset is a sign and a number |
+| `YY-MM-15 [cal=gblo]` · `YY-MM-15 [cal=]` · `YY-MM-15 [cal=GBLO+]` | a calendar code is capitals, digits and `-` |
 | `YY-MMx3` | a count must stand alone |
 | `YY-MM-15 @2025-01-01 ..+6M1Y` | duration units out of order |
 | `YY-MM-15 @2025-01-01 ..+8H` | a duration has no hours |
@@ -514,7 +536,9 @@ values; an implementation SHOULD also bound the total size of the sets it builds
 The occurrences of a schedule depend on data outside it: the time zone database {{TZDB}}
 {{RFC6557}} and the holiday calendar. Two systems that evaluate the same schedule with different
 data can produce different occurrences. Systems that must agree, for example on a payment date,
-need to agree on that data too, and to protect its integrity.
+need to agree on that data too, and to protect its integrity. Naming the calendar in the
+schedule (`[cal=…]`) makes a mismatch detectable, but two systems can still hold different
+versions of the same calendar.
 
 # IANA Considerations
 
@@ -529,7 +553,7 @@ defined in {{RFC5234}}, Appendix B.1.
 
 ~~~ abnf
 schedule      = union [ OWS "!" OWS exclusion ]
-                *( OWS ( start / end ) / RWS count )
+                *( OWS ( start / end / calendar ) / RWS count )
 union         = part *( OWS "|" OWS part )
 exclusion     = excl-part *( OWS "|" OWS excl-part )
 part          = datetime-spec / date-spec / time-spec
@@ -590,6 +614,9 @@ datetime-spec = date-spec %s"T" time-spec
 start         = "@" OWS moment
 end           = ".." OWS ( moment / duration )
 count         = %s"x" number
+calendar      = "[" %s"cal=" cal-code *( "+" cal-code ) "]"
+cal-code      = 1*( %x41-5A / DIGIT / "-" )
+              ; capitals, digits and "-", e.g. GBLO
 duration      = "+" ( years-part / months-part / weeks-part
                     / days-part )
 years-part    = number %s"Y" [ months-part / weeks-part

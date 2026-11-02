@@ -13,7 +13,16 @@ let payments = SpecIteratorBuilder::new_with_start("YY-1M-31L~MF", london, start
 
 // Business days in both London and TARGET2.
 let both = Calendars::builtin().get("GBLO+EUTA")?;
+
+// A schedule that names its calendar: the text alone fixes its dates.
+let spec = "YY-MM-BD#3 ~MF @2026-01-01 [cal=GBLO+USNY] x12";
+let cal = Calendars::builtin().for_spec(spec)?;
+let iter = SpecIteratorBuilder::from_spec(spec, cal)?.build()?;
 ```
+
+A schedule that names a calendar (`[cal=GBLO]`) only builds with that
+calendar; given any other, building fails rather than running on the wrong
+days.
 
 ## Calendars
 

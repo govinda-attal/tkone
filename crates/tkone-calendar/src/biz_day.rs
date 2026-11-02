@@ -64,4 +64,9 @@ impl BizDayProcessor for Calendar {
     fn sub(&self, dtm: &NaiveDateTime, num: u32) -> tkone_schedule::Result<NaiveDateTime> {
         Ok(self.step(dtm.date(), num, false)?.and_time(dtm.time()))
     }
+
+    /// The calendar's code, so a spec naming it (`[cal=GBLO]`) builds.
+    fn code(&self) -> Option<String> {
+        Some(Calendar::code(self).to_string())
+    }
 }

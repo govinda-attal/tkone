@@ -1,5 +1,5 @@
-//! A start, an end and a count written in the spec:
-//! `<spec> @<start> ..<end> x<count>`.
+//! A start, an end, a count and a calendar written in the spec:
+//! `<spec> @<start> ..<end> x<count> [cal=<codes>]`.
 //!
 //! All are optional and apply to the whole spec, including every part of a
 //! union and its exclusions. A start or end is a date or a datetime,
@@ -22,6 +22,10 @@
 //! the start; with an end too, whichever comes first stops it. Excluded
 //! occurrences are not counted.
 //!
+//! The calendar (`[cal=GBLO]`, `[cal=GBLO+USNY]`) names the holiday calendar
+//! whose business days the schedule counts and moves to. The builder checks
+//! that the business-day processor it is given is that calendar.
+//!
 //! The start anchors the schedule (cadences, positions, steps and the time
 //! phase count from it) and is an inclusive lower bound: results are the
 //! occurrences at or after it. The end is an inclusive upper bound. A start,
@@ -40,6 +44,11 @@ use crate::DstPolicy;
 /// ` x36`: a whitespace-separated token, so zone names such as
 /// `America/Mexico_City` never match.
 static COUNT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|\s)x(\d+)(?:\s|$)").unwrap());
+
+/// `[cal=GBLO+USNY]`. The `=` keeps it apart from lists such as `[2025-2027]`.
+static CALENDAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[cal=([^\]]*)\]").unwrap());
+/// One calendar code: capitals, digits and `-`.
+static CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Z0-9-]+$").unwrap());
 
 static TEXT_TIME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -83,6 +92,8 @@ pub(crate) struct Bounds {
     end: Option<End>,
     zone: Option<chrono_tz::Tz>,
     count: Option<usize>,
+    /// The calendar codes, as written.
+    calendar: Option<Vec<String>>,
 }
 
 /// Splits `spec @start ..end` into the spec and its bounds.
@@ -91,13 +102,15 @@ pub(crate) fn split_bounds(spec: &str) -> Result<(&str, Bounds)> {
     let dots = spec.find("..");
     let count = COUNT.captures(spec);
     let x = count.as_ref().map(|c| c.get(0).unwrap().start());
-    let body_end = [at, dots, x].into_iter().flatten().min().unwrap_or(spec.len());
+    let calendar = CALENDAR.captures(spec);
+    let cal = calendar.as_ref().map(|c| c.get(0).unwrap().start());
+    let body_end = [at, dots, x, cal].into_iter().flatten().min().unwrap_or(spec.len());
     let body = spec[..body_end].trim();
     let mut bounds = Bounds::default();
     let invalid = |reason: String| Error::InvalidSpecBounds(format!("{spec}: {reason}"));
 
     let token = |from: usize| {
-        let next = [at, dots, x].into_iter().flatten().filter(|&i| i > from).min().unwrap_or(spec.len());
+        let next = [at, dots, x, cal].into_iter().flatten().filter(|&i| i > from).min().unwrap_or(spec.len());
         spec[from..next].trim()
     };
     if let Some(caps) = &count {
@@ -109,6 +122,19 @@ pub(crate) fn split_bounds(spec: &str) -> Result<(&str, Bounds)> {
             return Err(invalid("more than one count".into()));
         }
         bounds.count = Some(n);
+    }
+    if let Some(caps) = &calendar {
+        if CALENDAR.find_iter(spec).count() > 1 {
+            return Err(invalid("more than one calendar".into()));
+        }
+        let codes: Vec<String> = caps[1].split('+').map(str::to_string).collect();
+        if let Some(code) = codes.iter().find(|c| !CODE.is_match(c)) {
+            return Err(invalid(format!("calendar code `{code}` must be capitals, digits and `-`")));
+        }
+        if let Some(code) = codes.iter().enumerate().find_map(|(i, c)| codes[..i].contains(c).then_some(c)) {
+            return Err(invalid(format!("calendar code `{code}` is named twice")));
+        }
+        bounds.calendar = Some(codes);
     }
     if let Some(i) = at {
         if spec[i + 1..].contains('@') {
@@ -143,10 +169,12 @@ pub(crate) fn split_bounds(spec: &str) -> Result<(&str, Bounds)> {
     Ok((body, bounds))
 }
 
-/// The spec without its `@start ..end xN` suffix, and the suffix as written.
+/// The spec without its `@start ..end xN [cal=…]` suffix, and the suffix as
+/// written.
 pub(crate) fn split_suffix(spec: &str) -> (&str, &str) {
     let x = COUNT.find(spec).map(|m| m.start());
-    let i = [spec.find('@'), spec.find(".."), x].into_iter().flatten().min().unwrap_or(spec.len());
+    let cal = CALENDAR.find(spec).map(|m| m.start());
+    let i = [spec.find('@'), spec.find(".."), x, cal].into_iter().flatten().min().unwrap_or(spec.len());
     (spec[..i].trim_end(), spec[i..].trim_start())
 }
 
@@ -224,6 +252,32 @@ impl Bounds {
         self.count
     }
 
+    /// The calendar written as `[cal=…]`: its codes joined with `+`, as
+    /// written.
+    pub(crate) fn calendar(&self) -> Option<String> {
+        self.calendar.as_ref().map(|codes| codes.join("+"))
+    }
+
+    /// Fails unless `bdp` is the calendar the spec names, if it names one.
+    /// Codes compare as a set: `GBLO+USNY` is `USNY+GBLO`.
+    pub(crate) fn check_calendar<BDP: crate::biz_day::BizDayProcessor>(&self, bdp: &BDP) -> Result<()> {
+        let Some(named) = &self.calendar else {
+            return Ok(());
+        };
+        let named_set: std::collections::BTreeSet<&str> = named.iter().map(String::as_str).collect();
+        let given = bdp.code();
+        if given.as_deref().is_some_and(|g| g.split('+').map(str::trim).collect::<std::collections::BTreeSet<_>>() == named_set) {
+            return Ok(());
+        }
+        Err(Error::Calendar(match given {
+            Some(given) => format!("the spec names calendar {}, but the business days given are {given}", named.join("+")),
+            None => format!(
+                "the spec names calendar {}, but the business days given are not a named calendar",
+                named.join("+")
+            ),
+        }))
+    }
+
     /// The cursor a schedule read from its own text starts from: just
     /// before its start, or now; in its time zone (UTC if it names none).
     pub(crate) fn cursor(&self) -> Result<DateTime<chrono_tz::Tz>> {
@@ -261,6 +315,11 @@ impl Bounds {
         }
         if let Some(zone) = self.zone {
             out += &format!(" ({})", zone.name());
+        }
+        if let Some(codes) = &self.calendar {
+            let (last, rest) = codes.split_last().expect("a calendar has a code");
+            let names = if rest.is_empty() { last.clone() } else { format!("{} and {last}", rest.join(", ")) };
+            out += &format!(", using the {names} calendar{}", if rest.is_empty() { "" } else { "s" });
         }
         out
     }

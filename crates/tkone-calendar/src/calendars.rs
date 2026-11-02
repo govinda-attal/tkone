@@ -67,6 +67,28 @@ impl Calendars {
         Calendar::joint(&calendars)
     }
 
+    /// The calendar a spec names (`[cal=GBLO+USNY]`), to build it with:
+    ///
+    /// ```rust
+    /// use tkone_calendar::Calendars;
+    /// use tkone_schedule::date::SpecIteratorBuilder;
+    ///
+    /// let spec = "YY-MM-BD#3 ~MF @2026-01-01 [cal=GBLO+USNY] x3";
+    /// let cal = Calendars::builtin().for_spec(spec).unwrap();
+    /// let iter = SpecIteratorBuilder::from_spec(spec, cal).unwrap().build().unwrap();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// If the spec names no calendar, names one this set does not have, or
+    /// its bounds are malformed.
+    pub fn for_spec(&self, spec: &str) -> Result<Calendar> {
+        match tkone_schedule::calendar_of(spec).map_err(|e| Error::Parse(e.to_string()))? {
+            Some(code) => self.get(&code),
+            None => Err(Error::Parse(format!("`{spec}` names no calendar; add [cal=CODE]"))),
+        }
+    }
+
     /// The codes, in order.
     pub fn codes(&self) -> impl Iterator<Item = &str> {
         self.by_code.keys().map(String::as_str)

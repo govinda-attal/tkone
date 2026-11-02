@@ -151,6 +151,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
     fn finish(self, include_start: bool, end: Option<DateTime<Tz>>) -> Result<SpecIterator<Tz, BDP>> {
         let bdp = self.bd_processor;
         let (body, bounds) = split_bounds(&self.spec)?;
+        bounds.check_calendar(&bdp)?;
         // A builder count (`with_count`) takes precedence over one written (`xN`).
         let limits = Limits { count: self.limits.count.or(bounds.count()), ..self.limits.clone() };
         let count = limits.count;

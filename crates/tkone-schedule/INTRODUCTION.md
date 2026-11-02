@@ -50,14 +50,15 @@ Read it left to right as "which years, which months, which days".
 Ranges such as `[01-06]` are written inside brackets, because `-` also separates the parts.
 
 `2Y`, `3M` and steps are counted from the schedule's start (see
-[Start, end, time zone and count](#start-end-time-zone-and-count)), not from January. Started in
+[Start, end, time zone, count and calendar](#start-end-time-zone-count-and-calendar)), not from January. Started in
 February, `YY-3M-15` runs in February, May, August and November.
 
 ### Adjustment (optional)
 
 What to do when the date lands on a day you can't use. A *business day* is a weekday that is not
-a holiday. The holiday calendar is not written in the schedule: it is supplied alongside it, one
-per market if needed, so the same schedule text works for London and New York.
+a holiday. The holiday calendar is supplied alongside the schedule, one per market if needed, so the same
+text works for London and New York; or the schedule names it (`[cal=GBLO]`, see
+[Start, end, time zone, count and calendar](#start-end-time-zone-count-and-calendar)) to fix it.
 
 | Adjustment | Meaning |
 |------------|---------|
@@ -168,10 +169,10 @@ YY-3M[1-2]-15                 the 15th in the first two months of every three
 
 Months and other filters only remove dates from these cycles; they never restart the count.
 
-### Start, end, time zone and count
+### Start, end, time zone, count and calendar
 
-A schedule can carry its own start, end, time zone and number of occurrences, so the text alone
-defines it:
+A schedule can carry its own start, end, time zone, number of occurrences and holiday calendar,
+so the text alone defines it:
 
 ```text
 YY-3M-15~NB @2025-02-15 ..2027-02-15                      quarterly from 15 Feb 2025, until 15 Feb 2027
@@ -179,6 +180,7 @@ YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]     every other Tue and T
 1H:00:00 @2025-01-06T09:00:00[Europe/Paris] ..2025-01-06T17:00   hourly, 09:00 to 17:00 Paris time
 YY-MM-01~MF @2025-04-01 x36                                36 monthly payments from April 2025
 YY-1M-31L~MF @2025-01-31 ..+30Y                            monthly for 30 years from 31 Jan 2025
+YY-MM-BD#3 ~MF [cal=GBLO+USNY]                             3rd business day open in both London and New York
 ```
 
 - **`@start`** is where the counting begins (cadences, weeks, positions, steps and the time
@@ -195,6 +197,12 @@ YY-1M-31L~MF @2025-01-31 ..+30Y                            monthly for 30 years 
   clock changes.
 - **`xN`** stops after *N* occurrences, counted from the start. Excluded dates don't use one up,
   so `x12` always means twelve. With an end as well, whichever comes first stops the schedule.
+- **`[cal=GBLO]`** names the holiday calendar the business days come from. Several joined with
+  `+` must all be open. Without it, `YY-MM-BD#3` means different dates in London and New York, so
+  a stored schedule needs its calendar kept somewhere else; with it, the schedule says which
+  days it means wherever it is read. A system that does not have that calendar refuses the
+  schedule rather than guessing. Codes are agreed between the systems involved; the usual ones
+  are FpML business centres (`GBLO`, `USNY`, `EUTA`) and exchange codes (`XNYS`).
 
 Each is optional. A schedule without a start counts from whenever it is first used, so
 `YY-MM-01~MF x36` is a template: "36 monthly payments from whenever the loan starts", and so is
@@ -342,6 +350,7 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Combine several rules into one schedule | ✗ | ✗ | partly | ✓ `A \| B` |
 | Exclude given dates | ✗ | partly | ✓ | ✓ `! …` |
 | Start, end and time zone in the text | ✗ | ✗ | ✓ | ✓ `@… ..…[Zone]` |
+| Holiday calendar named in the text | ✗ | ✗ | ✗ | ✓ `[cal=GBLO]` |
 | Stop after N occurrences | ✗ | partly | ✓ | ✓ `x36` |
 | Run for a term from the start | ✗ | ✗ | ✗ | ✓ `..+30Y` |
 
@@ -427,9 +436,10 @@ The format is deliberately small. Some things it leaves out:
   Day *k* of the cycle is the start's weekday plus *k* − 1, so `14D[1,3]` from a Sunday is
   Sunday and Tuesday. With a week cycle instead, `YY-MM-[SUN,TUE]/2W` pairs each Sunday with the
   *following* week's Tuesday, because Sunday ends a Monday-to-Sunday week.
-- **No holiday data.** Holiday calendars are supplied with a schedule, not written in it. A
-  schedule can name Easter-based dates (`YY-MM-EAS-2` is Good Friday), but which days a market
-  closes is the calendar's job.
+- **No holiday data.** A schedule can name its calendar (`[cal=GBLO]`) but not list holidays;
+  the calendar itself comes from elsewhere, such as `tkone-calendar`. A schedule can name
+  Easter-based dates (`YY-MM-EAS-2` is Good Friday), but which days a market closes is the
+  calendar's job.
 
 ---
 

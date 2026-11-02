@@ -110,6 +110,7 @@ fn test_checks() {
     assert!(one(r#"{"name": "A", "rule": "YY-01-01", "dates": ["2021-01-01"], "source": "s"}"#).contains("either"));
     assert!(one(r#"{"name": "A", "rule": "YY-01-01~NB"}"#).contains("`~NB`"));
     assert!(one(r#"{"name": "A", "rule": "YY-01-01 @2021-01-01"}"#).contains("bounds"));
+    assert!(one(r#"{"name": "A", "rule": "YY-01-01 [cal=GBLO]"}"#).contains("names a calendar"));
     assert!(one(r#"{"name": "A", "rule": "YY-MM-DD"}"#).contains("more than"));
     assert!(one(r#"{"name": "A", "rule": "YY-02-30"}"#).contains("YY-02-30"));
     assert!(one(r#"{"name": "A", "rule": "YY-01-01", "except": ["2021-01-02"], "source": "s"}"#).contains("not a date the rule gives"));
@@ -219,6 +220,33 @@ fn test_joint() {
         joint.holidays(2025).filter(|h| h.observed == ymd(2025, 4, 18)).map(|h| h.name.as_str()).collect::<Vec<_>>(),
         ["Good Friday"]
     );
+}
+
+#[test]
+fn test_calendar_named_in_the_spec() {
+    use chrono::{TimeZone, Utc};
+    use tkone_schedule::date::SpecIteratorBuilder;
+    let cals = Calendars::builtin();
+    let run = |spec: &str| -> Vec<String> {
+        let cal = cals.for_spec(spec).unwrap();
+        SpecIteratorBuilder::from_spec(spec, cal)
+            .unwrap()
+            .build()
+            .unwrap()
+            .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+            .collect()
+            .unwrap()
+    };
+    // 5 May 2025 is a London bank holiday; 1 May is TARGET's Labour Day.
+    assert_eq!(run("YY-05-05~MF @2025-01-01 [cal=GBLO] x1"), ["2025-05-06"]);
+    assert_eq!(run("YY-05-05~MF @2025-01-01 [cal=EUTA] x1"), ["2025-05-05"]);
+    assert_eq!(run("YY-05-BD#1 @2025-01-01 [cal=GBLO+EUTA] x1"), ["2025-05-02"]);
+    assert_eq!(run("YY-05-BD#1 @2025-01-01 [cal=EUTA+GBLO] x1"), ["2025-05-02"]);
+    // The same text with the wrong calendar does not build.
+    let wrong = SpecIteratorBuilder::new_after("YY-05-05~MF [cal=GBLO]", cals.get("EUTA").unwrap(), Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()).build();
+    assert!(matches!(wrong, Err(tkone_schedule::Error::Calendar(_))));
+    assert!(matches!(cals.for_spec("YY-MM-15 [cal=XXXX]"), Err(Error::Unknown(c)) if c == "XXXX"));
+    assert!(matches!(cals.for_spec("YY-MM-15"), Err(Error::Parse(_))));
 }
 
 /// The embedded data is `data/` as it is now.

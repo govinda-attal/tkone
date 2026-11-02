@@ -82,9 +82,10 @@ This document defines the syntax ({{grammar}}), the inputs that are well-formed 
 {{conformance-examples}} lists accepted and rejected inputs. A reference implementation is
 available {{TKONE}}.
 
-What a business day is depends on a holiday calendar. Holiday calendars are not part of the
-format: they are supplied alongside a schedule, so that the same schedule text can be used for
-different markets.
+What a business day is depends on a holiday calendar. A schedule can name its calendar
+(`[cal=GBLO]`), so that the text alone fixes its dates; the calendars themselves are not part
+of the format. A schedule that names none is evaluated with a calendar supplied alongside it,
+so that the same text can be used for different markets.
 
 # Conventions and Definitions
 
@@ -130,7 +131,9 @@ values; an implementation SHOULD also bound the total size of the sets it builds
 The occurrences of a schedule depend on data outside it: the time zone database {{TZDB}}
 {{RFC6557}} and the holiday calendar. Two systems that evaluate the same schedule with different
 data can produce different occurrences. Systems that must agree, for example on a payment date,
-need to agree on that data too, and to protect its integrity.
+need to agree on that data too, and to protect its integrity. Naming the calendar in the
+schedule (`[cal=…]`) makes a mismatch detectable, but two systems can still hold different
+versions of the same calendar.
 
 # IANA Considerations
 

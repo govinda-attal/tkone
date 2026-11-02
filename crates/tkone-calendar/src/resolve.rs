@@ -112,6 +112,10 @@ pub(crate) fn build(file: &CalendarFile) -> Result<Calendar> {
                     problem(format!("rule `{rule}` has bounds; use `from` and `until`"));
                     continue;
                 }
+                if rule.contains("[cal=") {
+                    problem(format!("rule `{rule}` names a calendar; a holiday rule uses only weekends"));
+                    continue;
+                }
                 if let Some(adj) = ADJUSTMENT
                     .captures_iter(rule)
                     .map(|c| c[1].to_string())

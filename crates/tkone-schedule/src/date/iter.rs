@@ -270,6 +270,7 @@ fn assemble<Tz: TimeZone, BDP: BizDayProcessor>(
     dst_policy: DstPolicy,
 ) -> Result<SpecIterator<Tz, BDP>> {
     let (body, bounds) = split_bounds(spec)?;
+    bounds.check_calendar(&bdp)?;
     // A builder count (`with_count`) takes precedence over one written (`xN`).
     let limits = &Limits { count: limits.count.or(bounds.count()), ..limits.clone() };
     let tz = dtm.timezone();

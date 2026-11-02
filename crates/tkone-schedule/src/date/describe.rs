@@ -148,7 +148,18 @@ enum Days {
     On(String, Option<&'static str>),
 }
 
-fn calendar_days(days: &DayCycle) -> Days {
+/// The fewest days `month` can have: 28 for February.
+fn shortest(month: u32) -> u32 {
+    match month {
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// `spec_months`: the months a `Values` month rule allows, so a note on short
+/// months is left out when none of them is short enough to matter.
+fn calendar_days(days: &DayCycle, spec_months: Option<&std::collections::BTreeSet<u32>>) -> Days {
     match days {
         DayCycle::ForEach => Days::Every("every day".into()),
         DayCycle::AsIs => Days::On(
@@ -158,7 +169,14 @@ fn calendar_days(days: &DayCycle) -> Days {
         DayCycle::OnDays { days, .. } if days.is_empty() => Days::On("on the last day".into(), None),
         DayCycle::OnDays { days, option } => {
             let note = match option {
-                LastDayOption::NA if days.iter().any(|d| *d > 28) => Some("skipped in shorter months"),
+                LastDayOption::NA
+                    if days.iter().any(|d| match spec_months {
+                        Some(ms) => ms.iter().any(|m| *d > shortest(*m)),
+                        None => *d > 28,
+                    }) =>
+                {
+                    Some("skipped in shorter months")
+                }
                 LastDayOption::NA => None,
                 LastDayOption::LastDay => Some("or the last day, in shorter months"),
                 LastDayOption::NextMonthFirstDay => Some("or the 1st of the next month, in shorter months"),
@@ -289,7 +307,11 @@ pub(crate) fn describe(spec: &Spec) -> String {
                 Months::Stride(1) => Months::All,
                 months => months,
             };
-            let (mut out, note) = match (calendar_days(days), months) {
+            let spec_months = match &spec.months {
+                Cycle::Values(ms) => Some(ms),
+                _ => None,
+            };
+            let (mut out, note) = match (calendar_days(days, spec_months), months) {
                 (Days::Every(d), Months::All) => (d, None),
                 (Days::Every(d), Months::In(ms)) => (format!("{d} in {ms}"), None),
                 (Days::Every(d), Months::Stride(k)) => (format!("{d} in {}", stride(k)), None),
@@ -322,6 +344,9 @@ mod tests {
         for (spec, expected) in [
             ("YY-MM-DD", "every day"),
             ("YY-MM-15", "on the 15th of every month"),
+            ("YY-12-[24-31]", "on the 24th to 31st of December"),
+            ("YY-[01,02]-30", "on the 30th of January and February (skipped in shorter months)"),
+            ("YY-MM-31", "on the 31st of every month (skipped in shorter months)"),
             ("YY-MM-EAS", "on Easter Sunday"),
             ("YY-MM-EAS-2", "2 days before Easter Sunday"),
             ("YY-MM-OEAS+1~NB", "1 day after Orthodox Easter Sunday, moved to the next business day when it is not one"),

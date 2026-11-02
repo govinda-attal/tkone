@@ -7,7 +7,7 @@ YEAR-MONTH-DAY[/WEEKS][~ADJUSTMENT]
 SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …  @START ..END xCOUNT
 ```
 
-All three components are required. The optional `/WEEKS` suffix keeps only some weeks ([Week cycles](#week-cycles-optional)), and the optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), dates removed after `!` ([Exclusions](#exclusions-optional)), and a start, end, time zone and count added at the end ([Start, end and time zone](#start-end-and-time-zone-optional)).
+All three components are required. The optional `/WEEKS` suffix keeps only some weeks ([Week cycles](#week-cycles-optional)), and the optional `~ADJUSTMENT` suffix shifts the result to a nearby business day or weekday. Several specs can be combined with `|` ([Union](#union-optional)), dates removed after `!` ([Exclusions](#exclusions-optional)), and a start, end, time zone, count and calendar added at the end ([Start, end, time zone and calendar](#start-end-time-zone-and-calendar-optional)).
 
 ---
 
@@ -221,7 +221,7 @@ steps (`7D`, `5BD`) or have its own `!`.
 > any written in the spec. `.with_count(n)` stops after `n` results counted from the start
 > (excluded dates are not counted); a counted schedule is resumed with `resume_with_start`.
 
-### Start, end and time zone (optional)
+### Start, end, time zone and calendar (optional)
 
 `<spec> @<start> ..<end>` ends the spec with a start and/or an end, each a date or datetime with
 an optional UTC offset and an optional time zone in RFC 9557 brackets:
@@ -248,6 +248,13 @@ YY-MM-15 ..2025-12-31
   36 payments). Excluded dates are not counted; with an end too, whichever comes first stops
   it. It is a separate, space-separated token, and works without a start (counted from the
   first result, or from a builder start), which makes the spec a reusable template.
+- **`[cal=CODE]`** names the holiday calendar the spec's business days come from:
+  `YY-MM-BD#3 ~MF [cal=GBLO]`, or several, all of which must be open, with `+`
+  (`[cal=GBLO+USNY]`). It makes the text self-contained: stored or sent, it means the same dates
+  everywhere. The builder fails with `Error::Calendar` unless the business-day processor it is
+  given has the same code (`BizDayProcessor::code`); `tkone-calendar`'s
+  `Calendars::for_spec(spec)` returns the right one. Without it, any processor is used, so the
+  same text can serve several markets.
 
 They apply to the whole spec, after any `|` and `!`. With a written start, a stored schedule is
 resumed with plain `resume_after`, even for a union, a cycle with positions or a count.

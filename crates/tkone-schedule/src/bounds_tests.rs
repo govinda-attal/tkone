@@ -422,3 +422,112 @@ fn test_duration_written_in_the_spec() {
         "on the 31st of every month (or the last day, in shorter months), moved to the next business day when it is not one, or to the previous one if that is in the next month, from 31 January 2025 for 30 years"
     );
 }
+
+/// Business days on weekdays, except 15 January, under a calendar code.
+#[derive(Debug, Clone)]
+struct Named(&'static str);
+
+impl crate::biz_day::BizDayProcessor for Named {
+    fn is_biz_day(&self, dtm: &chrono::NaiveDateTime) -> crate::Result<bool> {
+        use chrono::Datelike;
+        Ok(WeekendSkipper::new().is_biz_day(dtm)? && !(dtm.month() == 1 && dtm.day() == 15))
+    }
+    fn find_biz_day(&self, dtm: &chrono::NaiveDateTime, direction: crate::biz_day::Direction) -> crate::Result<chrono::NaiveDateTime> {
+        match direction {
+            crate::biz_day::Direction::Prev => self.sub(dtm, 1),
+            _ => self.add(dtm, 1),
+        }
+    }
+    fn add(&self, dtm: &chrono::NaiveDateTime, num: u32) -> crate::Result<chrono::NaiveDateTime> {
+        let mut cur = *dtm;
+        for _ in 0..num {
+            cur += chrono::Duration::days(1);
+            while !self.is_biz_day(&cur)? {
+                cur += chrono::Duration::days(1);
+            }
+        }
+        Ok(cur)
+    }
+    fn sub(&self, dtm: &chrono::NaiveDateTime, num: u32) -> crate::Result<chrono::NaiveDateTime> {
+        let mut cur = *dtm;
+        for _ in 0..num {
+            cur -= chrono::Duration::days(1);
+            while !self.is_biz_day(&cur)? {
+                cur -= chrono::Duration::days(1);
+            }
+        }
+        Ok(cur)
+    }
+    fn code(&self) -> Option<String> {
+        Some(self.0.to_string())
+    }
+}
+
+#[test]
+fn test_calendar_written_in_the_spec() {
+    use crate::biz_day::BizDayProcessor;
+    let run = |spec: &str, bdp: Named| -> crate::Result<Vec<String>> {
+        date::SpecIteratorBuilder::new_after(spec, bdp, ny(2025, 1, 1, 0, 0))
+            .build()?
+            .take(1)
+            .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+            .collect()
+    };
+    // The calendar's business days count: 15 January is its holiday.
+    assert_eq!(run("YY-01-15~NB [cal=GBLO]", Named("GBLO")).unwrap(), ["01-16"]);
+    // It may stand anywhere among the bounds, and codes compare as a set.
+    assert_eq!(run("YY-MM-BD#10 @2025-01-01 [cal=GBLO+USNY] x1", Named("USNY+GBLO")).unwrap(), ["01-14"]);
+    // A different or unnamed processor is an error, never a silent choice.
+    assert!(matches!(run("YY-01-15~NB [cal=GBLO]", Named("USNY")), Err(crate::Error::Calendar(_))));
+    let unnamed = date::SpecIteratorBuilder::new_after("YY-01-15~NB [cal=GBLO]", WeekendSkipper::new(), ny(2025, 1, 1, 0, 0)).build();
+    assert!(matches!(unnamed, Err(crate::Error::Calendar(_))));
+    // Without `[cal=…]` any processor is accepted, as before.
+    assert_eq!(run("YY-01-15~NB", Named("USNY")).unwrap(), ["01-16"]);
+    assert_eq!(WeekendSkipper::new().code(), None);
+
+    // Read from the text alone, with a datetime spec.
+    let got: Vec<_> = datetime::SpecIteratorBuilder::from_spec("YY-01-15~NBT09:00:00 @2025-01-01[Europe/London] [cal=GBLO] x1", Named("GBLO"))
+        .unwrap()
+        .build()
+        .unwrap()
+        .map(|o| Ok(o.observed().format("%m-%d %H:%M").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(got, ["01-16 09:00"]);
+    let wrong = datetime::SpecIteratorBuilder::from_spec("YY-MM-DDT09:00:00 [cal=GBLO]", WeekendSkipper::new()).unwrap().build();
+    assert!(matches!(wrong, Err(crate::Error::Calendar(_))));
+    // A time spec has no business days.
+    let time = time::SpecIteratorBuilder::new("09:00:00 [cal=GBLO]", chrono_tz::UTC).build();
+    assert!(matches!(time, Err(crate::Error::Calendar(_))));
+
+    // Exclusions added by the builder go before it.
+    assert_eq!(
+        date::SpecIteratorBuilder::new_after("YY-01-[15,16] [cal=GBLO]", Named("GBLO"), ny(2025, 1, 1, 0, 0))
+            .with_exclusions("YY-01-15")
+            .build()
+            .unwrap()
+            .take(1)
+            .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+            .collect::<Vec<_>>()
+            .unwrap(),
+        ["01-16"]
+    );
+
+    // Reading and describing it.
+    assert_eq!(crate::calendar_of("YY-MM-15 @2025-01-01 [cal=GBLO] ..2025-12-31").unwrap().as_deref(), Some("GBLO"));
+    assert_eq!(
+        date::describe("YY-MM-BD#3 [cal=GBLO+USNY]").unwrap(),
+        "on the 3rd business day of every month, using the GBLO and USNY calendars"
+    );
+    assert_eq!(date::describe("YY-MM-BD#3 [cal=GBLO]").unwrap(), "on the 3rd business day of every month, using the GBLO calendar");
+    for bad in [
+        "YY-MM-15 [cal=gblo]",
+        "YY-MM-15 [cal=]",
+        "YY-MM-15 [cal=GBLO+]",
+        "YY-MM-15 [cal=GBLO+GBLO]",
+        "YY-MM-15 [cal=GBLO] [cal=USNY]",
+        "YY-MM-15 [cal=GB LO]",
+    ] {
+        assert!(matches!(crate::calendar_of(bad), Err(crate::Error::InvalidSpecBounds(_))), "{bad} should be rejected");
+    }
+}

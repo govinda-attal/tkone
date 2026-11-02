@@ -12,6 +12,10 @@ pub enum Error {
     /// to count from.
     #[error("invalid start or end in spec: {0}")]
     InvalidSpecBounds(String),
+    /// The calendar written in the spec (`[cal=GBLO]`) is not the
+    /// business-day processor the schedule was given.
+    #[error("calendar: {0}")]
+    Calendar(String),
     #[error("invalid end spec")]
     InvalidEndSpec,
     #[error("schedule iterator did not converge")]

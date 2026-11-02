@@ -11,7 +11,7 @@ The `T` separator joins a [date spec](../date/date-spec.md) and a [time spec](..
 Both parts are required. Refer to those documents for the full syntax of each component. Several
 datetime specs can be combined with `|`, whole dates removed after `!`
 ([Exclusions](#exclusions)), and a start, end and time zone added at the end
-([Start, end, time zone and count](#start-end-time-zone-and-count)).
+([Start, end, time zone, count and calendar](#start-end-time-zone-count-and-calendar)).
 
 ### Separator detection
 
@@ -54,7 +54,7 @@ of a union. It cannot use day steps (`7D`) or have its own `!`.
 > `.with_count(n)` stops after `n` ticks counted from the start (excluded ticks are not counted);
 > a counted schedule is resumed with `resume_with_start`.
 
-### Start, end, time zone and count
+### Start, end, time zone, count and calendar
 
 `YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London] ..2025-06-30` is a complete schedule:
 every other Tuesday and Thursday at 18:00 London time, from 7 January to 30 June 2025. The start
@@ -64,7 +64,7 @@ start on the start's day is skipped: `YY-MM-DDT09:00:00 @2025-01-06T10:00:00` be
 7 January. `xN` counts ticks, not dates: `YY-MM-DDT[09,17]:00:00 @2025-01-06 x4` is two days.
 
 The syntax and precedence rules are the same as for
-[date specs](crate::date#start-end-and-time-zone-optional).
+[date specs](crate::date#start-end-time-zone-and-calendar-optional).
 `SpecIteratorBuilder::from_spec(spec, bdp)` builds from the text alone, in its time zone.
 
 

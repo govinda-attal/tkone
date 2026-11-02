@@ -1,16 +1,39 @@
 //! Keeps GRAMMAR.md honest: every schedule in its conformance tables and
 //! validity-rule tables is built, and must be accepted or rejected as stated.
 
-use crate::biz_day::WeekendSkipper;
+use crate::biz_day::{BizDayProcessor, Direction, WeekendSkipper};
 use crate::{date, datetime, time};
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 
 const GRAMMAR: &str = include_str!("../GRAMMAR.md");
+
+/// Weekends only, under whatever calendar code the spec names (`[cal=…]`),
+/// so the tables test the grammar rather than which calendars exist.
+#[derive(Debug, Clone)]
+struct Named(Option<String>);
+
+impl BizDayProcessor for Named {
+    fn is_biz_day(&self, dtm: &NaiveDateTime) -> crate::Result<bool> {
+        WeekendSkipper::new().is_biz_day(dtm)
+    }
+    fn find_biz_day(&self, dtm: &NaiveDateTime, direction: Direction) -> crate::Result<NaiveDateTime> {
+        WeekendSkipper::new().find_biz_day(dtm, direction)
+    }
+    fn add(&self, dtm: &NaiveDateTime, num: u32) -> crate::Result<NaiveDateTime> {
+        WeekendSkipper::new().add(dtm, num)
+    }
+    fn sub(&self, dtm: &NaiveDateTime, num: u32) -> crate::Result<NaiveDateTime> {
+        WeekendSkipper::new().sub(dtm, num)
+    }
+    fn code(&self) -> Option<String> {
+        self.0.clone()
+    }
+}
 
 /// Whether `spec` builds as a schedule of `kind` ("date", "time", "datetime").
 fn builds(spec: &str, kind: &str) -> bool {
     let now = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
-    let bdp = WeekendSkipper::new();
+    let bdp = Named(crate::calendar_of(spec).ok().flatten());
     match kind {
         "date" => date::SpecIteratorBuilder::new_after(spec, bdp, now).build().is_ok(),
         "time" => time::SpecIteratorBuilder::new_after(spec, now).build().is_ok(),

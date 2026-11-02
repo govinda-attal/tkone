@@ -258,7 +258,7 @@
 //! a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
 //! the same way.
 //!
-//! ### Start, end, time zone and count — `<spec> @<start> ..<end> x<count>`
+//! ### Start, end, time zone, count and calendar — `<spec> @<start> ..<end> x<count> [cal=<code>]`
 //!
 //! A spec can end with its own start and end, each a date or datetime with an
 //! optional UTC offset and an optional IANA time zone in RFC 9557 brackets, so
@@ -278,6 +278,10 @@
 //! - `xN` stops after *N* results counted from the start (excluded ones are not
 //!   counted); with an end too, whichever comes first stops it. Without a
 //!   start it is counted from the first result, or a builder start.
+//! - `[cal=GBLO]` names the holiday calendar the business days come from
+//!   (`[cal=GBLO+USNY]`: open in both). The schedule then builds only with a
+//!   business-day processor of that code ([`biz_day::BizDayProcessor::code`]),
+//!   failing with [`Error::Calendar`] otherwise; see [`calendar_of`].
 //! - A start, end or count given to the builder takes precedence. `new_after(dtm)` and
 //!   `resume_after(last)` take a cursor, not a start, so a written start still
 //!   anchors the schedule.
@@ -555,6 +559,26 @@ pub use error::{Error, Result};
 /// Returns an error if the start, end, count or zone is malformed.
 pub fn time_zone_of(spec: &str) -> Result<Option<chrono_tz::Tz>> {
     Ok(bounds::split_bounds(spec)?.1.zone())
+}
+
+/// The holiday calendar a spec names (`[cal=GBLO+USNY]`), as written, if it
+/// names one. A schedule that names a calendar only builds with that
+/// calendar as its business-day processor (see
+/// [`BizDayProcessor::code`](biz_day::BizDayProcessor::code)).
+///
+/// ```rust
+/// assert_eq!(
+///     tkone_schedule::calendar_of("YY-MM-BD#3 ~MF [cal=GBLO+USNY]").unwrap().as_deref(),
+///     Some("GBLO+USNY")
+/// );
+/// assert_eq!(tkone_schedule::calendar_of("YY-MM-BD#3").unwrap(), None);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if the calendar, start, end or count is malformed.
+pub fn calendar_of(spec: &str) -> Result<Option<String>> {
+    Ok(bounds::split_bounds(spec)?.1.calendar())
 }
 
 /// Controls how timezone-aware iterators resolve local datetimes that fall in

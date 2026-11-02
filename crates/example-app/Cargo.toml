@@ -13,8 +13,27 @@ path = "src/trigger/imperative.rs"
 name = "trigger-declarative"
 path = "src/trigger/declarative.rs"
 
+# Use cases: schedules on real holiday calendars.
+[[bin]]
+name = "loan-repayments"
+path = "src/calendar/loan_repayments.rs"
+
+[[bin]]
+name = "exchange-jobs"
+path = "src/calendar/exchange_jobs.rs"
+
+[[bin]]
+name = "payroll"
+path = "src/calendar/payroll.rs"
+
+[[bin]]
+name = "store-deliveries"
+path = "src/calendar/store_deliveries.rs"
+
 [dependencies]
 tkone-schedule       = { workspace = true }
+tkone-calendar       = { workspace = true }
+fallible-iterator    = { workspace = true }
 tkone-trigger        = { workspace = true }
 tkone-trigger-macros = { workspace = true }
 chrono               = { workspace = true }

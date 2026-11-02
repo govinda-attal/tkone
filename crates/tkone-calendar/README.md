@@ -24,6 +24,15 @@ A schedule that names a calendar (`[cal=GBLO]`) only builds with that
 calendar; given any other, building fails rather than running on the wrong
 days.
 
+Runnable use cases, in [`example-app`](../example-app/src/calendar/):
+
+| Program | Industry | Shows |
+|---------|----------|-------|
+| `cargo run -p example-app --bin loan-repayments` | Banking | 25-year loan, Modified Following on London + New York; scheduled vs paid dates |
+| `cargo run -p example-app --bin exchange-jobs` | Capital markets | 16:30 jobs on NYSE trading days, month-end report; the wrong calendar refused |
+| `cargo run -p example-app --bin payroll` | HR | one fortnightly template run with Sydney's and Auckland's calendars |
+| `cargo run -p example-app --bin store-deliveries` | Retail | deliveries dropped on Johannesburg holidays, including a declared election day |
+
 ## Calendars
 
 | Code | Calendar | Covers | Confirmed until | Checked against |

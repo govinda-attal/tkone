@@ -249,6 +249,44 @@ fn test_calendar_named_in_the_spec() {
     assert!(matches!(cals.for_spec("YY-MM-15"), Err(Error::Parse(_))));
 }
 
+#[test]
+fn test_datetime_dates_checked_in_the_calendars_zone() {
+    use tkone_schedule::datetime::SpecIteratorBuilder;
+    let cals = Calendars::builtin();
+    let run = |spec: &str| -> tkone_schedule::Result<Vec<String>> {
+        SpecIteratorBuilder::from_spec(spec, cals.for_spec(spec).unwrap())?
+            .build()?
+            .map(|o| Ok(o.observed().format("%a %m-%d %H:%M").to_string()))
+            .collect()
+    };
+    // 21:30 in London is 16:30 the same day in New York: fine.
+    assert_eq!(
+        run("YY-MM-DD~SBT21:30:00 @2026-11-25[Europe/London] ..2026-11-27 [cal=XNYS]").unwrap(),
+        ["Wed 11-25 21:30", "Fri 11-27 21:30"]
+    );
+    // 02:00 UTC is the evening before in New York: refused, not run on the
+    // wrong day. (Without the check, Fri 27 Nov 02:00 UTC would pass as a
+    // trading day though it is Thanksgiving evening in New York.)
+    let err = run("YY-MM-DD~SBT02:00:00 @2026-11-25 ..2026-11-27 [cal=XNYS]").unwrap_err();
+    assert!(matches!(err, tkone_schedule::Error::Calendar(ref m) if m.contains("America/New_York")), "{err}");
+    // Written in the calendar's zone, it runs.
+    assert_eq!(
+        run("YY-MM-DD~SBT21:00:00 @2026-11-24[America/New_York] ..2026-11-27 [cal=XNYS]").unwrap(),
+        ["Tue 11-24 21:00", "Wed 11-25 21:00", "Fri 11-27 21:00"]
+    );
+    // A joint calendar across zones has no single zone, so no check.
+    assert_eq!(cals.get("GBLO+USNY").unwrap().zone(), None);
+    // Date schedules are dates: not checked.
+    let dates: Vec<_> = tkone_schedule::date::SpecIteratorBuilder::from_spec("YY-MM-BD#1 @2026-01-01 [cal=XNYS] x1", cals.get("XNYS").unwrap())
+        .unwrap()
+        .build()
+        .unwrap()
+        .map(|o| Ok(o.observed().date_naive()))
+        .collect()
+        .unwrap();
+    assert_eq!(dates, [ymd(2026, 1, 2)]);
+}
+
 /// The embedded data is `data/` as it is now.
 #[cfg(feature = "yaml")]
 #[test]

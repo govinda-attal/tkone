@@ -373,6 +373,10 @@ union before the `!`.
   MUST be evaluated with that calendar; an implementation that does not have it MUST reject the
   schedule rather than evaluate it with another. Without `[cal=…]`, the calendar is supplied
   alongside the schedule.
+- **Calendars and time zones**: business days are judged on dates in the schedule's time zone.
+  When an implementation knows the calendar's own time zone, it SHOULD reject a datetime
+  occurrence whose date there is a different date (02:00 UTC is the previous evening in New
+  York), rather than judge the business day on the wrong date.
 
 ### 3.8 Clock changes
 

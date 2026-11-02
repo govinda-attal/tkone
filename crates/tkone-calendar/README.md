@@ -29,6 +29,7 @@ Runnable use cases, in [`example-app`](../example-app/src/calendar/):
 | Program | Industry | Shows |
 |---------|----------|-------|
 | `cargo run -p example-app --bin loan-repayments` | Banking | 25-year loan, Modified Following on London + New York; scheduled vs paid dates |
+| `cargo run -p example-app --bin interest-rate-swap` | Capital markets | a 5-year euro swap: roll dates on London + TARGET, accrual days, EURIBOR fixings two TARGET days before each period, and where one spec stops |
 | `cargo run -p example-app --bin exchange-jobs` | Capital markets | 16:30 jobs on NYSE trading days, month-end report; the wrong calendar refused |
 | `cargo run -p example-app --bin payroll` | HR | one fortnightly template run with Sydney's and Auckland's calendars |
 | `cargo run -p example-app --bin store-deliveries` | Retail | deliveries dropped on Johannesburg holidays, including a declared election day |

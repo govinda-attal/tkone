@@ -254,7 +254,9 @@ YY-MM-15 ..2025-12-31
   everywhere. The builder fails with `Error::Calendar` unless the business-day processor it is
   given has the same code (`BizDayProcessor::code`); `tkone-calendar`'s
   `Calendars::for_spec(spec)` returns the right one. Without it, any processor is used, so the
-  same text can serve several markets.
+  same text can serve several markets. Business days are judged on dates in the spec's time
+  zone; a datetime spec whose run falls on another date in the calendar's own zone fails with
+  `Error::Calendar` (see `BizDayProcessor::time_zone`), so write it in the calendar's zone.
 
 They apply to the whole spec, after any `|` and `!`. With a written start, a stored schedule is
 resumed with plain `resume_after`, even for a union, a cycle with positions or a count.

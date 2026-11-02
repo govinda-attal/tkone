@@ -473,6 +473,9 @@ pub struct SpecIterator<Tz: TimeZone, BDP: BizDayProcessor> {
     exclusions: Option<DateNaiveSpecIterator<BDP>>,
     /// `with_count`: results left.
     remaining: Option<usize>,
+    /// The business-day processor's code and time zone, to check that each
+    /// result's date is the same there (see [`BizDayProcessor::time_zone`]).
+    calendar: Option<(String, chrono_tz::Tz)>,
 }
 
 /// The parts of a union spec, merged by actual time.
@@ -536,6 +539,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
             outer.union = Some(Box::new(Merge::new(parts, actual)));
             return Ok(outer);
         }
+        let calendar = bdp.time_zone().map(|zone| (bdp.code().unwrap_or_else(|| "the calendar".into()), zone));
         let spec = Spec::from_str(spec)?;
         if local.is_some() && anchor.is_none() && crate::date::needs_start(&spec.date_spec)? {
             return Err(crate::date::resume_needs_start());
@@ -578,7 +582,28 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
             union: None,
             exclusions: None,
             remaining: None,
+            calendar,
         })
+    }
+
+    /// Fails if `occurrence` falls on another date in the calendar's own time
+    /// zone: its business day would be judged on the wrong day.
+    fn check_calendar_date(&self, occurrence: &Occurrence<DateTime<Tz>>) -> Result<()> {
+        let Some((code, zone)) = &self.calendar else {
+            return Ok(());
+        };
+        let at = occurrence.observed();
+        let there = at.with_timezone(zone);
+        if there.date_naive() == at.date_naive() {
+            return Ok(());
+        }
+        Err(Error::Calendar(format!(
+            "{} is {} in {}, where {code}'s business days are counted; write the schedule in that zone (@…[{}])",
+            at.naive_local().format("%Y-%m-%d %H:%M"),
+            there.format("%Y-%m-%d %H:%M"),
+            zone.name(),
+            zone.name()
+        )))
     }
 
 
@@ -682,6 +707,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
                     continue;
                 }
             }
+            self.check_calendar_date(&occurrence)?;
             if let Some(n) = &mut self.remaining {
                 *n -= 1;
             }

@@ -69,4 +69,11 @@ impl BizDayProcessor for Calendar {
     fn code(&self) -> Option<String> {
         Some(Calendar::code(self).to_string())
     }
+
+    /// The calendar's time zone, so a datetime schedule fails rather than
+    /// judge a business day on another date than the calendar's place. A
+    /// joint calendar of places in different zones has none.
+    fn time_zone(&self) -> Option<chrono_tz::Tz> {
+        self.zone().and_then(|z| z.parse().ok())
+    }
 }

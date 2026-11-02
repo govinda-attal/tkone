@@ -105,6 +105,16 @@ pub trait BizDayProcessor: Debug + Clone + Send + Sync + 'static {
     fn code(&self) -> Option<String> {
         None
     }
+
+    /// The time zone of the place whose business days these are, if it has
+    /// one. A datetime schedule judges business days on its own local dates;
+    /// when a run's date there is not its date in this zone (02:00 UTC is
+    /// still the evening before in New York), the iterator fails with
+    /// [`Error::Calendar`] rather than use the wrong
+    /// day. `None` by default: no check.
+    fn time_zone(&self) -> Option<chrono_tz::Tz> {
+        None
+    }
 }
 
 /// Direction used when searching for a nearby business day.

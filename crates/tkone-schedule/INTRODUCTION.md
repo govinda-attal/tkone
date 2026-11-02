@@ -202,7 +202,9 @@ YY-MM-BD#3 ~MF [cal=GBLO+USNY]                             3rd business day open
   a stored schedule needs its calendar kept somewhere else; with it, the schedule says which
   days it means wherever it is read. A system that does not have that calendar refuses the
   schedule rather than guessing. Codes are agreed between the systems involved; the usual ones
-  are FpML business centres (`GBLO`, `USNY`, `EUTA`) and exchange codes (`XNYS`).
+  are FpML business centres (`GBLO`, `USNY`, `EUTA`) and exchange codes (`XNYS`). Write times in
+  the calendar's own time zone: a run at 02:00 UTC is still the previous evening in New York,
+  so a schedule on `XNYS` written that way is refused rather than run on the wrong day.
 
 Each is optional. A schedule without a start counts from whenever it is first used, so
 `YY-MM-01~MF x36` is a template: "36 monthly payments from whenever the loan starts", and so is

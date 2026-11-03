@@ -26,6 +26,7 @@ tokio             = { workspace = true }
 tokio-util        = { workspace = true }
 
 [dev-dependencies]
+tkone-calendar       = { workspace = true }
 tkone-trigger-macros = { workspace = true }
 thiserror            = { workspace = true }
 

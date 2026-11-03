@@ -26,10 +26,20 @@
 //! written in the spec anchors the schedule's grid. Past occurrences are never
 //! fired.
 //!
-//! **Only [`tkone_schedule::time`] specs are supported.** `date` and `datetime`
-//! specs (daily, weekly, monthly) require persistent state to survive process
-//! restarts — a missed tick on restart is silently lost. Use the `tempo` crate
-//! for those schedules.
+//! ## Business-day schedules
+//!
+//! A time spec repeats within the day and simply starts again from now after
+//! a restart. A schedule that runs once a day or less, such as "16:30 on New
+//! York business days" (`YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York]
+//! [cal=USNY]`), must not lose a run to a restart. [`BusinessSchedule`] runs
+//! such a datetime spec on a holiday calendar (any
+//! [`BizDayProcessor`](tkone_schedule::biz_day::BizDayProcessor), such as a
+//! `tkone-calendar` `Calendar`), records each run it fires in a
+//! [`StateStore`] ([`MemoryStore`], [`FileStore`], or your own), and resumes
+//! after the last one when rebuilt. Runs missed while it was down follow its
+//! [`CatchUp`] policy. Delivery is at least once.
+//!
+//! *Run `cargo run -p tkone-trigger --example business_day_jobs` for a complete program.*
 //!
 //! ## Example
 //!
@@ -47,6 +57,9 @@ use tkone_schedule::{Error, Occurrence};
 use tokio::task::JoinHandle;
 pub use tokio_util::sync::CancellationToken;
 pub use inventory;
+
+mod business;
+pub use business::{BusinessSchedule, CatchUp, FileStore, MemoryStore, StateStore};
 
 // ── Building a time schedule ─────────────────────────────────────────────────
 
@@ -155,8 +168,8 @@ pub trait TickContext: Send + 'static {
     /// (`actual`) and the business-day-adjusted settlement date (`observed`).
     ///
     /// For `time`-based iterators the result is always [`Occurrence::Exact`]
-    /// since no business-day adjustment is applied. `tkone-trigger` only
-    /// supports `time` specs; `date` and `datetime` iterators are excluded.
+    /// since no business-day adjustment is applied. A [`BusinessSchedule`]'s
+    /// can be adjusted (`~NB` moved it to the next business day).
     fn occurrence(&self) -> &Occurrence<DateTime<Utc>>;
 }
 
@@ -164,7 +177,7 @@ pub trait TickContext: Send + 'static {
 ///
 /// Carries the [`Occurrence<DateTime<Utc>>`] for the current tick.
 /// Clone is cheap — the inner `DateTime` values are `Copy`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FireContext {
     occurrence: Occurrence<DateTime<Utc>>,
 }
@@ -231,16 +244,27 @@ type BoxedErrorHandler<E> = Arc<
 
 /// Drives a [`Scheduler`] tick by tick.
 ///
-/// Only [`tkone_schedule::time::SpecIterator`] implements this trait.
-/// `tkone-trigger` is an **in-memory, intra-day** trigger — it does not persist
-/// state across restarts. `date` and `datetime` specs (daily, weekly, monthly)
-/// are intentionally excluded: a missed tick on process restart is silently lost,
-/// which is unacceptable for those schedules. Use the `tempo` crate for
-/// persistent, date-and-datetime-aware scheduling.
+/// Implemented by [`tkone_schedule::time::SpecIterator`] (in memory: a time
+/// spec simply starts again after a restart) and by [`BusinessSchedule`]
+/// (datetime specs on business days, resumed from a [`StateStore`]). `date`
+/// and `datetime` iterators do not implement it directly: without stored
+/// state a restart would silently lose a run.
 pub trait ScheduleIter: Send + 'static {
     /// Returns the next fire time as an [`Occurrence`] in UTC, or `None` when
     /// the iterator is exhausted or encounters an error.
     fn next_fire(&mut self) -> Option<Occurrence<DateTime<Utc>>>;
+
+    /// Like [`next_fire`](Self::next_fire), but reports an error instead of
+    /// ending. [`Scheduler::try_run`] uses it.
+    fn try_next_fire(&mut self) -> Result<Option<Occurrence<DateTime<Utc>>>, Error> {
+        Ok(self.next_fire())
+    }
+
+    /// Called after every callback for `occurrence` has finished, so the
+    /// iterator can record it. Does nothing by default.
+    fn fired(&mut self, _occurrence: &Occurrence<DateTime<Utc>>) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<Tz> ScheduleIter for tkone_schedule::time::SpecIterator<Tz>
@@ -379,13 +403,24 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
     /// `on_error`; the scheduler always advances to the next tick.
     /// If [`fire_on_start`](Self::fire_on_start) was called, all callbacks fire once immediately
     /// before waiting for the first scheduled tick.
-    pub async fn run(mut self) {
+    pub async fn run(self) {
+        let _ = self.try_run().await;
+    }
+
+    /// Like [`run`](Self::run), but stops at the first error from the
+    /// schedule, such as a [`StateStore`] that cannot save, and returns it.
+    /// Callback errors still go to `on_error` and do not stop it.
+    ///
+    /// # Errors
+    ///
+    /// The schedule's error, if it ends with one.
+    pub async fn try_run(mut self) -> Result<(), Error> {
         if self.fire_on_start {
             let ctx = FireContext::new(Occurrence::Exact(Utc::now()));
             self.fire_callbacks(ctx).await;
         }
 
-        while let Some(nr) = self.iter.next_fire() {
+        while let Some(nr) = self.iter.try_next_fire()? {
             let fire_at = *nr.observed();
             let delay = fire_at - Utc::now();
             if delay > chrono::Duration::zero() {
@@ -400,9 +435,11 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
                 break;
             }
 
-            let ctx = FireContext::new(nr);
+            let ctx = FireContext::new(nr.clone());
             self.fire_callbacks(ctx).await;
+            self.iter.fired(&nr)?;
         }
+        Ok(())
     }
 
     async fn fire_callbacks(&self, ctx: FireContext) {

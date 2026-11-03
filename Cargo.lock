@@ -541,6 +541,7 @@ dependencies = [
  "fallible-iterator",
  "inventory",
  "thiserror",
+ "tkone-calendar",
  "tkone-schedule",
  "tkone-trigger-macros",
  "tokio",

@@ -28,10 +28,20 @@ spec (`@2026-06-01T09:00[Europe/London]`), else UTC. A `start_spec`
 written in the spec anchors the schedule's grid. Past occurrences are never
 fired.
 
-**Only [`tkone_schedule::time`] specs are supported.** `date` and `datetime`
-specs (daily, weekly, monthly) require persistent state to survive process
-restarts — a missed tick on restart is silently lost. Use the `tempo` crate
-for those schedules.
+## Business-day schedules
+
+A time spec repeats within the day and simply starts again from now after
+a restart. A schedule that runs once a day or less, such as "16:30 on New
+York business days" (`YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York]
+[cal=USNY]`), must not lose a run to a restart. [`BusinessSchedule`] runs
+such a datetime spec on a holiday calendar (any
+[`BizDayProcessor`](tkone_schedule::biz_day::BizDayProcessor), such as a
+`tkone-calendar` `Calendar`), records each run it fires in a
+[`StateStore`] ([`MemoryStore`], [`FileStore`], or your own), and resumes
+after the last one when rebuilt. Runs missed while it was down follow its
+[`CatchUp`] policy. Delivery is at least once.
+
+*Run `cargo run -p tkone-trigger --example business_day_jobs` for a complete program.*
 
 ## Example
 

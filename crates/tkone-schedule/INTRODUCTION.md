@@ -421,7 +421,7 @@ The format is deliberately small. Some things it leaves out:
   days before an adjusted date, day counts) are trade economics, defined by FpML, ISDA CDM and
   libraries such as QuantLib. tkone schedules the operations around them: when payments run,
   reports are due and jobs fire. A spec has one adjustment, so "two business days before the
-  adjusted date" is computed in code (`BizDayProcessor::sub`), not written in one spec.
+  adjusted date" is computed in code, not written in one spec.
 - **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; an
   occurrence has no length.
 - **One start for every part.** All parts of a `|` combination count from the same start;

@@ -1,0 +1,25 @@
+[package]
+name        = "tkone-py"
+version     = "0.1.0"
+edition     = "2021"
+license     = "Apache-2.0"
+authors     = ["Govinda Attal"]
+repository  = "https://github.com/govinda-attal/tkone"
+description = "Python bindings for tkone-schedule and tkone-calendar."
+publish     = false
+
+# Built by maturin (see pyproject.toml), outside the main workspace, so the
+# repository's cargo build never needs Python.
+[workspace]
+
+[lib]
+name       = "_tkone"
+crate-type = ["cdylib"]
+
+[dependencies]
+chrono            = "0.4"
+chrono-tz         = "0.10"
+fallible-iterator = "0.3"
+pyo3              = { version = "0.28", features = ["abi3-py39", "chrono", "chrono-tz"] }
+tkone-calendar    = { path = "../../crates/tkone-calendar" }
+tkone-schedule    = { path = "../../crates/tkone-schedule" }

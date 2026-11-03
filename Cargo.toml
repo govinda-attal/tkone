@@ -9,6 +9,8 @@ members = [
     "crates/tkone-tempo",
     "crates/tkone-calendar",
 ]
+# The Python bindings build with maturin, on their own: see bindings/python.
+exclude = ["bindings"]
 
 [workspace.package]
 version     = "0.1.0"

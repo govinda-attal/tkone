@@ -1,0 +1,5 @@
+# Built by maturin develop
+*.so
+*.pyd
+__pycache__/
+.pytest_cache/

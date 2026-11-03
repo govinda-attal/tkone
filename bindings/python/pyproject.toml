@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tkone"
+version = "0.1.0"
+description = "Business-day schedules in one line of text: 'YY-MM-BD#3 ~MF [cal=GBLO]', with verified holiday calendars."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Office/Business :: Scheduling",
+]
+
+[project.urls]
+Repository = "https://github.com/govinda-attal/tkone"
+
+[tool.maturin]
+python-source = "python"
+module-name = "tkone._tkone"
+features = ["pyo3/extension-module"]

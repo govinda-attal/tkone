@@ -122,12 +122,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "fallible-iterator",
- "thiserror",
  "tkone-calendar",
  "tkone-schedule",
- "tkone-trigger",
- "tkone-trigger-macros",
- "tokio",
 ]
 
 [[package]]

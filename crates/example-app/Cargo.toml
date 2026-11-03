@@ -5,15 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish          = false
 
-[[bin]]
-name = "trigger-imperative"
-path = "src/trigger/imperative.rs"
+# Use cases that combine the crates. Each crate's own API examples are in
+# its examples/ directory; see the root README.
 
-[[bin]]
-name = "trigger-declarative"
-path = "src/trigger/declarative.rs"
-
-# Use cases: schedules on real holiday calendars.
 [[bin]]
 name = "loan-repayments"
 path = "src/calendar/loan_repayments.rs"
@@ -34,11 +28,7 @@ path = "src/calendar/store_deliveries.rs"
 tkone-schedule       = { workspace = true }
 tkone-calendar       = { workspace = true }
 fallible-iterator    = { workspace = true }
-tkone-trigger        = { workspace = true }
-tkone-trigger-macros = { workspace = true }
 chrono               = { workspace = true }
-thiserror            = { workspace = true }
-tokio                = { workspace = true }
 
 [lints]
 workspace = true

@@ -104,7 +104,7 @@
 //!
 //! ## Complete example
 //!
-//! *Run `cargo run -p example-app --bin declarative` for the full program.*
+//! *Run `cargo run -p tkone-trigger --example declarative_payments` for the full program.*
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;

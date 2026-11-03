@@ -102,6 +102,6 @@ MySchedule::run_until_signal().await;
 
 ## Complete example
 
-*Run `cargo run -p example-app --bin declarative` for the full program.*
+*Run `cargo run -p tkone-trigger --example declarative_payments` for the full program.*
 
 <!-- cargo-rdme end -->

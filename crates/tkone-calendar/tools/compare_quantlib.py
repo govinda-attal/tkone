@@ -52,7 +52,7 @@ KNOWN: dict[str, dict[str, str]] = {
 
 def tkone_days(code: str, first: int, last: int) -> set[str]:
     out = subprocess.run(
-        ["cargo", "run", "-q", "-p", "tkone-calendar", "--features", "yaml", "--example", "dump", "--", code, str(first), str(last)],
+        ["cargo", "run", "-q", "-p", "tkone-calendar", "--features", "yaml", "--bin", "tkone-calendar-dump", "--", code, str(first), str(last)],
         cwd=CRATE, check=True, capture_output=True, text=True,
     ).stdout
     return {line.split()[0] for line in out.splitlines() if line.strip()}

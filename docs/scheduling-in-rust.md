@@ -327,10 +327,10 @@ Each layer is independently usable. If you need fine-grained control — multipl
 
 ```bash
 # Imperative style
-cargo run -p example-app --bin imperative
+cargo run -p tkone-trigger --example process_payments
 
 # Declarative macro style
-cargo run -p example-app --bin declarative
+cargo run -p tkone-trigger --example declarative_payments
 ```
 
 Both examples run a two-job scheduler (one that always fails, one that always succeeds) for 25 seconds, printing output on every tick so you can see the error routing in action.

@@ -1,9 +1,9 @@
 //! Prints a calendar's holiday days off that are weekdays, one per line, to
-//! compare with other sources. Reads `data/` directly, so it needs no compile
-//! step:
+//! compare with other sources (`tools/compare_quantlib.py` uses it). Reads
+//! `data/` directly, so it needs no compile step:
 //!
 //! ```text
-//! cargo run -p tkone-calendar --features yaml --example dump -- GBLO 1990 2075
+//! cargo run -p tkone-calendar --features yaml --bin tkone-calendar-dump -- GBLO 1990 2075
 //! ```
 
 use chrono::NaiveDate;

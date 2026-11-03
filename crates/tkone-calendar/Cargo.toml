@@ -35,6 +35,7 @@ required-features = ["yaml"]
 [lints]
 workspace = true
 
-[[example]]
-name = "dump"
+[[bin]]
+name = "tkone-calendar-dump"
+path = "tools/dump.rs"
 required-features = ["yaml"]

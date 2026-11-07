@@ -1,0 +1,488 @@
+//! Schedules: rules with everything around them.
+//!
+//! A rule string (`YY-MM-L~PBT18:00:00`) describes one recurrence. A
+//! [`Schedule`](crate::schedule::Schedule) adds what surrounds it: the start it is anchored to and the
+//! time zone it is read in, the business days its adjustments use, an end
+//! (`until`) or a count, several named rules, and exclusions. See
+//! `docs/schedule-document.md` in the repository for the design.
+//!
+//! ```rust
+//! use chrono::TimeZone;
+//! use chrono_tz::Europe::London;
+//! use fallible_iterator::FallibleIterator;
+//! use tkone_schedule::biz_day::WeekendSkipper;
+//! use tkone_schedule::schedule::Schedule;
+//!
+//! let start = London.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap();
+//! let schedule = Schedule::builder(start, WeekendSkipper::new())
+//!     .named_rule("open", "YY-MM-DD~SBT09:00:00")
+//!     .named_rule("month-end", "YY-MM-L~PBT18:00:00")
+//!     .build()?;
+//!
+//! // 31 May 2026 is a Sunday: month end moves to Friday 29 May.
+//! let after = London.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap();
+//! let slot = schedule.slots_after(&after)?.next()?.unwrap();
+//! assert_eq!(slot.at, London.with_ymd_and_hms(2026, 5, 29, 18, 0, 0).unwrap());
+//! assert_eq!(slot.sources[0].rule_id.as_deref(), Some("month-end"));
+//! assert_eq!(slot.sources[0].actual, London.with_ymd_and_hms(2026, 5, 31, 18, 0, 0).unwrap());
+//! # Ok::<(), tkone_schedule::Error>(())
+//! ```
+
+use std::collections::{BTreeSet, VecDeque};
+
+use chrono::{DateTime, NaiveDate, NaiveTime};
+use chrono_tz::Tz;
+use fallible_iterator::FallibleIterator;
+
+use crate::biz_day::BizDayProcessor;
+use crate::bounds::{just_before, split_bounds};
+use crate::date::NaiveSpecIterator as DateSpecIterator;
+use crate::datetime::SpecIterator;
+use crate::merge::{split_exclusions, union_parts};
+use crate::utils::resolve_local;
+use crate::{DstPolicy, Error, IntervalMode, Occurrence, Result, TimeAnchor};
+
+/// One instant of a [`Schedule`], with every rule that produced it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slot {
+    /// When it happens: the adjusted (observed) instant.
+    pub at: DateTime<Tz>,
+    /// The rules that produced `at`, in rule order, each with its actual
+    /// (unadjusted) time. Usually one; more when rules coincide, or when an
+    /// adjustment moves several dates to the same day (`~NB` moves Saturday
+    /// and Sunday to Monday).
+    pub sources: Vec<Source>,
+}
+
+/// A rule's part in a [`Slot`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    /// The rule's id, if it was given one.
+    pub rule_id: Option<String>,
+    /// The time the rule produced before any business-day adjustment.
+    pub actual: DateTime<Tz>,
+}
+
+/// Which date an exclusion is tested against.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExcludeMatch {
+    /// The rule's date before adjustment: excluding 25 December drops a
+    /// `~NB` occurrence moved from the 25th to the 27th. The default.
+    #[default]
+    Actual,
+    /// The date it happens: excluding 27 December drops whatever lands on it.
+    Observed,
+}
+
+#[derive(Debug, Clone)]
+struct Rule {
+    id: Option<String>,
+    spec: String,
+}
+
+/// Rules anchored at a start, read in its time zone, on a business-day
+/// processor's days, with an optional end, count and exclusions.
+///
+/// Built with [`Schedule::builder`]; iterated with [`slots`](Self::slots)
+/// or [`slots_after`](Self::slots_after).
+#[derive(Debug, Clone)]
+pub struct Schedule<B: BizDayProcessor> {
+    bdp: B,
+    start: DateTime<Tz>,
+    until: Option<DateTime<Tz>>,
+    count: Option<usize>,
+    rules: Vec<Rule>,
+    exclude_dates: BTreeSet<NaiveDate>,
+    exclude_rules: Vec<String>,
+    exclude_match: ExcludeMatch,
+    options: (DstPolicy, IntervalMode, TimeAnchor),
+}
+
+/// Builds a [`Schedule`]; see [`Schedule::builder`].
+#[derive(Debug, Clone)]
+pub struct ScheduleBuilder<B: BizDayProcessor>(Schedule<B>);
+
+impl<B: BizDayProcessor> Schedule<B> {
+    /// A schedule anchored at `start`, in `start`'s time zone, on `bdp`'s
+    /// business days.
+    ///
+    /// `start` anchors cadences (`2W`, `3M`) and the time of day, and is the
+    /// earliest a slot can be. It is a slot only if a rule produces it.
+    pub fn builder(start: DateTime<Tz>, bdp: B) -> ScheduleBuilder<B> {
+        ScheduleBuilder(Schedule {
+            bdp,
+            start,
+            until: None,
+            count: None,
+            rules: Vec::new(),
+            exclude_dates: BTreeSet::new(),
+            exclude_rules: Vec::new(),
+            exclude_match: ExcludeMatch::default(),
+            options: Default::default(),
+        })
+    }
+
+    /// The start the schedule is anchored to.
+    pub fn start(&self) -> &DateTime<Tz> {
+        &self.start
+    }
+
+    /// The time zone the schedule is read in.
+    pub fn zone(&self) -> Tz {
+        self.start.timezone()
+    }
+
+    /// The last instant a slot can be at, if any.
+    pub fn until(&self) -> Option<&DateTime<Tz>> {
+        self.until.as_ref()
+    }
+
+    /// The business-day processor.
+    pub fn bdp(&self) -> &B {
+        &self.bdp
+    }
+
+    /// Every slot, from the start.
+    pub fn slots(&self) -> Result<Slots<B>> {
+        self.slots_after(&just_before(&self.start))
+    }
+
+    /// The slots strictly after `after`.
+    ///
+    /// The same slots as [`slots`](Self::slots) from that point: the result
+    /// depends only on the schedule, not on where iteration starts. With a
+    /// count, the schedule is replayed from its start to keep it.
+    pub fn slots_after(&self, after: &DateTime<Tz>) -> Result<Slots<B>> {
+        let after = after.with_timezone(&self.zone());
+        let from = if self.count.is_some() || after < self.start { just_before(&self.start) } else { self.lookback(&after)? };
+        let exclusions = Exclusions {
+            dates: self.exclude_dates.clone(),
+            rules: self
+                .exclude_rules
+                .iter()
+                .map(|spec| DateSpecIterator::exclusion(spec, self.bdp.clone(), self.start.naive_local()))
+                .collect::<Result<_>>()?,
+            by: self.exclude_match,
+        };
+        let streams = self
+            .rules
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| {
+                let iter = SpecIterator::anchored(&rule.spec, self.bdp.clone(), &self.start, &from, self.options)?;
+                Ok(RuleStream { index, iter, pending: None, exhausted: false, last: None, batch: None })
+            })
+            .collect::<Result<_>>()?;
+        Ok(Slots {
+            ids: self.rules.iter().map(|rule| rule.id.clone()).collect(),
+            streams,
+            exclusions,
+            ready: VecDeque::new(),
+            after,
+            start: self.start,
+            until: self.until,
+            remaining: self.count,
+            done: false,
+        })
+    }
+
+    /// Where rule iterators start for `slots_after(after)`: before the
+    /// previous business day. An adjustment moves a date at most to the next
+    /// business day, so an occurrence whose actual date is earlier than that
+    /// cannot be observed after `after`.
+    fn lookback(&self, after: &DateTime<Tz>) -> Result<DateTime<Tz>> {
+        let previous = self.bdp.sub(&after.naive_local(), 1)?.date();
+        let midnight = resolve_local(&self.zone(), previous.and_time(NaiveTime::MIN), DstPolicy::Adjust)?;
+        Ok(just_before(&midnight))
+    }
+}
+
+impl<B: BizDayProcessor> ScheduleBuilder<B> {
+    /// Add a rule, a datetime spec with nothing around it
+    /// (`YY-MM-DD~SBT09:00:00`; no `@start`, `[Zone]`, `!` or `|`).
+    pub fn rule(mut self, spec: impl Into<String>) -> Self {
+        self.0.rules.push(Rule { id: None, spec: spec.into() });
+        self
+    }
+
+    /// Add a rule with an id, carried on every slot it produces.
+    pub fn named_rule(mut self, id: impl Into<String>, spec: impl Into<String>) -> Self {
+        self.0.rules.push(Rule { id: Some(id.into()), spec: spec.into() });
+        self
+    }
+
+    /// The last instant a slot can be at (inclusive).
+    pub fn until(mut self, until: DateTime<Tz>) -> Self {
+        self.0.until = Some(until);
+        self
+    }
+
+    /// Stop after `n` slots, counted from the start after exclusions. With
+    /// [`until`](Self::until), whichever comes first.
+    pub fn count(mut self, n: usize) -> Self {
+        self.0.count = Some(n);
+        self
+    }
+
+    /// No slots on `date`.
+    pub fn exclude_date(mut self, date: NaiveDate) -> Self {
+        self.0.exclude_dates.insert(date);
+        self
+    }
+
+    /// No slots on the dates `spec` matches, a date spec (`YY-12-24`).
+    /// Cadences in it count from the start.
+    pub fn exclude_rule(mut self, spec: impl Into<String>) -> Self {
+        self.0.exclude_rules.push(spec.into());
+        self
+    }
+
+    /// Which date exclusions are tested against.
+    pub fn exclude_match(mut self, by: ExcludeMatch) -> Self {
+        self.0.exclude_match = by;
+        self
+    }
+
+    /// See [`DstPolicy`].
+    pub fn dst_policy(mut self, policy: DstPolicy) -> Self {
+        self.0.options.0 = policy;
+        self
+    }
+
+    /// See [`IntervalMode`].
+    pub fn interval_mode(mut self, mode: IntervalMode) -> Self {
+        self.0.options.1 = mode;
+        self
+    }
+
+    /// See [`TimeAnchor`].
+    pub fn time_anchor(mut self, anchor: TimeAnchor) -> Self {
+        self.0.options.2 = anchor;
+        self
+    }
+
+    /// Check the rules and exclusions and build the schedule.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidSchedule`] when there are no rules, a rule or
+    /// exclusion does not parse or has bounds, exclusions or a union written
+    /// in it, two rules share an id, or `until` is before the start.
+    pub fn build(self) -> Result<Schedule<B>> {
+        let mut schedule = self.0;
+        let invalid = |what: String| Error::InvalidSchedule(what);
+        if schedule.rules.is_empty() {
+            return Err(invalid("a schedule needs at least one rule".into()));
+        }
+        let zone = schedule.zone();
+        schedule.until = schedule.until.map(|until| until.with_timezone(&zone));
+        if schedule.until.is_some_and(|until| until < schedule.start) {
+            return Err(invalid("`until` is before the start".into()));
+        }
+        let mut ids = BTreeSet::new();
+        for (n, rule) in schedule.rules.iter().enumerate() {
+            let name = match &rule.id {
+                Some(id) => format!("rule `{id}`"),
+                None => format!("rule {}", n + 1),
+            };
+            if rule.id.as_ref().is_some_and(|id| !ids.insert(id.clone())) {
+                return Err(invalid(format!("{name} is used twice")));
+            }
+            bare(&rule.spec).map_err(|why| invalid(format!("{name} (`{}`) {why}", rule.spec)))?;
+            SpecIterator::anchored(&rule.spec, schedule.bdp.clone(), &schedule.start, &schedule.start, schedule.options)
+                .map_err(|e| invalid(format!("{name} (`{}`): {e}", rule.spec)))?;
+        }
+        for spec in &schedule.exclude_rules {
+            bare(spec).map_err(|why| invalid(format!("exclusion `{spec}` {why}")))?;
+            DateSpecIterator::exclusion(spec, schedule.bdp.clone(), schedule.start.naive_local())
+                .map_err(|e| invalid(format!("exclusion `{spec}`: {e}")))?;
+        }
+        Ok(schedule)
+    }
+}
+
+/// Fails when `spec` has more than a rule written in it.
+fn bare(spec: &str) -> std::result::Result<(), &'static str> {
+    let (body, _) = split_bounds(spec).map_err(|_| "has a malformed start, end, zone or calendar")?;
+    if body.trim() != spec.trim() {
+        return Err("has a start, end, count, zone or calendar written in it; set them on the schedule");
+    }
+    if split_exclusions(body).1.is_some() {
+        return Err("has exclusions (`!`) written in it; add them to the schedule");
+    }
+    if union_parts(body).is_some() {
+        return Err("is a union (`|`); add each part as its own rule");
+    }
+    Ok(())
+}
+
+/// The slots of a [`Schedule`], in time order.
+#[derive(Debug)]
+pub struct Slots<B: BizDayProcessor> {
+    ids: Vec<Option<String>>,
+    streams: Vec<RuleStream<B>>,
+    exclusions: Exclusions<B>,
+    /// Slots of the current observed date, in order.
+    ready: VecDeque<Slot>,
+    after: DateTime<Tz>,
+    start: DateTime<Tz>,
+    until: Option<DateTime<Tz>>,
+    remaining: Option<usize>,
+    done: bool,
+}
+
+#[derive(Debug)]
+struct Exclusions<B: BizDayProcessor> {
+    dates: BTreeSet<NaiveDate>,
+    rules: Vec<DateSpecIterator<B>>,
+    by: ExcludeMatch,
+}
+
+impl<B: BizDayProcessor> Exclusions<B> {
+    fn matches(&self, date: NaiveDate) -> Result<bool> {
+        if self.dates.contains(&date) {
+            return Ok(true);
+        }
+        for rule in &self.rules {
+            if rule.matches_date(date)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// One rule's occurrences, grouped by observed date.
+///
+/// A rule's actual times always increase, but its observed times need not:
+/// with `~NB` and two times a day, Saturday's moved 09:00 and 13:00 come
+/// before Monday's own 09:00. Its observed dates do not decrease (moving to
+/// the next or previous business day keeps dates in order), so a whole
+/// observed date is gathered before it is sorted and merged.
+#[derive(Debug)]
+struct RuleStream<B: BizDayProcessor> {
+    index: usize,
+    iter: SpecIterator<Tz, B>,
+    /// The first occurrence of the next observed date, read ahead.
+    pending: Option<Occurrence<DateTime<Tz>>>,
+    exhausted: bool,
+    /// The observed date of the last batch.
+    last: Option<NaiveDate>,
+    batch: Option<Batch>,
+}
+
+#[derive(Debug)]
+struct Batch {
+    date: NaiveDate,
+    /// (observed, actual)
+    items: Vec<(DateTime<Tz>, DateTime<Tz>)>,
+}
+
+impl<B: BizDayProcessor> RuleStream<B> {
+    /// The next occurrence not excluded by its actual date.
+    fn pull(&mut self, exclusions: &Exclusions<B>) -> Result<Option<Occurrence<DateTime<Tz>>>> {
+        if self.exhausted {
+            return Ok(None);
+        }
+        while let Some(occurrence) = self.iter.next()? {
+            if exclusions.by == ExcludeMatch::Actual && exclusions.matches(occurrence.actual().date_naive())? {
+                continue;
+            }
+            return Ok(Some(occurrence));
+        }
+        self.exhausted = true;
+        Ok(None)
+    }
+
+    /// Read the next observed date's occurrences into `batch`, unless one is
+    /// waiting or the rule is done. Dates after `until` end the rule.
+    fn fill(&mut self, exclusions: &Exclusions<B>, until: Option<NaiveDate>) -> Result<()> {
+        if self.batch.is_some() {
+            return Ok(());
+        }
+        let first = match self.pending.take() {
+            Some(occurrence) => occurrence,
+            None => match self.pull(exclusions)? {
+                Some(occurrence) => occurrence,
+                None => return Ok(()),
+            },
+        };
+        let date = first.observed().date_naive();
+        if until.is_some_and(|until| date > until) {
+            self.exhausted = true;
+            return Ok(());
+        }
+        if self.last.is_some_and(|last| date <= last) {
+            return Err(Error::InvalidSchedule(format!(
+                "a rule's adjusted dates went back to {date}; its slots cannot be ordered"
+            )));
+        }
+        let pair = |o: &Occurrence<DateTime<Tz>>| (*o.observed(), *o.actual());
+        let mut items = vec![pair(&first)];
+        while let Some(next) = self.pull(exclusions)? {
+            if next.observed().date_naive() != date {
+                self.pending = Some(next);
+                break;
+            }
+            items.push(pair(&next));
+        }
+        self.last = Some(date);
+        self.batch = Some(Batch { date, items });
+        Ok(())
+    }
+}
+
+impl<B: BizDayProcessor> FallibleIterator for Slots<B> {
+    type Item = Slot;
+    type Error = Error;
+
+    fn next(&mut self) -> Result<Option<Slot>> {
+        loop {
+            while let Some(slot) = self.ready.pop_front() {
+                if self.until.is_some_and(|until| slot.at > until) || self.remaining == Some(0) {
+                    self.done = true;
+                    self.ready.clear();
+                    return Ok(None);
+                }
+                if slot.at < self.start {
+                    continue;
+                }
+                if self.exclusions.by == ExcludeMatch::Observed && self.exclusions.matches(slot.at.date_naive())? {
+                    continue;
+                }
+                if let Some(n) = &mut self.remaining {
+                    *n -= 1;
+                }
+                if slot.at > self.after {
+                    return Ok(Some(slot));
+                }
+            }
+            if self.done {
+                return Ok(None);
+            }
+            let until = self.until.map(|until| until.date_naive());
+            for stream in &mut self.streams {
+                stream.fill(&self.exclusions, until)?;
+            }
+            let Some(date) = self.streams.iter().filter_map(|s| s.batch.as_ref().map(|b| b.date)).min() else {
+                self.done = true;
+                continue;
+            };
+            let mut items = Vec::new();
+            for stream in &mut self.streams {
+                if stream.batch.as_ref().is_some_and(|batch| batch.date == date) {
+                    let batch = stream.batch.take().expect("checked above");
+                    items.extend(batch.items.into_iter().map(|(at, actual)| (at, stream.index, actual)));
+                }
+            }
+            items.sort();
+            for (at, index, actual) in items {
+                let source = Source { rule_id: self.ids[index].clone(), actual };
+                match self.ready.back_mut() {
+                    Some(slot) if slot.at == at => slot.sources.push(source),
+                    _ => self.ready.push_back(Slot { at, sources: vec![source] }),
+                }
+            }
+        }
+    }
+}

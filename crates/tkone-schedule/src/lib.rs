@@ -524,6 +524,10 @@ pub mod date;
 /// The `datetime` module combines a date spec and a time spec into a single
 /// recurrence schedule via [`datetime::Spec`] and [`datetime::SpecIteratorBuilder`].
 pub mod datetime;
+/// The `schedule` module puts rules in context: a start and time zone,
+/// business days, an end or count, several named rules and exclusions, via
+/// [`schedule::Schedule`].
+pub mod schedule;
 /// The `time` module provides intra-day time recurrence via [`time::Spec`] and
 /// [`time::SpecIteratorBuilder`].
 pub mod time;
@@ -545,6 +549,8 @@ mod limits_tests;
 mod bounds_tests;
 #[cfg(test)]
 mod grammar_tests;
+#[cfg(test)]
+mod schedule_tests;
 
 pub use error::{Error, Result};
 

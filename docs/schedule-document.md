@@ -1,6 +1,7 @@
 # Schedule documents — Design
 
-Status: **proposed**. Nothing here is implemented yet; see [Migration](#migration).
+Status: **in progress**. `Schedule` is built; the document, selection and
+the grammar change are not. See [Migration](#migration).
 
 ## Motivation
 
@@ -91,7 +92,7 @@ exclude:
 | `version` | integer | yes | Document format version; `1`. |
 | `time_zone` | IANA name | for time and datetime rules | Zone every rule, `start` and `until` is read in. No default: an implicit UTC is a bug waiting to happen. |
 | `calendar` | code or `A+B` | when a rule uses `~` | Business days for every rule. `WEEKENDS` is Saturday and Sunday only. |
-| `start` | local date or datetime | no | Anchor for cadences, and the inclusive lower bound. See [D1](#d1-start-is-an-anchor-not-an-occurrence). |
+| `start` | local date or datetime | yes | Anchor for cadences and the time of day, and the inclusive lower bound. See [D1](#d1-start-is-an-anchor-not-an-occurrence). |
 | `until` | local date or datetime | no | Inclusive upper bound. A date means the whole of that day. |
 | `count` | integer | no | Stop after this many occurrences, counted after exclusions. With `until`, whichever comes first. |
 | `rules` | list | yes, at least one | Each `{ id, rule }`. `id` is optional, unique within the document, and carried on every occurrence the rule produces. |
@@ -111,23 +112,26 @@ Field names follow JSCalendar's concepts in this repository's snake_case
 
 ### Rule kinds
 
-All rules in one document are the same kind: date, time, or datetime.
-Merging dates with instants has no meaning. A date document yields dates
-(report dates, payment dates); tempo and tkone-trigger need time or datetime
-documents.
+Version 1 takes datetime rules (`YY-MM-DD~SBT09:00:00`): tempo and
+tkone-trigger need instants. Date documents (report dates, payment dates)
+and time-only rules can follow; all rules in one document would then be the
+same kind, since merging dates with instants has no meaning.
 
-### Occurrences
+### Slots
+
+A schedule yields **slots**. (The crate's `Occurrence` is one rule's result,
+`Exact` or adjusted; a slot can come from several.)
 
 ```rust
-pub struct Occurrence<Tz: TimeZone> {
+pub struct Slot {
     /// When it happens: the adjusted (observed) instant.
     pub at: DateTime<Tz>,
-    /// Every rule that produced this instant, with its actual (unadjusted)
-    /// time. Usually one.
-    pub sources: Vec<Source<Tz>>,
+    /// Every rule that produced this instant, in rule order, with its actual
+    /// (unadjusted) time. Usually one.
+    pub sources: Vec<Source>,
 }
 
-pub struct Source<Tz: TimeZone> {
+pub struct Source {
     pub rule_id: Option<String>,
     pub actual: DateTime<Tz>,
 }
@@ -199,7 +203,7 @@ pub struct Selector { /* rules, exclusions, window, anchor */ }
 
 pub enum Next<Tz: TimeZone> {
     /// The next instant the selector picks that the definition produces.
-    Due(Occurrence<Tz>),
+    Due(Slot),
     /// The window ended, or the selection ran out.
     Done,
     /// Nothing found before the horizon.
@@ -216,7 +220,7 @@ impl Selector {
         definition: &Schedule<B>,
         after: DateTime<Tz>,
         horizon: DateTime<Tz>,
-        missed: impl FnMut(Occurrence<Tz>),
+        missed: impl FnMut(Slot),
     ) -> Result<Next<Tz>>;
 }
 ```
@@ -254,7 +258,7 @@ pub fn uncovered<B: BizDayProcessor>(
     definition: &Schedule<B>,
     instance: &Selector,
     horizon: RangeInclusive<DateTime<Tz>>,
-) -> Result<Vec<Occurrence<Tz>>>;
+) -> Result<Vec<Slot>>;
 ```
 
 A proof for all time is not offered. Pure Gregorian rules repeat every 400
@@ -279,8 +283,13 @@ RFC 5545 always makes `DTSTART` the first instance, and so does tkone's
 `new_with_start` today. In a document, `start: 2026-01-01` (a holiday) would
 then fire on a holiday. A document's `start` anchors cadences (`2W`, `3M`
 count from it) and bounds the stream; it is an occurrence only if a rule
-produces it. This needs a new builder constructor (`new_anchored`), since
-`new_after` does not anchor and `new_with_start` always emits.
+produces it. This is what a start written in the spec (`@…`) already does;
+schedules reach it without the string.
+
+`start` is required. Lazy selection asks for the slots after any instant
+and must get the same answer from each: a cadence, or a time carried from the
+start (`1H:MM:SS`), would otherwise take its phase from wherever iteration
+began.
 
 ### D2. `count` counts after exclusions
 
@@ -370,14 +379,16 @@ business day; for operations that is a trap. Weekend-only is written
 The document is data for a builder that code can use directly:
 
 ```rust
-let schedule = Schedule::builder(chrono_tz::America::New_York, calendars.get("XNYS")?)
-    .start(start)
+// `start` is a DateTime<chrono_tz::Tz>: it carries the time zone.
+let schedule = Schedule::builder(start, calendars.get("XNYS")?)
     .until(until)
-    .rule("close", "YY-MM-DD~SBT16:30:00")
-    .rule("month-end", "YY-MM-L~PBT18:00:00")
-    .exclude_dates([date(2026, 11, 27)])
+    .named_rule("close", "YY-MM-DD~SBT16:30:00")
+    .named_rule("month-end", "YY-MM-L~PBT18:00:00")
+    .exclude_date(date(2026, 11, 27))
     .exclude_rule("YY-12-24")
     .build()?;
+
+for slot in schedule.slots_after(&last_fired)?.take(3) { /* … */ }
 
 let doc: ScheduleDoc = serde_yaml_ng::from_str(yaml)?;
 let schedule = doc.schedule(&calendars)?;       // resolves the calendar code
@@ -399,7 +410,7 @@ Gaps in today's builders this closes:
 |---|---|
 | `with_exclusions` appends `! spec` to the string | Exclusions held as data, not spliced into the spec |
 | Unions only as `A \| B`; `Merge` is crate-private | Several rules with ids, merged by observed instant (D4) |
-| `new_with_start` emits the start | `new_anchored` (D1) |
+| `new_with_start` emits the start | An anchored start, as a written `@…` gives (D1) |
 | Calendar checked against `[cal=]` in the string | The document resolves the calendar, so there is nothing to mismatch. The calendar zone check stays. |
 
 ---
@@ -426,7 +437,7 @@ Specified here so the format can grow into them; not built in version 1.
 
 | Area | Change |
 |---|---|
-| `tkone-schedule` | Rule-only grammar; `document` module; `Schedule` builder; `Selector` with `next_after`, `uncovered`; `CalendarResolver`; `new_anchored`. `calendar_of`, `time_zone_of` and the `[cal=]` code check are removed. |
+| `tkone-schedule` | Rule-only grammar; `document` module; `Schedule` builder; `Selector` with `next_after`, `uncovered`; `CalendarResolver`. `calendar_of`, `time_zone_of` and the `[cal=]` code check are removed. |
 | `tkone-calendar` | `Calendars` implements `CalendarResolver`; `for_spec` is removed. |
 | `tkone-trigger` | `BusinessSchedule` takes a `Schedule`; execution options (catch-up) stay builder arguments. |
 | Python bindings | Documents passed as dicts or YAML/JSON strings. |
@@ -451,8 +462,9 @@ Tempo schema changes:
 Each step leaves the workspace building and tested.
 
 1. **Build the document** in tkone-schedule, beside the existing syntax:
-   exclusions as data, public unions with ids, `new_anchored`, `Schedule`,
-   `ScheduleDoc`, `Selector`, `uncovered`, `CalendarResolver`.
+   `Schedule` (anchored rules with ids, merged into slots, exclusions as
+   data, until, count) — done; then `ScheduleDoc`, `CalendarResolver`,
+   `Selector`, `uncovered`.
 2. **Move users over**: tkone-calendar, tkone-trigger, Python, example-app, docs.
 3. **Remove** bounds, `!` and `|` from the grammar, ABNF, IETF draft and spec docs.
 4. **Tempo on paper**: ERD, schema and sequence diagrams.

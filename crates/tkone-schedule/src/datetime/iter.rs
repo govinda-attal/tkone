@@ -498,6 +498,24 @@ struct Day<Tz: TimeZone> {
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
+    /// A bare rule anchored at `start`, as if `@start` were written in it:
+    /// cadences and the time of day count from `start`, which is a result
+    /// only if the rule produces it. Results have actual times at or after
+    /// `start` and strictly after `after`. For [`crate::schedule`].
+    pub(crate) fn anchored(
+        rule: &str,
+        bdp: BDP,
+        start: &DateTime<Tz>,
+        after: &DateTime<Tz>,
+        options: (DstPolicy, IntervalMode, TimeAnchor),
+    ) -> Result<Self> {
+        let (dst_policy, interval_mode, time_anchor) = options;
+        let fresh = after < start;
+        let options = Options { dst_policy, interval_mode, time_anchor, text_start: true, fresh_start: fresh };
+        let cursor = if fresh { just_before(start) } else { after.clone() };
+        Self::new(rule, bdp, cursor, None, Some(start.naive_local()), false, None, options)
+    }
+
     /// `cursor` is the start when `include_start`, else the `new_after` point.
     /// `local` overrides the cursor's wall-clock time (see `resume_after`);
     /// `anchor` is a stored start to position dates and times from (see

@@ -16,6 +16,10 @@ pub enum Error {
     /// business-day processor the schedule was given.
     #[error("calendar: {0}")]
     Calendar(String),
+    /// A [`Schedule`](crate::schedule::Schedule) is inconsistent: no rules, a
+    /// rule with bounds or exclusions written in it, a repeated rule id, …
+    #[error("invalid schedule: {0}")]
+    InvalidSchedule(String),
     #[error("invalid end spec")]
     InvalidEndSpec,
     #[error("schedule iterator did not converge")]

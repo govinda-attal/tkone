@@ -477,6 +477,7 @@ dependencies = [
  "chrono-tz",
  "fallible-iterator",
  "pyo3",
+ "serde_json",
  "tkone-calendar",
  "tkone-schedule",
 ]

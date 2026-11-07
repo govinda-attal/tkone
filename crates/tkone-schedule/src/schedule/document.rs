@@ -44,7 +44,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{rule_uses_business_days, ExcludeMatch, Schedule, ScheduleBuilder, Selector, SelectorBuilder};
 use crate::biz_day::{BizDayProcessor, Direction, WeekendSkipper};
-use crate::bounds::just_before;
+use crate::utils::just_before;
 use crate::utils::resolve_local;
 use crate::{DstPolicy, Error, IntervalMode, Result, TimeAnchor};
 

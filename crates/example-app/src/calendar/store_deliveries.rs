@@ -4,8 +4,14 @@
 //! Wednesday and Friday, and does not deliver on public holidays: those
 //! deliveries are dropped, not moved.
 //!
-//! ```text
-//! YY-MM-[MON,WED,FRI]~SBT06:00:00 @2026-11-02[Africa/Johannesburg] ..2026-12-31 [cal=ZAJO]
+//! ```yaml
+//! version: 1
+//! time_zone: Africa/Johannesburg
+//! calendar: ZAJO
+//! start: 2026-11-02
+//! until: 2026-12-31
+//! rules:
+//!   - rule: YY-MM-[MON,WED,FRI]~SBT06:00:00
 //! ```
 //!
 //! South Africa declares one-off holidays, such as election days, under the
@@ -19,20 +25,31 @@
 
 use fallible_iterator::FallibleIterator;
 use tkone_calendar::Calendars;
-use tkone_schedule::datetime::{describe, SpecIteratorBuilder};
+use tkone_schedule::schedule::document::ScheduleDoc;
 
-const SPEC: &str = "YY-MM-[MON,WED,FRI]~SBT06:00:00 @2026-11-02[Africa/Johannesburg] ..2026-12-31 [cal=ZAJO]";
+const DELIVERIES: &str = "
+version: 1
+time_zone: Africa/Johannesburg
+calendar: ZAJO
+start: 2026-11-02
+until: 2026-12-31
+rules:
+  - rule: YY-MM-[MON,WED,FRI]~SBT06:00:00
+";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("{SPEC}\n  {}\n", describe(SPEC)?);
-    let johannesburg = Calendars::builtin().for_spec(SPEC)?;
-    let deliveries: Vec<_> = SpecIteratorBuilder::from_spec(SPEC, johannesburg.clone())?.build()?.collect()?;
+    let doc: ScheduleDoc = serde_yaml_ng::from_str(DELIVERIES)?;
+    let rule = &doc.rules[0].rule;
+    println!("{rule} on ZAJO\n  {}\n", tkone_schedule::datetime::describe(rule)?);
+    let calendars = Calendars::builtin();
+    let deliveries: Vec<_> = doc.schedule(calendars)?.slots()?.collect()?;
     println!("{} deliveries, the first and last:", deliveries.len());
     for d in deliveries.iter().take(4).chain(deliveries.iter().rev().take(2).rev()) {
-        println!("  {}", d.observed().format("%a %Y-%m-%d %H:%M %Z"));
+        println!("  {}", d.at.format("%a %Y-%m-%d %H:%M %Z"));
     }
 
     println!("\nNo delivery on:");
+    let johannesburg = calendars.get("ZAJO")?;
     let from = chrono::NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
     let to = chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
     for h in johannesburg.holidays_between(from, to) {

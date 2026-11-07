@@ -14,25 +14,24 @@
 //! | `"HH:30M:00"` | Every 30 minutes |
 //! | `"HH:MM:10S"` | Every 10 seconds |
 //! | `"09:30:00"` | Daily at 09:30 |
-//! | `"HH:30M:00 ! [12,13]:MM:SS"` | Every 30 minutes, except 12:00–13:59 |
-//! | `"HH:15M:00 @2026-06-01T09:00[Europe/London] x8"` | Eight times, every 15 minutes, London time |
+//! | `"[00-11,14-23]:30M:00"` | Every 30 minutes, except 12:00–13:59 |
+//! | `"09-16:15M:00"` | Every 15 minutes from 09:00 to 16:45 |
 //!
 //! ## Time zones and starts
 //!
 //! [`time_schedule`] builds the iterator for a spec. Times are read on the
-//! wall clock of a time zone: the `tz` you pass, else the zone written in the
-//! spec (`@2026-06-01T09:00[Europe/London]`), else UTC. A `start_spec`
-//! ([`resolve_start_spec_in`]) sets from when on times are produced; a start
-//! written in the spec anchors the schedule's grid. Past occurrences are never
-//! fired.
+//! wall clock of a time zone: the `tz` you pass, else UTC. Steps are aligned to
+//! the clock, as cron's are: `HH:15M:00` fires at :00, :15, :30 and :45 whenever
+//! the process starts. A `start_spec` ([`resolve_start_spec_in`]) sets from when
+//! on times are produced. Past occurrences are never fired.
 //!
 //! ## Business-day schedules
 //!
 //! A time spec repeats within the day and simply starts again from now after
 //! a restart. A schedule that runs once a day or less, such as "16:30 on New
-//! York business days" (`YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York]
-//! [cal=USNY]`), must not lose a run to a restart. [`BusinessSchedule`] runs
-//! such a datetime spec on a holiday calendar (any
+//! York business days" (`YY-MM-DD~SBT16:30:00` on the `USNY` calendar, in
+//! `America/New_York`), must not lose a run to a restart. [`BusinessSchedule`]
+//! runs such a [`Schedule`](tkone_schedule::schedule::Schedule) on a holiday calendar (any
 //! [`BizDayProcessor`](tkone_schedule::biz_day::BizDayProcessor), such as a
 //! `tkone-calendar` `Calendar`), records each run it fires in a
 //! [`StateStore`] ([`MemoryStore`], [`FileStore`], or your own), and resumes
@@ -95,11 +94,6 @@ pub fn resolve_start_spec(s: &str) -> Result<DateTime<Utc>, Error> {
 ///    after now, read on `tz`'s wall clock: "the next 9 am", "the next top of
 ///    the hour".
 ///
-/// A start written in the schedule's own spec (`@2026-06-01T09:00`) is
-/// different: it anchors the schedule's grid. With both, the written start
-/// still anchors the grid, and the `start_spec` only decides from when on
-/// times are produced.
-///
 /// # Errors
 ///
 /// Returns an error if `s` is neither an RFC 3339 datetime nor a valid time
@@ -121,14 +115,15 @@ pub fn resolve_start_spec_in<Tz: TimeZone>(s: &str, tz: &Tz) -> Result<DateTime<
 /// Builds the iterator for a time-spec schedule, the way `#[schedule]` does.
 ///
 /// - **Time zone:** `tz` (an IANA name such as `"Europe/London"`) if given,
-///   else the zone written in the spec (`09:00:00 @2026-01-05[Europe/London]`),
 ///   else UTC. Times are read on that zone's wall clock, so `09:00:00` stays
-///   at 09:00 local time across daylight-saving changes. `tz` takes
-///   precedence over a zone in the spec, as builder settings do.
+///   at 09:00 local time across daylight-saving changes.
+/// - **Steps are aligned to the clock** ([`TimeAnchor::Midnight`](tkone_schedule::TimeAnchor::Midnight)):
+///   `HH:15M:00` is at :00, :15, :30 and :45, and `2H:00:00` at even hours,
+///   whenever the process starts.
 /// - **Fixed times repeat daily:** `09:30:00` fires at 09:30 every day.
 /// - **Where it starts:** results are the times after `start_spec` (see
 ///   [`resolve_start_spec_in`]), or after now. Past occurrences are never
-///   produced, even when the spec's written `@start` is in the past.
+///   produced.
 ///
 /// # Errors
 ///
@@ -147,14 +142,17 @@ pub fn time_schedule(
         Some(name) => name
             .parse::<chrono_tz::Tz>()
             .map_err(|_| Error::Custom(format!("`{name}` is not an IANA time zone")))?,
-        None => tkone_schedule::time_zone_of(spec)?.unwrap_or(chrono_tz::UTC),
+        None => chrono_tz::UTC,
     };
     let after = match start_spec {
         Some(s) => resolve_start_spec_in(s, &zone)?,
         None => Utc::now().with_timezone(&zone),
     };
-    // A trigger repeats fixed times (`09:30:00`) every day.
-    tkone_schedule::time::SpecIteratorBuilder::new_after(spec, after).repeat_daily().build()
+    // A trigger repeats fixed times (`09:30:00`) every day, on the clock's grid.
+    tkone_schedule::time::SpecIteratorBuilder::new_after(spec, after)
+        .repeat_daily()
+        .with_time_anchor(tkone_schedule::TimeAnchor::Midnight)
+        .build()
 }
 
 // ── Context ──────────────────────────────────────────────────────────────────
@@ -501,23 +499,25 @@ mod tests {
             let t = iter.next().unwrap().unwrap();
             (t.hour(), t.timezone().name().to_string())
         };
-        // UTC by default, the zone written in the spec, or `tz`, which wins.
+        // UTC by default, else `tz`.
         assert_eq!(first_hour("09:00:00", None), (9, "UTC".into()));
-        assert_eq!(first_hour("09:00:00 @2026-01-05[America/New_York]", None), (9, "America/New_York".into()));
-        assert_eq!(first_hour("09:00:00 @2026-01-05[America/New_York]", Some("Asia/Tokyo")), (9, "Asia/Tokyo".into()));
+        assert_eq!(first_hour("09:00:00", Some("Asia/Tokyo")), (9, "Asia/Tokyo".into()));
+        // A zone is not written in the spec.
+        assert!(time_schedule("09:00:00 @2026-01-05[America/New_York]", None, None).is_err());
         assert!(time_schedule("09:00:00", None, Some("Mars/Base")).is_err());
         assert!(time_schedule("YY-MM-DD", None, None).is_err());
     }
 
     #[test]
-    fn test_written_start_anchors_and_start_spec_sets_from_when() {
-        // The grid is anchored at :05 by the written start; the start_spec
-        // only says from when on.
-        let mut iter = time_schedule("HH:15M:00 @2026-01-01T09:05:00[UTC]", Some("2030-01-01T00:00:00Z"), None).unwrap();
+    fn test_steps_are_on_the_clock() {
+        // From 00:07, every 15 minutes is :15, :30, …, not :22, :37.
+        let mut iter = time_schedule("HH:15M:00", Some("2030-01-01T00:07:00Z"), None).unwrap();
         let first = iter.next().unwrap().unwrap();
-        assert_eq!(first, Utc.with_ymd_and_hms(2030, 1, 1, 0, 5, 0).unwrap());
-        // Past occurrences of a past written start are not produced.
-        let mut iter = time_schedule("1H:00:00 @2020-01-01T00:00:00[UTC]", None, None).unwrap();
+        assert_eq!(first, Utc.with_ymd_and_hms(2030, 1, 1, 0, 15, 0).unwrap());
+        let mut iter = time_schedule("2H:00:00", Some("2030-01-01T01:30:00Z"), None).unwrap();
+        assert_eq!(iter.next().unwrap().unwrap(), Utc.with_ymd_and_hms(2030, 1, 1, 2, 0, 0).unwrap());
+        // Nothing in the past.
+        let mut iter = time_schedule("1H:00:00", None, None).unwrap();
         assert!(iter.next().unwrap().unwrap() > Utc::now());
     }
 }

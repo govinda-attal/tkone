@@ -56,9 +56,9 @@
 //!
 //! | Argument | Required | Description |
 //! |----------|----------|-------------|
-//! | `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` or `"HH:30M:00 ! 12:MM:SS"` |
+//! | `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` or `"09-16:30M:00"` |
 //! | `start_spec = "..."` | no | From when on to fire: an RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a time spec, meaning its next occurrence (`"09:00:00"` = the next 9 am). When omitted, from now. |
-//! | `tz = "..."` | no | IANA time zone the spec is read in, e.g. `"Europe/London"`. When omitted, the zone written in the spec (`@2026-06-01T09:00[Europe/London]`), else UTC. |
+//! | `tz = "..."` | no | IANA time zone the spec is read in, e.g. `"Europe/London"`. When omitted, UTC. |
 //! | `fire_on_start` | no | Fire all jobs once immediately before the first tick |
 //!
 //! The spec, `start_spec` and `tz` are checked **while compiling**: a typo or
@@ -175,7 +175,7 @@ impl Parse for ScheduleArgs {
 /// |---|---|---|
 /// | `spec = "..."` | yes | `tkone-schedule` time spec, e.g. `"1H:00:00"` |
 /// | `start_spec = "..."` | no | From when on to fire: RFC 3339 datetime **or** a time spec (its next occurrence). Omit to start from now. |
-/// | `tz = "..."` | no | IANA time zone, e.g. `"Europe/London"`. Omit to use the zone written in the spec, else UTC. |
+/// | `tz = "..."` | no | IANA time zone, e.g. `"Europe/London"`. Omit for UTC. |
 /// | `fire_on_start` | no | Run all jobs once immediately before the first tick |
 ///
 /// The spec, `start_spec` and `tz` are checked while compiling.
@@ -210,7 +210,7 @@ impl Parse for ScheduleArgs {
 ///
 /// London time, every 15 minutes from 08:00 to 17:59, except the 12:00 hour:
 /// ```rust,ignore
-/// #[schedule(spec = "08-17:15M:00 ! 12:MM:SS", tz = "Europe/London")]
+/// #[schedule(spec = "[08-11,13-17]:15M:00", tz = "Europe/London")]
 /// impl Prices { /* … */ }
 /// ```
 ///
@@ -338,7 +338,7 @@ fn check_args(args: &ScheduleArgs) -> syn::Result<String> {
         };
         return Err(syn::Error::new(args.spec.span(), message));
     }
-    // Building checks what describing doesn't, such as the exclusions.
+    // Building checks what describing doesn't.
     let now = chrono::Utc::now();
     if let Err(e) = tkone_schedule::time::SpecIteratorBuilder::new_after(&spec, now).build() {
         return Err(syn::Error::new(args.spec.span(), format!("invalid time spec `{spec}`: {e}")));

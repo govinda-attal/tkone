@@ -65,7 +65,7 @@ impl BizDayProcessor for Calendar {
         Ok(self.step(dtm.date(), num, false)?.and_time(dtm.time()))
     }
 
-    /// The calendar's code, so a spec naming it (`[cal=GBLO]`) builds.
+    /// The calendar's code (`GBLO`, `GBLO+EUTA`).
     fn code(&self) -> Option<String> {
         Some(Calendar::code(self).to_string())
     }

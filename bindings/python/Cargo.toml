@@ -22,4 +22,5 @@ chrono-tz         = "0.10"
 fallible-iterator = "0.3"
 pyo3              = { version = "0.28", features = ["abi3-py39", "chrono", "chrono-tz"] }
 tkone-calendar    = { path = "../../crates/tkone-calendar" }
-tkone-schedule    = { path = "../../crates/tkone-schedule" }
+tkone-schedule    = { path = "../../crates/tkone-schedule", features = ["serde"] }
+serde_json        = "1"

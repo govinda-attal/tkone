@@ -10,16 +10,20 @@
 //! cargo run -p tkone-trigger --example business_day_jobs
 //! ```
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc};
 use tkone_calendar::Calendars;
 use tkone_schedule::biz_day::BizDayProcessor;
+use tkone_schedule::schedule::Schedule;
 use tkone_trigger::{BusinessSchedule, CatchUp, FileStore, FireContext, ScheduleIter, Scheduler, StateStore, TickContext};
 
-const SPEC: &str = "YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York] [cal=XNYS]";
+/// 16:30 on NYSE trading days, read in New York.
+const RULE: &str = "YY-MM-DD~SBT16:30:00";
 
 fn schedule(path: &std::path::Path) -> Result<BusinessSchedule<impl BizDayProcessor, FileStore>, tkone_schedule::Error> {
-    let nyse = Calendars::builtin().for_spec(SPEC).map_err(tkone_schedule::Error::from)?;
-    BusinessSchedule::new(SPEC, nyse, FileStore::new(path), "eod-reconciliation", CatchUp::Latest)
+    let nyse = Calendars::builtin().get("XNYS").map_err(tkone_schedule::Error::from)?;
+    let start = chrono_tz::America::New_York.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap();
+    let eod = Schedule::builder(start, nyse).rule(RULE).build()?;
+    BusinessSchedule::new(eod, FileStore::new(path), "eod-reconciliation", CatchUp::Latest)
 }
 
 #[tokio::main]
@@ -30,7 +34,7 @@ async fn main() -> Result<(), tkone_schedule::Error> {
     let day = (Utc::now() - Duration::days(7)).with_timezone(&ny).date_naive();
     let week_ago = day.and_hms_opt(16, 30, 0).unwrap().and_local_timezone(ny).earliest().unwrap();
     FileStore::new(&path).save("eod-reconciliation", week_ago.fixed_offset())?;
-    println!("{SPEC}\nlast recorded run: {week_ago}\n");
+    println!("{RULE} on XNYS, America/New_York\nlast recorded run: {week_ago}\n");
 
     let mut scheduler = Scheduler::new(schedule(&path)?, |ctx: FireContext, e: String| async move {
         eprintln!("reconciliation for {} failed: {e}", ctx.occurrence().actual());

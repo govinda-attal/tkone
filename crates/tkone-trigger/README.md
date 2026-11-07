@@ -16,25 +16,24 @@ and inferred from the arguments to [`Scheduler::new`].
 | `"HH:30M:00"` | Every 30 minutes |
 | `"HH:MM:10S"` | Every 10 seconds |
 | `"09:30:00"` | Daily at 09:30 |
-| `"HH:30M:00 ! [12,13]:MM:SS"` | Every 30 minutes, except 12:00–13:59 |
-| `"HH:15M:00 @2026-06-01T09:00[Europe/London] x8"` | Eight times, every 15 minutes, London time |
+| `"[00-11,14-23]:30M:00"` | Every 30 minutes, except 12:00–13:59 |
+| `"09-16:15M:00"` | Every 15 minutes from 09:00 to 16:45 |
 
 ## Time zones and starts
 
 [`time_schedule`] builds the iterator for a spec. Times are read on the
-wall clock of a time zone: the `tz` you pass, else the zone written in the
-spec (`@2026-06-01T09:00[Europe/London]`), else UTC. A `start_spec`
-([`resolve_start_spec_in`]) sets from when on times are produced; a start
-written in the spec anchors the schedule's grid. Past occurrences are never
-fired.
+wall clock of a time zone: the `tz` you pass, else UTC. Steps are aligned to
+the clock, as cron's are: `HH:15M:00` fires at :00, :15, :30 and :45 whenever
+the process starts. A `start_spec` ([`resolve_start_spec_in`]) sets from when
+on times are produced. Past occurrences are never fired.
 
 ## Business-day schedules
 
 A time spec repeats within the day and simply starts again from now after
 a restart. A schedule that runs once a day or less, such as "16:30 on New
-York business days" (`YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York]
-[cal=USNY]`), must not lose a run to a restart. [`BusinessSchedule`] runs
-such a datetime spec on a holiday calendar (any
+York business days" (`YY-MM-DD~SBT16:30:00` on the `USNY` calendar, in
+`America/New_York`), must not lose a run to a restart. [`BusinessSchedule`]
+runs such a `Schedule` on a holiday calendar (any
 [`BizDayProcessor`](tkone_schedule::biz_day::BizDayProcessor), such as a
 `tkone-calendar` `Calendar`), records each run it fires in a
 [`StateStore`] ([`MemoryStore`], [`FileStore`], or your own), and resumes

@@ -305,13 +305,17 @@ fn error(builder: crate::schedule::ScheduleBuilder<WeekendSkipper>) -> String {
 fn invalid_schedules() {
     let b = || Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new());
     assert!(error(b()).contains("at least one rule"));
-    assert!(error(b().rule("YY-MM-DDT09:00:00 @2026-01-05")).contains("set them on the schedule"));
-    assert!(error(b().rule("YY-MM-DDT09:00:00 @2026-01-05[Europe/London]")).contains("set them on the schedule"));
-    assert!(error(b().rule("YY-MM-DDT09:00:00 [cal=GBLO]")).contains("set them on the schedule"));
-    assert!(error(b().rule("YY-MM-DDT09:00:00[Europe/London]")).contains("invalid time spec"));
-    assert!(error(b().rule("YY-MM-DDT09:00:00 x3")).contains("set them on the schedule"));
-    assert!(error(b().rule("YY-MM-DDT09:00:00 ! YY-12-25")).contains("exclusions"));
-    assert!(error(b().rule("YY-MM-01T09:00:00 | YY-MM-15T09:00:00")).contains("union"));
+    // A rule is one rule: bounds, exclusions and unions do not parse.
+    for rule in [
+        "YY-MM-DDT09:00:00 @2026-01-05",
+        "YY-MM-DDT09:00:00 [cal=GBLO]",
+        "YY-MM-DDT09:00:00[Europe/London]",
+        "YY-MM-DDT09:00:00 x3",
+        "YY-MM-DDT09:00:00 ! YY-12-25",
+        "YY-MM-01T09:00:00 | YY-MM-15T09:00:00",
+    ] {
+        assert!(error(b().rule(rule)).starts_with(&format!("rule 1 (`{rule}`): invalid")), "{rule}");
+    }
     assert!(error(b().named_rule("a", "YY-MM-DDT09:00:00").named_rule("a", "YY-MM-LT09:00:00")).contains("`a` is used twice"));
     assert!(error(b().named_rule("open", "YY-MM-DD")).starts_with("rule `open` (`YY-MM-DD`)"));
     assert!(error(b().rule("YY-MM-DDT09:00:00").exclude_rule("YY-13-01")).starts_with("exclusion `YY-13-01`"));

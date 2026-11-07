@@ -203,7 +203,7 @@ fn reads_an_instance() {
     let account = yaml(ACCOUNT).selector(&definition).unwrap();
     assert_eq!(account.start(), &london(2026, 3, 15, 0, 0));
     // `until` is a date: the whole of 14 March 2027.
-    assert_eq!(account.until(), Some(&crate::bounds::just_before(&london(2027, 3, 15, 0, 0))));
+    assert_eq!(account.until(), Some(&crate::utils::just_before(&london(2027, 3, 15, 0, 0))));
     // The definition excludes 29 May, May's month end: it is missed.
     let mut missed = Vec::new();
     let next = account.next_after(&definition, &london(2026, 5, 1, 0, 0), &london(2026, 7, 1, 0, 0), |m| missed.push(m.at)).unwrap();

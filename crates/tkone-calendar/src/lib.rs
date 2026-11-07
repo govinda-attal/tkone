@@ -21,8 +21,8 @@
 //!
 //! // The last business day of December 2021, and the first of January 2022
 //! // (3 January was the New Year's Day holiday).
-//! let start = Utc.with_ymd_and_hms(2021, 12, 1, 0, 0, 0).unwrap();
-//! let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-BD#L | YY-MM-BD#1", london, start)
+//! let start = Utc.with_ymd_and_hms(2021, 12, 2, 0, 0, 0).unwrap();
+//! let got: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-BD#[1,L]", london, start)
 //!     .build()
 //!     .unwrap()
 //!     .take(2)
@@ -51,6 +51,12 @@
 //!
 //! `Calendars::builtin().get("GBLO+EUTA")` is a business day only when it is
 //! one in both London and TARGET2.
+//!
+//! # Schedule documents
+//!
+//! [`Calendars`] resolves a schedule document's `calendar` code (`GBLO`,
+//! `GBLO+USNY`): it implements
+//! [`CalendarResolver`](tkone_schedule::schedule::document::CalendarResolver).
 
 mod biz_day;
 mod calendar;

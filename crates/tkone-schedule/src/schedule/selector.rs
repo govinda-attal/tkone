@@ -39,7 +39,7 @@ use fallible_iterator::FallibleIterator;
 
 use super::{ExcludeMatch, Schedule, ScheduleBuilder, Slot, Slots};
 use crate::biz_day::BizDayProcessor;
-use crate::bounds::just_before;
+use crate::utils::just_before;
 use crate::{Error, Result};
 
 /// An instance's selection from a definition [`Schedule`]; see the

@@ -21,7 +21,8 @@ fn days(occurrences: &[Occurrence<DateTime<Tz>>]) -> Vec<String> {
 #[test]
 fn test_date_exclusions() {
     let got: Vec<_> = date::SpecIteratorBuilder::new_after("YY-MM-DD", WeekendSkipper::new(), ny(2025, 12, 23, 0, 0))
-        .with_exclusions("YY-12-25 | YY-01-01")
+        .with_exclusions("YY-12-25")
+        .with_exclusions("YY-01-01")
         .build()
         .unwrap()
         .take(10)
@@ -41,7 +42,7 @@ fn test_date_exclusions() {
 
     // Day steps are not allowed in an exclusion spec.
     let err = date::SpecIteratorBuilder::new_after("YY-MM-DD", WeekendSkipper::new(), ny(2025, 1, 1, 0, 0))
-        .with_exclusions("YY-MM-01 | YY-MM-7D")
+        .with_exclusions("YY-MM-7D")
         .build()
         .unwrap_err();
     assert!(matches!(err, Error::InvalidDateSpec(_)), "{err:?}");
@@ -64,7 +65,8 @@ fn test_time_exclusions() {
 #[test]
 fn test_datetime_exclusions() {
     let got: Vec<_> = datetime::SpecIteratorBuilder::new_after("YY-MM-[MON-FRI]T09:00:00", WeekendSkipper::new(), ny(2025, 12, 23, 12, 0))
-        .with_exclusions("YY-12-25 | YY-12-26")
+        .with_exclusions("YY-12-25")
+        .with_exclusions("YY-12-26")
         .build()
         .unwrap()
         .take(3)
@@ -93,8 +95,8 @@ fn test_count() {
         .collect()
         .unwrap();
     assert_eq!(days(&got), ["01-15", "03-15", "04-15"]);
-    // A union counts merged results; an end can stop it earlier.
-    let got: Vec<_> = date::SpecIteratorBuilder::new_after("YY-MM-01 | YY-MM-15", bdp.clone(), ny(2025, 1, 1, 0, 0))
+    // An end can stop it earlier.
+    let got: Vec<_> = date::SpecIteratorBuilder::new_after("YY-MM-[01,15]", bdp.clone(), ny(2025, 1, 1, 0, 0))
         .with_count(5)
         .with_end(ny(2025, 2, 1, 0, 0))
         .build()
@@ -129,7 +131,7 @@ fn test_resume_counted_schedules() {
     let tz = chrono_tz::America::New_York;
 
     let start = ny(2025, 1, 2, 0, 0);
-    let continuous: Vec<_> = date::SpecIteratorBuilder::new_with_start("YY-MM-7D | YY-MM-15", bdp.clone(), start)
+    let continuous: Vec<_> = date::SpecIteratorBuilder::new_with_start("YY-MM-7D", bdp.clone(), start)
         .with_exclusions("YY-02-DD")
         .with_count(8)
         .build()
@@ -138,7 +140,7 @@ fn test_resume_counted_schedules() {
         .unwrap();
     assert_eq!(continuous.len(), 8);
     for i in 0..continuous.len() {
-        let next = date::SpecIteratorBuilder::resume_with_start("YY-MM-7D | YY-MM-15", bdp.clone(), tz, stored(&start), stored(continuous[i].actual()))
+        let next = date::SpecIteratorBuilder::resume_with_start("YY-MM-7D", bdp.clone(), tz, stored(&start), stored(continuous[i].actual()))
             .with_exclusions("YY-02-DD")
             .with_count(8)
             .build()
@@ -148,9 +150,9 @@ fn test_resume_counted_schedules() {
         assert_eq!(next.as_ref(), continuous.get(i + 1), "date after #{i}");
     }
 
-    // A union in elapsed mode can be resumed when counted: it is replayed.
+    // Elapsed steps across a clock change: replayed from the start.
     let start = ny(2025, 3, 8, 22, 0);
-    let spec = "YY-MM-DDT3H:00:00 | YY-MM-DDT02:30:00";
+    let spec = "YY-MM-DDT3H:00:00";
     let continuous: Vec<_> = datetime::SpecIteratorBuilder::new_with_start(spec, bdp.clone(), start)
         .with_interval_mode(IntervalMode::Elapsed)
         .with_count(10)
@@ -170,7 +172,7 @@ fn test_resume_counted_schedules() {
     }
 
     let start = ny(2025, 1, 1, 9, 0);
-    let continuous: Vec<_> = time::SpecIteratorBuilder::new_with_start("HH:15M:00 | HH:20M:00", start)
+    let continuous: Vec<_> = time::SpecIteratorBuilder::new_with_start("HH:15M:00", start)
         .with_exclusions("12:MM:SS")
         .with_count(12)
         .build()
@@ -178,7 +180,7 @@ fn test_resume_counted_schedules() {
         .collect()
         .unwrap();
     for i in 0..continuous.len() {
-        let next = time::SpecIteratorBuilder::resume_with_start("HH:15M:00 | HH:20M:00", tz, stored(&start), stored(&continuous[i]))
+        let next = time::SpecIteratorBuilder::resume_with_start("HH:15M:00", tz, stored(&start), stored(&continuous[i]))
             .with_exclusions("12:MM:SS")
             .with_count(12)
             .build()
@@ -206,103 +208,48 @@ fn test_count_needs_resume_with_start() {
     ));
 }
 
-// ---------------------------------------------------------------------------
-// Exclusions written in the spec: `A ! X`
-// ---------------------------------------------------------------------------
-
 #[test]
-fn test_exclusions_in_the_spec() {
-    let bdp = WeekendSkipper::new();
-    let take = |spec: &str, n| -> Vec<String> {
-        let got: Vec<_> = date::SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), ny(2025, 12, 23, 0, 0))
-            .build()
-            .unwrap()
-            .take(n)
-            .collect()
-            .unwrap();
-        days(&got)
-    };
-    assert_eq!(take("YY-MM-DD ! YY-12-25 | YY-01-01", 4), ["12-24", "12-26", "12-27", "12-28"]);
-    // The exclusions apply to the whole union before them.
-    assert_eq!(take("YY-MM-25 | YY-MM-01 ! YY-12-25 | YY-01-01", 3), ["01-25", "02-01", "02-25"]);
-    // Written in the spec and with the builder: both apply.
-    let got: Vec<_> = date::SpecIteratorBuilder::new_after("YY-MM-DD ! YY-12-25", bdp.clone(), ny(2025, 12, 23, 0, 0))
-        .with_exclusions("YY-12-26")
-        .build()
-        .unwrap()
-        .take(2)
-        .collect()
-        .unwrap();
-    assert_eq!(days(&got), ["12-24", "12-27"]);
-    // The naive iterators read it too.
-    let naive: Vec<_> = date::NaiveSpecIterator::new_after("YY-MM-DD ! YY-12-25", bdp.clone(), ny(2025, 12, 24, 0, 0).naive_local())
-        .unwrap()
-        .take(1)
-        .map(|o| Ok(o.observed().format("%m-%d").to_string()))
-        .collect()
-        .unwrap();
-    assert_eq!(naive, ["12-26"]);
-    let naive: Vec<_> = time::NaiveSpecIterator::new_after("1H:00:00 ! 12:MM:SS", ny(2025, 1, 1, 10, 30).naive_local())
-        .unwrap()
-        .take(2)
-        .map(|t| Ok(t.format("%H:%M").to_string()))
-        .collect()
-        .unwrap();
-    assert_eq!(naive, ["11:00", "13:00"]);
-
-    let got: Vec<_> = datetime::SpecIteratorBuilder::new_after("YY-MM-[MON-FRI]T09:00:00 ! YY-12-25 | YY-12-26", bdp.clone(), ny(2025, 12, 23, 12, 0))
-        .build()
-        .unwrap()
-        .take(2)
-        .collect()
-        .unwrap();
-    assert_eq!(days(&got), ["12-24", "12-29"]);
-
-    // An exclusion spec cannot have its own exclusions, or day steps.
-    assert!(date::SpecIteratorBuilder::new_after("YY-MM-DD ! YY-12-DD ! YY-12-25", bdp.clone(), ny(2025, 1, 1, 0, 0)).build().is_err());
-    assert!(datetime::SpecIteratorBuilder::new_after("YY-MM-DDT09:00:00 ! YY-MM-7D", bdp, ny(2025, 1, 1, 0, 0)).build().is_err());
-}
-
-#[test]
-fn test_resume_with_exclusions_in_the_spec() {
+fn test_resume_with_exclusions() {
     let bdp = WeekendSkipper::new();
     let tz = chrono_tz::America::New_York;
-    // A plain spec whose exclusions are a union is still resumed with `resume_after`.
-    let spec = "YY-MM-DD ! YY-12-25 | YY-01-01";
-    let next = date::SpecIteratorBuilder::resume_after(spec, bdp.clone(), tz, stored(&ny(2025, 12, 24, 0, 0)))
+    let next = date::SpecIteratorBuilder::resume_after("YY-MM-DD", bdp.clone(), tz, stored(&ny(2025, 12, 24, 0, 0)))
+        .with_exclusions("YY-12-25")
         .build()
         .unwrap()
         .next()
         .unwrap()
         .unwrap();
     assert_eq!(*next.observed(), ny(2025, 12, 26, 0, 0));
-    let spec = "YY-MM-DDT09:00:00 ! YY-12-25";
-    let next = datetime::SpecIteratorBuilder::resume_after(spec, bdp.clone(), tz, stored(&ny(2025, 12, 24, 9, 0)))
+    let next = datetime::SpecIteratorBuilder::resume_after("YY-MM-DDT09:00:00", bdp.clone(), tz, stored(&ny(2025, 12, 24, 9, 0)))
+        .with_exclusions("YY-12-25")
         .build()
         .unwrap()
         .next()
         .unwrap()
         .unwrap();
     assert_eq!(*next.observed(), ny(2025, 12, 26, 9, 0));
-    let next = time::SpecIteratorBuilder::resume_after("1H:00:00 ! 12:MM:SS", tz, stored(&ny(2025, 1, 1, 11, 0)))
+    let next = time::SpecIteratorBuilder::resume_after("1H:00:00", tz, stored(&ny(2025, 1, 1, 11, 0)))
+        .with_exclusions("12:MM:SS")
         .build()
         .unwrap()
         .next()
         .unwrap()
         .unwrap();
     assert_eq!(next, ny(2025, 1, 1, 13, 0));
-    // A union with exclusions is resumed with its start.
-    let start = ny(2025, 12, 1, 0, 0);
-    let spec = "YY-MM-7D | YY-MM-25 ! YY-12-25";
-    let continuous: Vec<_> = date::SpecIteratorBuilder::new_with_start(spec, bdp.clone(), start)
+    // Cadences in exclusions count from the stored start.
+    let start = ny(2025, 1, 1, 0, 0);
+    let continuous: Vec<_> = date::SpecIteratorBuilder::new_with_start("YY-MM-01", bdp.clone(), start)
+        .with_exclusions("YY-2M-DD")
         .build()
         .unwrap()
-        .take(10)
+        .take(6)
         .collect()
         .unwrap();
-    assert!(days(&continuous).iter().all(|d| d != "12-25"));
+    // Every other month from January is excluded, the start's month too.
+    assert_eq!(days(&continuous), ["02-01", "04-01", "06-01", "08-01", "10-01", "12-01"]);
     for i in 0..continuous.len() - 1 {
-        let next = date::SpecIteratorBuilder::resume_with_start(spec, bdp.clone(), tz, stored(&start), stored(continuous[i].actual()))
+        let next = date::SpecIteratorBuilder::resume_with_start("YY-MM-01", bdp.clone(), tz, stored(&start), stored(continuous[i].actual()))
+            .with_exclusions("YY-2M-DD")
             .build()
             .unwrap()
             .next()
@@ -311,18 +258,20 @@ fn test_resume_with_exclusions_in_the_spec() {
     }
 }
 
+/// Exclusions, unions and bounds belong to a schedule, not to a rule.
 #[test]
-fn test_describe_exclusions() {
-    assert_eq!(
-        date::describe("YY-MM-DD ! YY-12-25 | YY-01-01").unwrap(),
-        "every day, except on the 25th of December or on the 1st of January"
-    );
-    assert_eq!(
-        datetime::describe("YY-MM-[MON-FRI]T09:00:00 ! YY-12-25").unwrap(),
-        "every Monday to Friday; at 09:00:00, except on the 25th of December"
-    );
-    assert_eq!(
-        time::describe("1H:00:00 ! 12:MM:SS").unwrap(),
-        "every hour, at minute 00 and second 00, except during 12:00–12:59"
-    );
+fn test_rules_are_bare() {
+    let bdp = WeekendSkipper::new();
+    let from = ny(2025, 1, 1, 0, 0);
+    for spec in ["YY-MM-DD ! YY-12-25", "YY-MM-01 | YY-MM-15", "YY-MM-15 @2025-01-01", "YY-MM-15 x3", "YY-MM-15 [cal=GBLO]"] {
+        assert!(date::SpecIteratorBuilder::new_after(spec, bdp.clone(), from).build().is_err(), "{spec}");
+    }
+    for spec in ["YY-MM-DDT09:00:00 ! YY-12-25", "YY-MM-01T09:00:00 | YY-MM-15T09:00:00", "YY-MM-DDT09:00:00 @2025-01-01[Europe/London]"] {
+        assert!(datetime::SpecIteratorBuilder::new_after(spec, bdp.clone(), from).build().is_err(), "{spec}");
+    }
+    for spec in ["1H:00:00 ! 12:MM:SS", "09:00:00 | 17:00:00", "1H:00:00 ..2025-01-02"] {
+        assert!(time::SpecIteratorBuilder::new_after(spec, from).build().is_err(), "{spec}");
+    }
+    // Neither can an exclusion have them.
+    assert!(date::SpecIteratorBuilder::new_after("YY-MM-DD", bdp, from).with_exclusions("YY-12-25 | YY-01-01").build().is_err());
 }

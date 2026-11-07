@@ -9,22 +9,13 @@
 ; Each section starts with a "; @section NAME" line.
 
 ; @section schedule
-schedule      = union [ OWS "!" OWS exclusion ]
-                *( OWS ( start / end / calendar ) / RWS count )
-union         = part *( OWS "|" OWS part )
-exclusion     = excl-part *( OWS "|" OWS excl-part )
-part          = datetime-spec / date-spec / time-spec
-              ; every part of one schedule is of the same kind
-excl-part     = date-spec / time-spec
-              ; a date spec for date and datetime schedules,
-              ; a time spec for time schedules
+schedule      = datetime-spec / date-spec / time-spec
 
 ; @section shared
 number        = 1*DIGIT
 span          = number [ "-" number ]
 list          = "[" span *( "," span ) "]"
 OWS           = *SP
-RWS           = 1*SP
 
 ; @section date
 date-spec     = years "-" months "-" days [ weeks ]
@@ -58,7 +49,8 @@ easter        = ( %s"OEAS" / %s"EAS" ) [ ( "+" / "-" ) number ]
 
 weeks         = "/" number %s"W" [ list ]
 
-adjustment    = "~" ( %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
+adjustment    = "~" ( [ %s"N" / %s"P" ] weekday
+                    / %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
                     / %s"PB" / %s"NB" / %s"B" / %s"W"
                     / [ number ] ( %s"P" / %s"N" ) )
 
@@ -71,25 +63,3 @@ values        = list / number "-" number
 
 ; @section datetime
 datetime-spec = date-spec %s"T" time-spec
-
-; @section bounds
-start         = "@" OWS moment
-end           = ".." OWS ( moment / duration )
-count         = %s"x" number
-calendar      = "[" %s"cal=" cal-code *( "+" cal-code ) "]"
-cal-code      = 1*( %x41-5A / DIGIT / "-" )
-              ; capitals, digits and "-", e.g. GBLO
-duration      = "+" ( years-part / months-part / weeks-part
-                    / days-part )
-years-part    = number %s"Y" [ months-part / weeks-part
-                               / days-part ]
-months-part   = number %s"M" [ weeks-part / days-part ]
-weeks-part    = number %s"W" [ days-part ]
-days-part     = number %s"D"
-moment        = full-date [ %s"T" clock ] [ offset ]
-                [ "[" zone "]" ]
-full-date     = 4DIGIT "-" 2DIGIT "-" 2DIGIT
-clock         = 2DIGIT ":" 2DIGIT [ ":" 2DIGIT ]
-offset        = %s"Z" / ( "+" / "-" ) 2DIGIT ":" 2DIGIT
-zone          = 1*( ALPHA / DIGIT / "/" / "_" / "-" / "+" )
-              ; an IANA time zone name, e.g. Europe/London

@@ -41,11 +41,9 @@ use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
 use crate::biz_day::BizDayProcessor;
-use crate::bounds::{just_before, split_bounds};
 use crate::date::NaiveSpecIterator as DateSpecIterator;
 use crate::datetime::SpecIterator;
-use crate::merge::{split_exclusions, union_parts};
-use crate::utils::resolve_local;
+use crate::utils::{just_before, resolve_local};
 use crate::{DstPolicy, Error, IntervalMode, Occurrence, Result, TimeAnchor};
 
 /// One instant of a [`Schedule`], with every rule that produced it.
@@ -213,8 +211,7 @@ impl<B: BizDayProcessor> Schedule<B> {
 }
 
 impl<B: BizDayProcessor> ScheduleBuilder<B> {
-    /// Add a rule, a datetime spec with nothing around it
-    /// (`YY-MM-DD~SBT09:00:00`; no `@start`, `[Zone]`, `!` or `|`).
+    /// Add a rule, a datetime spec (`YY-MM-DD~SBT09:00:00`).
     pub fn rule(mut self, spec: impl Into<String>) -> Self {
         self.0.rules.push(Rule { id: None, spec: spec.into() });
         self
@@ -281,9 +278,8 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
     /// # Errors
     ///
     /// [`Error::InvalidSchedule`] when there are no rules, a rule or
-    /// exclusion does not parse or has bounds, exclusions or a union written
-    /// in it, two rules share an id, `until` is before the start, or the
-    /// count is 0.
+    /// exclusion does not parse, two rules share an id, `until` is before the
+    /// start, or the count is 0.
     pub fn build(self) -> Result<Schedule<B>> {
         let mut schedule = self.0;
         let invalid = |what: String| Error::InvalidSchedule(what);
@@ -307,13 +303,11 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
             if rule.id.as_ref().is_some_and(|id| !ids.insert(id.clone())) {
                 return Err(invalid(format!("{name} is used twice")));
             }
-            bare(&rule.spec).map_err(|why| invalid(format!("{name} (`{}`) {why}", rule.spec)))?;
             SpecIterator::anchored(&rule.spec, schedule.bdp.clone(), &schedule.start, &schedule.start, schedule.options)
                 .map_err(|e| invalid(format!("{name} (`{}`): {e}", rule.spec)))?;
             schedule.reach = schedule.reach.max(date_spec(&rule.spec)?.forward_reach());
         }
         for spec in &schedule.exclude_rules {
-            bare(spec).map_err(|why| invalid(format!("exclusion `{spec}` {why}")))?;
             DateSpecIterator::exclusion(spec, schedule.bdp.clone(), schedule.start.naive_local())
                 .map_err(|e| invalid(format!("exclusion `{spec}`: {e}")))?;
         }
@@ -330,21 +324,6 @@ fn date_spec(rule: &str) -> Result<crate::date::Spec> {
 #[cfg(feature = "serde")]
 pub(crate) fn rule_uses_business_days(rule: &str) -> Result<bool> {
     Ok(date_spec(rule)?.uses_business_days())
-}
-
-/// Fails when `spec` has more than a rule written in it.
-fn bare(spec: &str) -> std::result::Result<(), &'static str> {
-    let (body, _) = split_bounds(spec).map_err(|_| "has a malformed start, end, zone or calendar")?;
-    if body.trim() != spec.trim() {
-        return Err("has a start, end, count, zone or calendar written in it; set them on the schedule");
-    }
-    if split_exclusions(body).1.is_some() {
-        return Err("has exclusions (`!`) written in it; add them to the schedule");
-    }
-    if union_parts(body).is_some() {
-        return Err("is a union (`|`); add each part as its own rule");
-    }
-    Ok(())
 }
 
 /// The slots of a [`Schedule`], in time order.

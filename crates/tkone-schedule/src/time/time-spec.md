@@ -4,10 +4,9 @@
 
 ```text
 HH:MM:SS
-SPEC | SPEC | …  ! EXCLUSION | EXCLUSION | …  @START ..END xCOUNT
 ```
 
-All three components are required. Each component is one of: a wildcard (`ForEach`), a keep-current marker (`AsIs`), a fixed value (`At`), a list or range of values (`Values`), or an interval (`Every`). Several specs can be combined with `|` ([Union](#union-of-time-specs)), times removed after `!` ([Exclusions](#exclusions)), and a start, end and time zone added at the end ([Start, end and time zone](#start-end-and-time-zone)).
+All three components are required. Each component is one of: a wildcard (`ForEach`), a keep-current marker (`AsIs`), a fixed value (`At`), a list or range of values (`Values`), or an interval (`Every`). A spec is one rule; its start, time zone, end, count and exclusions are set around it ([Start, end, count and exclusions](#start-end-count-and-exclusions)).
 
 ---
 
@@ -118,48 +117,30 @@ HH:30M:00        →  every 30 minutes, at second 00, counted from the start
 | `HH`/`MM`/`SS` | `ForEach` | Carry | Drive (finest advances by 1) |
 | `_` | `AsIs` | No-op (keep current) | No-op (keep current) |
 
-**Key distinction:** `ForEach` participates in the "finest driver" election; `AsIs` never does. A spec using only `AsIs`, `At` and list fields has no step: it names **fixed times of day**. In a combined datetime spec those times are used on every date; as a pure time iterator they are yielded on the current day only, or every day when the spec is part of a union (see [All-`At` specs](#hhmmss-all-at-used-as-an-iterator)).
+**Key distinction:** `ForEach` participates in the "finest driver" election; `AsIs` never does. A spec using only `AsIs`, `At` and list fields has no step: it names **fixed times of day**. In a combined datetime spec those times are used on every date; as a pure time iterator they are yielded on the current day only, or every day with `.repeat_daily()` (see [All-`At` specs](#hhmmss-all-at-used-as-an-iterator)).
 
 ---
 
-## Combining and bounding specs
+## Start, end, count and exclusions
 
-These apply to whole specs: combine several with `|`, remove times after `!`, and end with a
-start, end, time zone and count.
+A spec is one rule. The start, time zone, end, count and exclusions are not written in it; they
+are given to the iterator builder:
 
-### Union of time specs
+- **The start** (`new_with_start`, or a cursor with `new_after` / `resume_after`) anchors the
+  grid and gives the time zone. With `new_with_start(09:07)`, `HH:15M:00` runs at 09:07, 09:22,
+  …. A spec without a step yields its times on the start's day.
+- **`.with_end(end)`** is an inclusive upper bound; `.with_end_spec(spec)` resolves one from the
+  start (see [End spec](#end-spec-with_end_spec)).
+- **`.with_count(n)`** stops after `n` results, counted from the start: `HH:30M:00` from 09:00
+  with `with_count(4)` is 09:00, 09:30, 10:00 and 10:30. Excluded times are not counted, and a
+  counted schedule is resumed with `resume_with_start`.
+- **`.with_exclusions(spec)`** drops the times that match another time spec, one per call:
+  `1H:00:00` with `with_exclusions("12:MM:SS")` is every hour except during the 12:00 hour. An
+  exclusion matches **exact times**, so leave the finer fields as wildcards to cover a whole
+  period: `12:MM:SS` covers the entire 12:00 hour, `12:MM:00` only 12:00:00, 12:01:00, …, and
+  `12:00:00` only the single instant 12:00:00.
 
-`09:[30,45]:00 | 10-15:15M:00 | 16:00:00` yields the times of every part in order: every 15
-minutes from 09:30 to 16:00. Each part keeps its own grid, counted from the start (or from
-midnight with `TimeAnchor::Midnight`). Fixed-time parts such as `16:00:00` recur every day in a
-union. When two parts produce the same instant it is yielded once. Describe a union with
-`time::describe(spec)`.
-
-### Exclusions
-
-`<spec> ! <exclusion>` drops the times of `<spec>` that match `<exclusion>`, another time spec
-(a union is allowed): `1H:00:00 ! 12:MM:SS` is every hour except during the 12:00 hour. The
-exclusion applies to everything before the `!`, including every part of a union.
-
-An exclusion matches **exact times**, so leave the finer fields as wildcards to cover a whole
-period: `12:MM:SS` covers the entire 12:00 hour, `12:MM:00` only 12:00:00, 12:01:00, …, and
-`12:00:00` only the single instant 12:00:00. `time::describe` shows what an exclusion covers:
-`1H:00:00 ! 12:MM:SS` is "every hour, at minute 00 and second 00, except during 12:00–12:59".
-
-> *Library:* `.with_exclusions(spec)` on the builder adds exclusions the same way.
-> `.with_count(n)` stops after `n` results counted from the start (excluded times are not
-> counted); a counted schedule is resumed with `resume_with_start`.
-
-### Start, end and time zone
-
-`1H:00:00 @2025-01-06T09:00:00[Europe/Paris] ..2025-01-06T17:00` is hourly from 09:00 to 17:00
-Paris time on 6 January. The start anchors the grid and is included when it is on it:
-`HH:15M:00 @2025-01-06T09:07:00` runs at 09:07, 09:22, …. A spec without a step yields its times
-on the start's day. `xN` stops after *N* times: `HH:30M:00 @2025-01-06T09:00:00 x4` is 09:00,
-09:30, 10:00 and 10:30. `..+1D` ends a day after the start: `HH:30M:00 @2025-01-06T09:00:00
-..+1D` is 48 times, up to 08:30 the next morning. The syntax and precedence rules are the same as for
-[date specs](crate::date#start-end-time-zone-and-calendar-optional); `SpecIteratorBuilder::from_spec(spec)`
-builds from the text alone.
+Several rules are combined, with dates, in a `schedule::Schedule`; see the crate documentation.
 
 ---
 
@@ -783,15 +764,14 @@ The spec is applied to the wall-clock (local) time using `chrono::Duration` arit
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, tz, last_actual)`, where `last_actual` is the
 stored `time` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
-same options; add `.with_end(end)` if the schedule has a stored end. A union must be resumed
-with `resume_with_start(spec, tz, start, last)`, which also takes the stored start. The crate
+same options; add `.with_end(end)` if the schedule has a stored end. A counted schedule must be
+resumed with `resume_with_start(spec, tz, start, last)`, which also takes the stored start. The crate
 docs' section *Persisting and resuming a schedule* has the full pattern and the rules that keep
 resumed results identical to a continuous iterator.
 
 A time-only iterator yields plain instants, so a time moved by a spring-forward gap is stored as
-its moved time (03:30 EDT, not 02:30 EST). Resuming a *union* right after such a time can then
-miss another part's time that was also moved past it. Use a datetime spec, whose `actual` keeps
-the scheduled wall-clock time, when that matters.
+its moved time (03:30 EDT, not 02:30 EST). Use a datetime spec, whose `actual` keeps the
+scheduled wall-clock time, when that matters.
 
 ### Sub-second precision
 
@@ -898,7 +878,7 @@ results. They are documented here for clarity.
 
 **Behaviour:** A spec with no step names one time of day (or, with lists, a few). As a time
 iterator it yields those times **on the current day only**, then terminates:
-`[09,12,17]:00:00` from 10:00 yields 12:00 and 17:00. To repeat them every day, as a union does,
+`[09,12,17]:00:00` from 10:00 yields 12:00 and 17:00. To repeat them every day,
 build with `.repeat_daily()` (`tkone-trigger` always does).
 
 - `new_with_start` from `09:30:00` → yields `09:30:00` (passthrough) then terminates.

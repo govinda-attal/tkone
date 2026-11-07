@@ -183,6 +183,9 @@ when the raw date is not already a business/week day. Numeric variants
 | `~W`  | Nearest weekday — Mon–Fri (shift to whichever direction is closer) |
 | `~3P` | 3 business days earlier (unconditional) |
 | `~2N` | 2 business days later (unconditional) |
+| `~MON` | Nearest Monday, at most 3 days away (any day: `~TUE`, …, `~SUN`) |
+| `~NMON` | Next Monday, unless it is one |
+| `~PMON` | Previous Monday, unless it is one |
 
 ### Time Spec — `<hours>:<minutes>:<seconds>`
 
@@ -225,89 +228,21 @@ in the date spec are not confused with the separator.
 "YY-MM-THUT09:30:00"     →  date="YY-MM-THU"         time="09:30:00"
 ```
 
-### Union — `<spec> | <spec> | …`
+### Schedules: rules in context
 
-Any date, time or datetime spec can be a union of specs of the same kind,
-separated by `|`. The iterator yields the occurrences of every part in
-order of actual time. When two parts produce the same actual time, only the
-first listed part's occurrence is kept, so actual times still strictly
-increase.
+A spec is one rule. What surrounds it — the start it is anchored to, the
+time zone, the business days, an end or a count, several rules, and
+exclusions — is set on a [`schedule::Schedule`], or written in a schedule
+document (YAML or JSON, the `serde` feature). See the [`schedule`] module.
 
-```text
-"YY-MM-BD#3 | YY-MM-L~PB"                     3rd and last business day of each month
-"09:[30,45]:00 | 10-15:15M:00 | 16:00:00"     every 15 minutes from 09:30 to 16:00
-"YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00"  different dates and times per part
-```
+The iterator builders also take an end (`with_end`), a count
+(`with_count`) and exclusions (`with_exclusions`) for a single rule.
 
-Each part keeps its own cadence and phase from the start. Fixed times of
-day in a time-only union recur every day. Resuming a union needs the
-schedule's start; see [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
-To describe a union, use [`date::describe`], [`time::describe`] or
-[`datetime::describe`], which take the union string.
+### Count — `with_count(n)`
 
-### Exclusions — `<spec> ! <exclusion> | <exclusion> | …`
-
-Everything after a `!` is excluded:
-
-- date and datetime specs exclude by a **date spec**, matched against each
-  occurrence's actual (unadjusted) date: `YY-MM-DD ! YY-12-25 | YY-01-01`.
-  For a datetime spec every time on an excluded date is skipped. The
-  exclusion spec cannot use day steps (`7D`).
-- time specs exclude by a **time spec**: `1H:00:00 ! 12:MM:SS` skips the
-  12:00 hour.
-
-The exclusion applies to everything before the `!`, including every part of
-a union. Builders also take `.with_exclusions(spec)`, which adds exclusions
-the same way.
-
-### Start, end, time zone, count and calendar — `<spec> @<start> ..<end> x<count> [cal=<code>]`
-
-A spec can end with its own start and end, each a date or datetime with an
-optional UTC offset and an optional IANA time zone in RFC 9557 brackets, so
-the text alone defines the schedule:
-
-```text
-"YY-3M-15~NB @2025-02-15 ..2027-02-15"
-"YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]"
-```
-
-- `@start` anchors the schedule (cadences, week cycles, positions, steps,
-  the time grid) and is an inclusive lower bound.
-- `..end` is an inclusive upper bound; a date-only end covers the whole day.
-- `..+30Y` ends a duration after the start instead (years, months, weeks and
-  days: `+5Y6M`, `+2W`), itself excluded, so `@2025-01-31 ..+30Y` is exactly
-  30 years: 360 monthly results. It needs a start, written or the builder's.
-- `xN` stops after *N* results counted from the start (excluded ones are not
-  counted); with an end too, whichever comes first stops it. Without a
-  start it is counted from the first result, or a builder start.
-- `[cal=GBLO]` names the holiday calendar the business days come from
-  (`[cal=GBLO+USNY]`: open in both). The schedule then builds only with a
-  business-day processor of that code ([`biz_day::BizDayProcessor::code`]),
-  failing with [`Error::Calendar`] otherwise; see [`calendar_of`].
-- A start, end or count given to the builder takes precedence. `new_after(dtm)` and
-  `resume_after(last)` take a cursor, not a start, so a written start still
-  anchors the schedule.
-- `SpecIteratorBuilder::from_spec(spec, …)` builds from the text alone, in
-  its time zone (UTC if none is named).
-
-```rust
-use tkone_schedule::biz_day::WeekendSkipper;
-use tkone_schedule::datetime::SpecIteratorBuilder;
-use fallible_iterator::FallibleIterator;
-
-let spec = "YY-MM-8D[1-4]T06:00:00 @2025-01-01[America/Chicago] ..2025-01-12";
-let shifts: Vec<_> = SpecIteratorBuilder::from_spec(spec, WeekendSkipper::new())?
-    .build()?
-    .map(|o| Ok(o.observed().format("%d %H:%M").to_string()))
-    .collect()?;
-assert_eq!(shifts, ["01 06:00", "02 06:00", "03 06:00", "04 06:00", "09 06:00", "10 06:00", "11 06:00", "12 06:00"]);
-```
-
-### Count — `xN` or `with_count(n)`
-
-`xN` in the spec, or `.with_count(n)` on the builder (which takes
-precedence), stops after *n* results counted from the start. Excluded occurrences are not counted, so
-`with_count(12)` always yields 12 (unlike iCalendar's `COUNT` with `EXDATE`).
+`.with_count(n)` stops after *n* results counted from the start. Excluded
+occurrences are not counted, so `with_count(12)` always yields 12 (unlike
+iCalendar's `COUNT` with `EXDATE`).
 
 ```rust
 use tkone_schedule::biz_day::WeekendSkipper;
@@ -317,7 +252,8 @@ use fallible_iterator::FallibleIterator;
 
 let start = Utc.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap();
 // nothing in July and August
-let dates: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-15 ! YY-[07-08]-DD", WeekendSkipper::new(), start)
+let dates: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-15", WeekendSkipper::new(), start)
+    .with_exclusions("YY-[07-08]-DD")
     .with_count(12)
     .build()?
     .map(|o| Ok(o.observed().format("%Y-%m").to_string()))
@@ -407,7 +343,7 @@ Per schedule, store:
 | cursor | `occurrence.actual().to_rfc3339()` | resuming |
 | due at | `occurrence.observed()` | when to run the action |
 | end (optional) | an RFC 3339 end datetime | `.with_end(end)` when resuming |
-| start (for unions, positions, counts) | the schedule's start, RFC 3339 — unless the spec has `@start` | `resume_with_start` — required for a union, a cycle with positions (`/4W[1,2]`, `8D[1-4]`) or `with_count` |
+| start (for positions, counts) | the schedule's start, RFC 3339 | `resume_with_start` — required for a cycle with positions (`/4W[1,2]`, `8D[1-4]`) or `with_count` |
 
 ```rust
 struct Row {
@@ -477,31 +413,67 @@ Rules that keep resumed results exact:
   it is not available when resuming.
 - Cadences (`3M`, `2Y`, `1Y-3M`) and step rules (`7D`, `5BD`) stay aligned,
   because every stored occurrence lies on the cadence.
-- **A spec with `@start` written in it resumes with `resume_after` alone**,
-  whatever it contains: the start comes from the text. The rules below are
-  for specs without one.
-- **A union spec (`A | B`) needs its start.** A stored occurrence belongs to
-  one part, and the other parts' cadences, steps and time grids are not
-  aligned to it. Store the start (the `new_with_start` start, or the first
+- **A cycle with positions** other than the first (`/4W[1,2]`, `8D[1-4]`,
+  `3M[1-2]`) **needs its start**: a stored occurrence can be anywhere in its
+  cycle. Store the start (the `new_with_start` start, or the first
   occurrence's `actual`) and resume with
-  `resume_with_start(spec, bdp, tz, start, cursor)`, which positions every
-  part as if iterating from the start. `resume_after` on a union returns
-  [`Error::UnsupportedResume`], and so does a union in
-  [`IntervalMode::Elapsed`]. `resume_with_start` also works for plain specs,
-  with the same results as `resume_after`.
-
-- **So does a cycle with positions** other than the first (`/4W[1,2]`,
-  `8D[1-4]`, `3M[1-2]`): a stored occurrence can be anywhere in its cycle.
+  `resume_with_start(spec, bdp, tz, start, cursor)`; `resume_after` returns
+  [`Error::UnsupportedResume`]. `resume_with_start` also works for other
+  specs, with the same results as `resume_after`.
 - **A counted schedule (`with_count`) needs its start too.** Resume it with
   `resume_with_start`, which replays it from the start (at most *n*
-  results) to know how many have run; this works for any spec and mode,
-  including a union in `Elapsed`. `resume_after` with `with_count` returns
-  [`Error::UnsupportedResume`].
+  results) to know how many have run. `resume_after` with `with_count`
+  returns [`Error::UnsupportedResume`].
+- A [`schedule::Schedule`] needs none of this: it is anchored at its start,
+  and `slots_after(t)` gives the same slots from any `t`.
 
 The same `resume_after` and `resume_with_start` exist on
 [`date::SpecIteratorBuilder`] and [`time::SpecIteratorBuilder`].
 
 <!-- cargo-rdme end -->
+
+## Schedules: several rules, exclusions, until and count
+
+A spec is one rule. A [`schedule::Schedule`](src/schedule.rs) holds what surrounds it: the start
+it is anchored to (which also gives the time zone), the business days, an inclusive `until`, a
+`count`, several named rules and exclusions. Its rules are datetime specs.
+
+```rust
+let schedule = Schedule::builder(start, bdp)              // start: DateTime<chrono_tz::Tz>
+    .named_rule("close", "YY-MM-DD~SBT16:30:00")
+    .named_rule("month-end", "YY-MM-L~PBT18:00:00")
+    .until(until)
+    .count(100)
+    .exclude_date(NaiveDate::from_ymd_opt(2026, 11, 27).unwrap())
+    .exclude_rule("YY-12-24")
+    .build()?;
+
+let mut slots = schedule.slots_after(&last_fired)?;   // a FallibleIterator
+while let Some(slot) = slots.next()? {
+    // slot.at: when it happens; slot.sources: the rules that produced it, with actual times
+}
+```
+
+`slots()` iterates from the start, and `slots_after(t)` gives the same slots after any `t`, so a
+stored schedule needs no cursor rules. With the `serde` feature, the same schedule is a document
+([`ScheduleDoc`](src/schedule/document.rs)), read from YAML or JSON and resolved with a
+`CalendarResolver`:
+
+```yaml
+version: 1
+time_zone: America/New_York
+calendar: XNYS
+start: 2026-01-02T00:00:00
+until: 2026-12-31
+rules:
+  - id: close
+    rule: YY-MM-DD~SBT16:30:00
+  - id: month-end
+    rule: YY-MM-L~PBT18:00:00
+exclude:
+  dates: [2026-11-27]
+  rules: [YY-12-24]
+```
 
 ## Further reading
 
@@ -518,21 +490,21 @@ The same `resume_after` and `resume_with_start` exist on
 - Daylight saving worked examples: [date](src/date/date-spec.md#daylight-saving-time),
   [time](src/time/time-spec.md#daylight-saving-time),
   [datetime](src/datetime/date-time-spec.md#daylight-saving-time)
+- [Schedule documents](../../docs/schedule-document.md): the design of `Schedule` and
+  `ScheduleDoc`
 
 ## Builder options
 
-These are set when building an iterator, not written in the spec. Where the spec can say the
-same thing (`@start`, `..end`, `xN`, `!`), the builder's value takes precedence.
+These are set when building an iterator for a single rule, not written in the spec.
 
 | Option | Iterators | Default | Effect |
 |--------|-----------|---------|--------|
 | `::new_after(spec, …, dtm)` / `::new(spec, …, tz)` | all | — | Results strictly after `dtm` (or now) |
 | `::new_with_start(spec, …, start)` | all | — | `start` is the first result, as-is; cadences count from it |
-| `::from_spec(spec, …)` | all | — | Build from the text alone: its `@start`, `..end`, `xN` and `[Zone]` (UTC if none) |
 | `::resume_after(spec, …, tz, last)` / `::resume_with_start(…, start, last)` | all | — | Continue a stored schedule (see below) |
-| `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound; overrides `..end` |
-| `.with_count(n)` | all | — | Stop after `n` results counted from the start; overrides `xN`; excluded occurrences are not counted |
-| `.with_exclusions(spec)` | all | — | Same as writing `! spec`; combined with exclusions already there |
+| `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound (`with_end_spec` only with `new_with_start`) |
+| `.with_count(n)` | all | — | Stop after `n` results counted from the start; excluded occurrences are not counted |
+| `.with_exclusions(spec)` | all | — | Drop occurrences matching `spec`: a date spec (date, datetime) matched against the actual date, or a time spec (time). One spec per call; call it again for more |
 | `.with_dst_policy(…)` | all | `Adjust` | `Strict` turns DST gaps and overlaps into errors |
 | `.with_interval_mode(…)` | time, datetime | `WallClock` | `Elapsed` measures steps in real time across DST |
 | `.with_time_anchor(…)` | time, datetime | `Start` | `Midnight` counts steps from each day's 00:00 (clock-aligned, like cron) instead of from the start's time of day |
@@ -542,8 +514,8 @@ not match the spec. That lets you feed an already-adjusted (observed) date back 
 
 To continue a schedule stored in a database, use `resume_after(spec, …, tz, last_actual)` with
 the RFC 3339 `actual` of the last occurrence, plus `.with_end(end)` if it has an end. If the spec
-has no `@start` and is a union (`A | B`), has a cycle with positions (`/4W[1,2]`, `8D[1-4]`) or a
-count, resume it with `resume_with_start(spec, …, tz, start, last_actual)` and the stored start.
+has a cycle with positions (`/4W[1,2]`, `8D[1-4]`) or a count, resume it with
+`resume_with_start(spec, …, tz, start, last_actual)` and the stored start.
 See [Persisting and resuming a schedule](#persisting-and-resuming-a-schedule).
 
 ## API docs

@@ -7,17 +7,12 @@ pub enum Error {
     InvalidTimeSpec(String),
     #[error("invalid date-time spec: {0}")]
     InvalidDateTimeSpec(String),
-    /// A start or end written in the spec (`@2025-01-06 ..2026-01-06`,
-    /// `..+30Y`) is malformed or inconsistent, or a duration end has no start
-    /// to count from.
-    #[error("invalid start or end in spec: {0}")]
-    InvalidSpecBounds(String),
-    /// The calendar written in the spec (`[cal=GBLO]`) is not the
-    /// business-day processor the schedule was given.
+    /// A calendar is unknown, or judges business days in another time zone
+    /// than the schedule's.
     #[error("calendar: {0}")]
     Calendar(String),
     /// A [`Schedule`](crate::schedule::Schedule) is inconsistent: no rules, a
-    /// rule with bounds or exclusions written in it, a repeated rule id, …
+    /// rule that does not parse, a repeated rule id, …
     #[error("invalid schedule: {0}")]
     InvalidSchedule(String),
     #[error("invalid end spec")]
@@ -26,9 +21,8 @@ pub enum Error {
     IteratorNotConverged,
     #[error("ambiguous or non-existent local time in target timezone: {0}")]
     AmbiguousLocalTime(String),
-    /// A union spec (`A | B`) in [`IntervalMode::Elapsed`](crate::IntervalMode::Elapsed)
-    /// can be iterated but not resumed: each part's elapsed steps depend on its
-    /// own previous occurrence, which is not stored.
+    /// A schedule cannot be resumed from its last occurrence alone: a cycle
+    /// with positions, or a count, needs `resume_with_start`.
     #[error("cannot resume: {0}")]
     UnsupportedResume(String),
     #[error("{0}")]

@@ -1,64 +1,88 @@
 # tkone for Python
 
-Business-day schedules in one line of text, with verified holiday calendars.
-Python bindings for [tkone-schedule](https://github.com/govinda-attal/tkone/tree/main/crates/tkone-schedule)
+Business-day schedules: rules in one line of text, schedule documents around
+them, and verified holiday calendars. Python bindings for
+[tkone-schedule](https://github.com/govinda-attal/tkone/tree/main/crates/tkone-schedule)
 and [tkone-calendar](https://github.com/govinda-attal/tkone/tree/main/crates/tkone-calendar).
 
 One module per tkone crate: `tkone.schedule` and `tkone.calendar`.
 
 ```python
-from tkone.schedule import Schedule
+from tkone.schedule import Document
 
-s = Schedule("YY-MM-BD#3 ~MF @2026-01-01 [cal=GBLO] x3")
-print(s.describe())
-# on the 3rd business day of every month, moved to the next business day ...
-
-for o in s.occurrences():
-    print(o.observed.date())
-# 2026-01-06
-# 2026-02-04
-# 2026-03-04
-```
-
-Each occurrence keeps the time the rule produced and the time it moved to:
-
-```python
-s = Schedule("YY-1M-31L~MF @2026-01-31 [cal=GBLO+USNY] x3")
-for o in s.occurrences():
-    print(o.actual.date(), "→", o.observed.date(), o.adjustment)
-# 2026-01-31 → 2026-01-30 earlier
-# 2026-02-28 → 2026-02-27 earlier
-# 2026-03-31 → 2026-03-31 exact
+doc = Document({
+    "version": 1,
+    "time_zone": "Europe/London",
+    "calendar": "GBLO",
+    "start": "2026-01-01",
+    "count": 3,
+    "rules": [{"id": "report", "rule": "YY-MM-BD#3T09:00:00"}],
+})
+for slot in doc.slots():
+    print(slot.at)
+# 2026-01-06 09:00:00+00:00
+# 2026-02-04 09:00:00+00:00
+# 2026-03-04 09:00:00+00:00
 ```
 
 ## `tkone.schedule`
 
-`Schedule(spec)` takes any spec: a date spec (`YY-MM-BD#3`), a time
-spec (`09-16:15M:00`) or a datetime spec (`YY-MM-DD~SBT16:30:00`), with a
-start (`@…`), end (`..…`, `..+30Y`), count (`x12`), time zone (`[Europe/London]`)
-and calendar (`[cal=GBLO]`) written after it. See the
+### `Document`: a schedule
+
+`Document(doc)` takes a schedule document as a `dict` or a JSON string (read
+YAML with a YAML library first). It holds one or more rules, with the start
+they are anchored to, the time zone, the calendar (a `tkone.calendar` code,
+`GBLO+USNY` for both, or `WEEKENDS`), an end (`until`) or a `count`, and
+exclusions. See the
+[schedule document design](https://github.com/govinda-attal/tkone/blob/main/docs/schedule-document.md).
+
+| | |
+|---|---|
+| `doc.slots(after=None)` | an iterator of `Slot`, strictly after `after` (an aware `datetime`), or from the start |
+| `doc.take(n, after=None)` | the first `n`, as a list |
+| `doc.to_json()` | the document as JSON |
+
+A `Slot` has `at` (an aware `datetime`) and `sources`: the rules that
+produced it, each a `Source` with `rule_id` and `actual`, the time the rule
+produced before any business-day adjustment. Rules that land on the same
+instant make one slot:
+
+```python
+doc = Document({
+    "version": 1, "time_zone": "Europe/London", "calendar": "GBLO+USNY",
+    "start": "2026-01-01", "count": 3,
+    "rules": [{"id": "collection", "rule": "YY-1M-31L~MFT07:00:00"}],
+})
+for slot in doc.slots():
+    print(slot.sources[0].actual.date(), "→", slot.at.date())
+# 2026-01-31 → 2026-01-30
+# 2026-02-28 → 2026-02-27
+# 2026-03-31 → 2026-03-31
+```
+
+### `Schedule`: one rule
+
+`Schedule(spec)` takes one rule: a date spec (`YY-MM-BD#3`), a time spec
+(`09-16:15M:00`) or a datetime spec (`YY-MM-DD~SBT16:30:00`). See the
 [format guide](https://github.com/govinda-attal/tkone/blob/main/crates/tkone-schedule/INTRODUCTION.md).
 
 | | |
 |---|---|
 | `s.kind` | `"date"`, `"time"` or `"datetime"` |
-| `s.describe()` | the spec in plain English |
-| `s.calendar`, `s.zone` | the calendar code and time zone written in the spec |
+| `s.describe()` | the rule in plain English |
 | `s.occurrences(after=None, calendar=None, tz=None)` | an iterator of `Occurrence` |
 | `s.take(n, …)` | the first `n`, as a list |
 
 - **`after`**: an aware `datetime`; occurrences strictly after it. Without it,
-  from the spec's written start, else from now.
-- **`calendar`**: a `tkone.calendar.Calendar` or a code. Without it, the calendar the
-  spec names, else weekends only. A spec that names a calendar only runs on
-  that calendar.
-- **`tz`**: read the schedule in this IANA zone instead of the written one
-  (UTC if none).
+  from now.
+- **`calendar`**: a `tkone.calendar.Calendar` or a code. Without it, weekends
+  only.
+- **`tz`**: read the rule in this IANA zone (UTC if none).
 
 An `Occurrence` has `actual` and `observed` (aware `datetime`s with a
 `zoneinfo.ZoneInfo`) and `adjustment`: `"exact"`, `"later"` or `"earlier"`.
 
-`describe(spec)` describes a spec without building a `Schedule`.
+`describe(spec)` describes a rule without building a `Schedule`.
 
 ## `tkone.calendar`
 

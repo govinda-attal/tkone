@@ -20,13 +20,13 @@ bug in one of them.
 
 The grammar is written in ABNF ([RFC 5234](https://www.rfc-editor.org/rfc/rfc5234)), with
 case-sensitive strings written `%s"…"` ([RFC 7405](https://www.rfc-editor.org/rfc/rfc7405)).
-`ALPHA`, `DIGIT` and `SP` are the RFC 5234 core rules.<!-- not-in-draft --> The ABNF blocks
+`DIGIT` and `SP` are the RFC 5234 core rules.<!-- not-in-draft --> The ABNF blocks
 below are copied from [ietf/tkone-schedule.abnf](ietf/tkone-schedule.abnf), the single source of
 the grammar; run `python3 ietf/build.py` after changing it.<!-- /not-in-draft -->
 
 - Matching is **case-sensitive**: `YY-MM-DD`, not `yy-mm-dd`.
-- **No whitespace is allowed** inside a date, time or datetime part, except where `OWS`
-  (optional) or `RWS` (required) is shown.
+- **No whitespace is allowed** inside a date, time or datetime spec, except where `OWS`
+  (optional whitespace) is shown.
 - **Where alternatives overlap, the first one listed applies.** ABNF itself does not order
   alternatives, so an implementation that tries them in a different order can accept the same
   text but read it differently. For example, `BD#3` is a business-day position, not the start of
@@ -40,36 +40,25 @@ number        = 1*DIGIT
 span          = number [ "-" number ]
 list          = "[" span *( "," span ) "]"
 OWS           = *SP
-RWS           = 1*SP
 ```
 <!-- /abnf -->
 
 ### Schedule
 
-A schedule is a union of parts, optional exclusions, and optional bounds. The kind of schedule
-(date, time or datetime) is decided by the caller, not by the text.
+A schedule is exactly one rule: a date spec, a time spec or a datetime spec. The kind of
+schedule (date, time or datetime) is decided by the caller, not by the text.
 
 <!-- abnf:schedule -->
 ```abnf
-schedule      = union [ OWS "!" OWS exclusion ]
-                *( OWS ( start / end / calendar ) / RWS count )
-union         = part *( OWS "|" OWS part )
-exclusion     = excl-part *( OWS "|" OWS excl-part )
-part          = datetime-spec / date-spec / time-spec
-              ; every part of one schedule is of the same kind
-excl-part     = date-spec / time-spec
-              ; a date spec for date and datetime schedules,
-              ; a time spec for time schedules
+schedule      = datetime-spec / date-spec / time-spec
 ```
 <!-- /abnf -->
 
-How a schedule is split, in this order:
-
-1. **Bounds.** The schedule body ends at the first `@`, the first `..`, or the first count token
-   (whichever comes first). Everything after that is bounds.
-2. **Exclusions.** The body is split at its first `!`. Everything after it is the exclusion.
-3. **Unions.** The part before `!`, and the exclusion, are each split at every `|`. Each piece is
-   trimmed of surrounding whitespace.
+Everything around the rule is supplied with it, not written in it: the start it is counted
+from, the time zone it is read in, the holiday calendar its business days come from, an end or a
+number of occurrences, other rules it is combined with, and dates it leaves out.<!-- not-in-draft -->
+In this crate they are set on the `schedule::Schedule` builder or written in a schedule document
+(YAML or JSON); see [docs/schedule-document.md](../../docs/schedule-document.md).<!-- /not-in-draft -->
 
 ### Date spec
 
@@ -106,11 +95,15 @@ easter        = ( %s"OEAS" / %s"EAS" ) [ ( "+" / "-" ) number ]
 
 weeks         = "/" number %s"W" [ list ]
 
-adjustment    = "~" ( %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
+adjustment    = "~" ( [ %s"N" / %s"P" ] weekday
+                    / %s"SB" / %s"MF" / %s"MP" / %s"PW" / %s"NW"
                     / %s"PB" / %s"NB" / %s"B" / %s"W"
                     / [ number ] ( %s"P" / %s"N" ) )
 ```
 <!-- /abnf -->
+
+An adjustment that names a weekday (`~MON`, `~NMON`, `~PMON`) is tried before the others, so
+`~NWED` is the next Wednesday and `~NW` the next weekday.
 
 `number %s"D" list` is only valid for calendar days: `5BD[…]` and `3WD[…]` do not parse.
 
@@ -152,44 +145,6 @@ T(?:HH|_|\[[0-9,\-]+\]|[0-9]{1,2}H|[0-2]?[0-9](?:-[0-2]?[0-9])?):
 This keeps the `T` in `TUE`, `THU` and `SAT` from being taken as the separator. `YY-MM-THUT09:00:00`
 splits into `YY-MM-THU` and `09:00:00`.
 
-### Bounds: start, end, count and calendar
-
-<!-- abnf:bounds -->
-```abnf
-start         = "@" OWS moment
-end           = ".." OWS ( moment / duration )
-count         = %s"x" number
-calendar      = "[" %s"cal=" cal-code *( "+" cal-code ) "]"
-cal-code      = 1*( %x41-5A / DIGIT / "-" )
-              ; capitals, digits and "-", e.g. GBLO
-duration      = "+" ( years-part / months-part / weeks-part
-                    / days-part )
-years-part    = number %s"Y" [ months-part / weeks-part
-                               / days-part ]
-months-part   = number %s"M" [ weeks-part / days-part ]
-weeks-part    = number %s"W" [ days-part ]
-days-part     = number %s"D"
-moment        = full-date [ %s"T" clock ] [ offset ]
-                [ "[" zone "]" ]
-full-date     = 4DIGIT "-" 2DIGIT "-" 2DIGIT
-clock         = 2DIGIT ":" 2DIGIT [ ":" 2DIGIT ]
-offset        = %s"Z" / ( "+" / "-" ) 2DIGIT ":" 2DIGIT
-zone          = 1*( ALPHA / DIGIT / "/" / "_" / "-" / "+" )
-              ; an IANA time zone name, e.g. Europe/London
-```
-<!-- /abnf -->
-
-`moment` follows RFC 3339 with an optional RFC 9557 time zone suffix. A `duration` is years,
-months, weeks and days, in that order, each at most once: `+30Y`, `+5Y6M`, `+2W`, `+1M15D`. A
-count token only counts when it stands alone, so an `x` inside a zone name such as
-`America/Mexico_City` is not a count.
-
-`calendar` names the holiday calendar whose business days the schedule uses: `[cal=GBLO]`, or
-several joined with `+` (`[cal=GBLO+USNY]`). It has the form of an RFC 9557 suffix tag, and the
-`=` keeps it apart from a list such as `[2025-2027]`. This document does not define calendar
-codes; it recommends FpML business centre codes (`GBLO`, `USNY`) and ISO 10383 market
-identifier codes (`XNYS`), so that systems that exchange schedules can agree on them.
-
 ---
 
 ## 2. Validity rules
@@ -225,28 +180,6 @@ A schedule that matches the grammar is still rejected if any of these rules is b
 
 A step may exceed the field's range: `25H:00:00` and `HH:90M:00` are valid.
 
-### Exclusions
-
-| Rule | Rejected example |
-|------|------------------|
-| A date exclusion has no day step | `YY-MM-DD ! YY-MM-7D` |
-| An exclusion has no exclusions of its own | `YY-MM-DD ! YY-12-DD ! YY-12-25` |
-| A datetime schedule excludes by date spec | `YY-MM-DDT09:00:00 ! 09:00:00` |
-
-### Bounds
-
-| Rule | Rejected example |
-|------|------------------|
-| At most one start, one end, one count and one calendar | `YY-MM-15 @2025-01-01 @2025-02-01`, `YY-MM-15 x3 x4`, `YY-MM-15 [cal=GBLO] [cal=USNY]` |
-| A calendar code is not repeated | `YY-MM-15 [cal=GBLO+GBLO]` |
-| A time schedule names no calendar: it has no business days | `09:00:00 [cal=GBLO]` |
-| A count is at least 1 | `YY-MM-15 x0` |
-| A date is a real calendar date | `YY-MM-15 @2025-13-01` |
-| A zone is a known IANA zone | `YY-MM-15 @2025-01-06[Mars/Base]` |
-| A start and an end name the same zone, if both name one | `… @2025-01-06[Europe/London] ..2026-01-06[America/New_York]` |
-| Without offsets, an end date is not before the start | `YY-MM-15 @2025-02-06 ..2025-01-06` |
-| A duration is not zero | `YY-MM-15 @2025-01-06 ..+0Y` |
-
 ---
 
 ## 3. Evaluation rules
@@ -257,11 +190,10 @@ only when an adjustment moved it.
 
 ### 3.1 The start
 
-Every schedule is evaluated from a start. It is the `@start` in the text if there is one;
-otherwise the system running the schedule supplies it. Cadences (`nY`, `nM`), cycles with
-positions (`nY[…]`, `nM[…]`, `nD[…]`, `/nW[…]`), day steps (`nD`, `nBD`, `nWD`) and time steps all
-count from the start. A written start is an inclusive lower bound: the first occurrence is the
-first one at or after it.
+Every schedule is evaluated from a start, which the system running the schedule supplies.
+Cadences (`nY`, `nM`), cycles with positions (`nY[…]`, `nM[…]`, `nD[…]`, `/nW[…]`), day steps
+(`nD`, `nBD`, `nWD`) and time steps all count from the start. The start is an inclusive lower
+bound: the first occurrence is the first one at or after it.
 
 ### 3.2 Date specs
 
@@ -301,7 +233,11 @@ A date spec is evaluated in layers:
    or nearest business day; `~NW`, `~PW`, `~W` do the same for weekends only, ignoring holidays.
    `~MF` and `~MP` move like `~NB` and `~PB`, but never into another month (they go the other way
    instead). `~nN` and `~nP` always move *n* business days later or earlier. `~SB` drops a date
-   whose observed date is not a business day. Only one adjustment applies per spec.
+   whose observed date is not a business day. `~DAY` (`DAY` is `MON` to `SUN`) moves a date that
+   is not that day of the week to the nearest one, at most 3 days away (7 is odd, so there is
+   never a tie); `~NDAY` and `~PDAY` move it to the next or previous one. These three count
+   calendar days and ignore the holiday calendar: `YY-05-24~PMON` is the Monday on or before
+   24 May. Only one adjustment applies per spec.
 
 The schedule always continues from actual dates, so an adjustment never shifts the dates that
 follow it. Every actual date produces at most one occurrence, even when several observed dates
@@ -332,53 +268,18 @@ day (00:00 to before the next midnight). An adjustment on the date applies to ev
 the actual time is on the actual date, the observed time on the observed date. By default the
 time grid's phase comes from the start's time of day, the same on every date.
 
-### 3.5 Unions
+### 3.5 Holiday calendar and time zone
 
-A union produces the occurrences of every part, in order of actual time. Each part keeps its
-own rules and counts from the same start. When two parts produce the same actual time, only the
-first listed part's occurrence is kept, so actual times strictly increase. In a time-only union,
-fixed times of day repeat every day.
-
-### 3.6 Exclusions
-
-An occurrence is dropped when it matches the exclusion:
-
-- **Date and datetime schedules:** its actual date is a date that the exclusion's date spec
-  produces. The exclusion's `~` adjustment is ignored.
-- **Time schedules:** its time is exactly a time that the exclusion's time spec produces.
-  `12:MM:SS` covers the whole 12:00 hour; `12:00:00` only the instant 12:00:00.
-
-Cadences in an exclusion count from the schedule's start. The exclusion applies to the whole
-union before the `!`.
-
-### 3.7 Start, end and count
-
-- **`@start`**: see [3.1](#31-the-start). Without an offset or zone, it is read in the
-  schedule's time zone.
-- **`..end`**: an inclusive upper bound on both actual and observed times. A date without a time
-  covers that whole day. Nothing is invented at the boundary.
-- **`..+duration`**: an end the duration after the start, itself excluded. `@2025-01-31 ..+30Y`
-  ends just before 31 January 2055, so a monthly schedule has exactly 360 occurrences. Years and
-  months are added first, falling back to the last day of a shorter month like `31L`
-  (2024-02-29 plus `1Y` is 2025-02-28), then weeks and days, on the wall clock of the written
-  zone if there is one. A schedule with a duration needs a start; without one it is an error.
-- **`[zone]`**: the IANA zone the start and end are read in, and the schedule's time zone. An
-  offset fixes the single instant it is written on.
-- **`xN`**: at most *N* occurrences, counted from the start. Excluded or skipped (`~SB`) dates
-  are not counted. With an end too, whichever comes first stops the schedule.
-- **`[cal=…]`**: the holiday calendar for every business-day rule of the schedule: `BD#…`,
+- The holiday calendar supplied with a schedule is used by every business-day rule: `BD#…`,
   `nBD`, `~NB`, `~PB`, `~B`, `~MF`, `~MP`, `~SB`, `~nN` and `~nP`. Weekday rules (`WD#…`, `nWD`,
-  `~W`, `~NW`, `~PW`) only know weekends and do not use it. With several codes, a business day is
-  one in every calendar named; their order does not matter. A schedule that names a calendar
-  MUST be evaluated with that calendar; an implementation that does not have it MUST reject the
-  schedule rather than evaluate it with another. Without `[cal=…]`, the calendar is supplied
-  alongside the schedule.
-- **Calendars and time zones**: business days are judged on dates in the schedule's time zone.
-  When an implementation knows the calendar's own time zone, it SHOULD reject a datetime
-  occurrence whose date there is a different date (02:00 UTC is the previous evening in New
-  York), rather than judge the business day on the wrong date.
+  `~W`, `~NW`, `~PW`) only know weekends and do not use it, and `~DAY`, `~NDAY` and `~PDAY`
+  count calendar days.
+- Times are read on the wall clock of the time zone supplied with the schedule, and business
+  days are judged on dates in that zone. When an implementation knows the calendar's own time
+  zone, it SHOULD reject a datetime occurrence whose date there is a different date (02:00 UTC
+  is the previous evening in New York), rather than judge the business day on the wrong date.
 
-### 3.8 Clock changes
+### 3.6 Clock changes
 
 - A local time that does not exist (a spring-forward gap) moves later by the length of the gap,
   and the occurrence is *adjusted later*: actual is the scheduled wall-clock time, observed the
@@ -397,27 +298,19 @@ union before the `!`.
 | Schedule | Kind |
 |----------|------|
 | `YY-MM-DD` · `_-_-_` · `YY-MM-_` · `YY-3-15` · `2025-6-1` | date |
-| `YY-1M-31L~NB` · `YY-MM-15 ~NB` · `YY-MM-DD~P` · `YY-MM-L~2P` | date |
+| `YY-1M-31L~NB` · `YY-MM-15 ~NB` · `YY-MM-DD~P` · `YY-MM-L~2P` · `YY-MM-BD#3~MF` | date |
+| `YY-01-29~MON` · `YY-05-24~PMON` · `YY-05-18~NMON` · `YY-MM-DD~NWED` · `YY-MM-15~SUN` | date |
 | `YY-MM-[05]` · `YY-[01-03,12]-[01-05,15]` · `[2025-2027,2030]-12-L` | date |
 | `YY-MM-[MON-WED,FRI]` · `YY-MM-WED#2` · `YY-MM-FRI#L` · `YY-MM-THU#2L` | date |
 | `YY-MM-BD#3` · `YY-MM-BD#[1-3,2L,L]` · `YY-MM-WD#[1,L]` | date |
 | `YY-MM-5BD` · `YY-1M-7D` · `YY-MM-8D[1-4]` · `YY-3M[1-2]-15` · `4Y[1,3]-06-15` | date |
 | `YY-MM-[TUE,THU]/2W` · `YY-MM-[MON-FRI]/4W[1,2]~SB` | date |
 | `YY-MM-EAS` · `YY-MM-EAS-2` · `YY-MM-OEAS+1~NB` · `YY-04-EAS` · `YY-MM-EAS+39` | date |
-| `YY-MM-[MON-FRI] ! YY-MM-EAS-2 \| YY-MM-EAS+1` | date |
-| `YY-MM-BD#3 ~MF [cal=GBLO]` · `YY-1M-31L~MF @2025-01-31 ..+30Y [cal=GBLO+USNY]` · `YY-MM-15~NB [cal=XNYS] x12` | date |
-| `YY-MM-DD ! YY-12-25 \| YY-01-01` · `YY-MM-BD#3 \| YY-MM-L~PB` | date |
-| `YY-MM-01~MF @2025-04-01 x36` · `YY-MM-15 x3 ..2025-12-31 @2025-01-01` | date |
-| `YY-1M-31L~MF @2025-01-31 ..+30Y` · `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` · `YY-3M-L @2025-03-31 ..+5Y6M x20` | date |
 | `09:30:00` · `9:30:00` · `HH:30M:00` · `1H:30M:15S` · `25H:00:00` · `_:_:_` | time |
 | `[09,12,17]:00:00` · `09-16:15M:00` · `0-23:00:00` · `[09-11,14]:[00,30]:00` | time |
-| `HH:MM:SS ! 12:MM:SS` · `09:[30,45]:00 \| 10-15:15M:00 \| 16:00:00` | time |
-| `1H:00:00 @2025-01-06T09:00[Europe/Paris] ..2025-01-06T17:00` · `HH:30M:00 @2025-01-06T09:00 ..+1D` | time |
 | `YY-MM-DDT09:00:00` · `YY-MM-THUT9:00:00` · `YY-MM-SATT9-16:00:00` | datetime |
 | `YY-MM-DD~NBT09:00:00` · `YY-MM-[TUE,THU]/2WT18:00:00` · `YY-MM-DDT_:_:_` | datetime |
-| `YY-MM-EAS-2T09:00:00` | datetime |
-| `YY-MM-BD#1T09:00:00 @2025-01-06[Europe/London] [cal=GBLO]` | datetime |
-| `YY-MM-DDT09:00:00 \| YY-MM-15T12:00:00 ! YY-12-25 @2025-01-01[Europe/London] ..2025-12-31 x10` | datetime |
+| `YY-MM-EAS-2T09:00:00` · `YY-MM-BD#1T09:00:00` · `YY-05-24~PMONT09:00:00` | datetime |
 
 ### Rejected
 
@@ -429,12 +322,13 @@ union before the `!`.
 | `YY-MM-[31]L` | a suffix after a day list |
 | `YY-MM-DD /2W` | whitespace before a week cycle |
 | `YY-MM-DD~NA` | not an adjustment |
+| `YY-MM-DD~XMON` · `YY-MM-DD~NMONDAY` · `YY-MM-DD~2MON` | not a weekday adjustment |
 | `YY-MM-BD#[1-3L]` | a range counted from the end |
 | `YY-MM-EAS2` · `YY-MM-EASTER` · `YY-MM-EAS+-1` | an Easter offset is a sign and a number |
-| `YY-MM-15 [cal=gblo]` · `YY-MM-15 [cal=]` · `YY-MM-15 [cal=GBLO+]` | a calendar code is capitals, digits and `-` |
-| `YY-MMx3` | a count must stand alone |
-| `YY-MM-15 @2025-01-01 ..+6M1Y` | duration units out of order |
-| `YY-MM-15 @2025-01-01 ..+8H` | a duration has no hours |
 | `HH:MM` | a time spec has three fields |
 | `YY-MM-DD T09:00:00` | whitespace before `T` |
+| `YY-MM-01 \| YY-MM-15` | one rule only: several rules belong to the schedule around it |
+| `YY-MM-DD ! YY-12-25` | one rule only: exclusions belong to the schedule around it |
+| `YY-MM-15 @2025-01-01` · `YY-MM-15 ..2025-12-31` · `YY-MM-15 ..+30Y` · `YY-MM-15 x3` | one rule only: the start, end and count belong to the schedule around it |
+| `YY-MM-15 [cal=GBLO]` · `09:00:00 @2025-01-06T09:00[Europe/Paris]` | one rule only: the holiday calendar and time zone belong to the schedule around it |
 | everything in the [validity rules](#2-validity-rules) tables | as stated there |

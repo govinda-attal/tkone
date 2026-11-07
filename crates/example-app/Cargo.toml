@@ -25,10 +25,11 @@ name = "store-deliveries"
 path = "src/calendar/store_deliveries.rs"
 
 [dependencies]
-tkone-schedule       = { workspace = true }
+tkone-schedule       = { workspace = true, features = ["serde"] }
 tkone-calendar       = { workspace = true }
 fallible-iterator    = { workspace = true }
 chrono               = { workspace = true }
+serde_yaml_ng        = { workspace = true }
 
 [lints]
 workspace = true

@@ -191,8 +191,16 @@ fn test_schedules_on_a_calendar() {
     // 3rd business day of the month: April 2025 has Good Friday and Easter
     // Monday in London, May has its bank holiday on the 5th.
     assert_eq!(run("YY-MM-BD#3", "GBLO", 2), ["04-03", "05-06"]);
-    // Every 3rd business day across Easter.
-    assert_eq!(run("YY-MM-3BD @2025-04-14", "GBLO", 3), ["04-14", "04-17", "04-24"]);
+    // Every 3rd business day across Easter, from Monday 14 April.
+    let london = Calendars::builtin().get("GBLO").unwrap();
+    let steps: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-3BD", london, Utc.with_ymd_and_hms(2025, 4, 14, 0, 0, 0).unwrap())
+        .build()
+        .unwrap()
+        .take(3)
+        .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(steps, ["04-14", "04-17", "04-24"]);
     // Modified following on the 5th of May: a London holiday, not a TARGET one.
     assert_eq!(run("YY-05-05~MF", "GBLO", 1), ["05-06"]);
     assert_eq!(run("YY-05-05~MF", "EUTA", 1), ["05-05"]);
@@ -224,64 +232,59 @@ fn test_joint() {
 }
 
 #[test]
-fn test_calendar_named_in_the_spec() {
-    use chrono::{TimeZone, Utc};
-    use tkone_schedule::date::SpecIteratorBuilder;
+fn test_calendar_named_in_a_document() {
+    use tkone_schedule::schedule::document::ScheduleDoc;
     let cals = Calendars::builtin();
-    let run = |spec: &str| -> Vec<String> {
-        let cal = cals.for_spec(spec).unwrap();
-        SpecIteratorBuilder::from_spec(spec, cal)
-            .unwrap()
-            .build()
-            .unwrap()
-            .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
-            .collect()
-            .unwrap()
+    let first = |calendar: &str, rule: &str| -> String {
+        let doc = format!(
+            r#"{{"version": 1, "time_zone": "Europe/London", "calendar": "{calendar}", "start": "2025-01-01", "rules": [{{"rule": "{rule}"}}]}}"#
+        );
+        let doc: ScheduleDoc = serde_json::from_str(&doc).unwrap();
+        doc.schedule(cals).unwrap().slots().unwrap().next().unwrap().unwrap().at.format("%Y-%m-%d").to_string()
     };
     // 5 May 2025 is a London bank holiday; 1 May is TARGET's Labour Day.
-    assert_eq!(run("YY-05-05~MF @2025-01-01 [cal=GBLO] x1"), ["2025-05-06"]);
-    assert_eq!(run("YY-05-05~MF @2025-01-01 [cal=EUTA] x1"), ["2025-05-05"]);
-    assert_eq!(run("YY-05-BD#1 @2025-01-01 [cal=GBLO+EUTA] x1"), ["2025-05-02"]);
-    assert_eq!(run("YY-05-BD#1 @2025-01-01 [cal=EUTA+GBLO] x1"), ["2025-05-02"]);
-    // The same text with the wrong calendar does not build.
-    let wrong = SpecIteratorBuilder::new_after("YY-05-05~MF [cal=GBLO]", cals.get("EUTA").unwrap(), Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()).build();
-    assert!(matches!(wrong, Err(tkone_schedule::Error::Calendar(_))));
-    assert!(matches!(cals.for_spec("YY-MM-15 [cal=XXXX]"), Err(Error::Unknown(c)) if c == "XXXX"));
-    assert!(matches!(cals.for_spec("YY-MM-15"), Err(Error::Parse(_))));
+    assert_eq!(first("GBLO", "YY-05-05~MFT09:00:00"), "2025-05-06");
+    assert_eq!(first("EUTA", "YY-05-05~MFT09:00:00"), "2025-05-05");
+    assert_eq!(first("GBLO+EUTA", "YY-05-BD#1T09:00:00"), "2025-05-02");
+    assert_eq!(first("EUTA+GBLO", "YY-05-BD#1T09:00:00"), "2025-05-02");
 }
 
 #[test]
 fn test_datetime_dates_checked_in_the_calendars_zone() {
-    use tkone_schedule::datetime::SpecIteratorBuilder;
+    use chrono::TimeZone;
+    use tkone_schedule::schedule::Schedule;
     let cals = Calendars::builtin();
-    let run = |spec: &str| -> tkone_schedule::Result<Vec<String>> {
-        SpecIteratorBuilder::from_spec(spec, cals.for_spec(spec).unwrap())?
+    let run = |rule: &str, start: chrono::DateTime<chrono_tz::Tz>, until: chrono::DateTime<chrono_tz::Tz>| -> tkone_schedule::Result<Vec<String>> {
+        Schedule::builder(start, cals.get("XNYS").unwrap())
+            .rule(rule)
+            .until(until)
             .build()?
-            .map(|o| Ok(o.observed().format("%a %m-%d %H:%M").to_string()))
+            .slots()?
+            .map(|s| Ok(s.at.format("%a %m-%d %H:%M").to_string()))
             .collect()
     };
+    let london = |d, h| chrono_tz::Europe::London.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap();
+    let utc = |d, h| chrono_tz::UTC.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap();
+    let new_york = |d, h| chrono_tz::America::New_York.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap();
     // 21:30 in London is 16:30 the same day in New York: fine.
-    assert_eq!(
-        run("YY-MM-DD~SBT21:30:00 @2026-11-25[Europe/London] ..2026-11-27 [cal=XNYS]").unwrap(),
-        ["Wed 11-25 21:30", "Fri 11-27 21:30"]
-    );
+    assert_eq!(run("YY-MM-DD~SBT21:30:00", london(25, 0), london(27, 23)).unwrap(), ["Wed 11-25 21:30", "Fri 11-27 21:30"]);
     // 02:00 UTC is the evening before in New York: refused, not run on the
     // wrong day. (Without the check, Fri 27 Nov 02:00 UTC would pass as a
     // trading day though it is Thanksgiving evening in New York.)
-    let err = run("YY-MM-DD~SBT02:00:00 @2026-11-25 ..2026-11-27 [cal=XNYS]").unwrap_err();
+    let err = run("YY-MM-DD~SBT02:00:00", utc(25, 0), utc(27, 23)).unwrap_err();
     assert!(matches!(err, tkone_schedule::Error::Calendar(ref m) if m.contains("America/New_York")), "{err}");
-    // Written in the calendar's zone, it runs.
+    // In the calendar's zone, it runs.
     assert_eq!(
-        run("YY-MM-DD~SBT21:00:00 @2026-11-24[America/New_York] ..2026-11-27 [cal=XNYS]").unwrap(),
+        run("YY-MM-DD~SBT21:00:00", new_york(24, 0), new_york(27, 23)).unwrap(),
         ["Tue 11-24 21:00", "Wed 11-25 21:00", "Fri 11-27 21:00"]
     );
     // A joint calendar across zones has no single zone, so no check.
     assert_eq!(cals.get("GBLO+USNY").unwrap().zone(), None);
     // Date schedules are dates: not checked.
-    let dates: Vec<_> = tkone_schedule::date::SpecIteratorBuilder::from_spec("YY-MM-BD#1 @2026-01-01 [cal=XNYS] x1", cals.get("XNYS").unwrap())
-        .unwrap()
+    let dates: Vec<_> = tkone_schedule::date::SpecIteratorBuilder::new_after("YY-MM-BD#1", cals.get("XNYS").unwrap(), chrono_tz::UTC.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
         .build()
         .unwrap()
+        .take(1)
         .map(|o| Ok(o.observed().date_naive()))
         .collect()
         .unwrap();

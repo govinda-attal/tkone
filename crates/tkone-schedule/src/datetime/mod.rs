@@ -57,22 +57,19 @@ mod tests;
 pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 pub use spec::Spec;
 
-/// Describes a datetime spec in plain English, like [`Spec::describe`], but
-/// also accepts a union (`A | B`), whose parts are joined with ", and also ".
+/// Describes a datetime spec in plain English: [`Spec::describe`] on the
+/// parsed spec.
 ///
 /// ```rust
 /// assert_eq!(
-///     tkone_schedule::datetime::describe("YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00").unwrap(),
-///     "on the 1st business day of every month; at 09:00:00, \
-///      and also on the last Friday of every month; at 17:00:00"
+///     tkone_schedule::datetime::describe("YY-MM-FRI#LT17:00:00").unwrap(),
+///     "on the last Friday of every month; at 17:00:00"
 /// );
 /// ```
 ///
 /// # Errors
 ///
-/// Returns an error if any part does not parse.
+/// Returns an error if the spec does not parse.
 pub fn describe(spec: &str) -> crate::Result<String> {
-    crate::merge::describe_union(spec, |part| part.parse::<Spec>()?.describe(), |part| {
-        Ok(part.parse::<crate::date::Spec>()?.describe())
-    })
+    spec.parse::<Spec>()?.describe()
 }

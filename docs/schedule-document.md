@@ -1,8 +1,8 @@
 # Schedule documents — Design
 
 Status: **in progress**. `Schedule`, `Selector` and `ScheduleDoc` (the
-`serde` feature of tkone-schedule) are built; moving users over and the
-grammar change are not. See [Migration](#migration).
+`serde` feature of tkone-schedule) are built, users are moved over, and the
+grammar is rule-only. Tempo is next. See [Migration](#migration).
 
 ## Motivation
 
@@ -60,6 +60,14 @@ What stays: everything that describes one recurrence.
 
 What leaves the grammar: `@start`, `..end`, `[Zone]`, `[cal=…]`, `xN`, `!`
 exclusions and `|` unions. Each becomes a document field and a builder method.
+
+What joins it: moving a date to a day of the week, `~MON` (the nearest
+Monday), `~NMON` (the next) and `~PMON` (the previous). Three holiday
+calendars used date-level `!` and `|` for the shape of a holiday, not its
+context: Victoria Day was `YY-05-MON ! YY-05-[01-17,25-31]`, the Monday
+from 18 to 24 May. It is now `YY-05-24~PMON`, which says what the law
+says, keeps the 24th as the actual date, and gives the same dates from 1900
+to 2299.
 
 The IETF draft keeps covering the rule string only. The document format stays
 crate documentation until a real consumer (tempo) has used it.
@@ -452,8 +460,8 @@ Specified here so the format can grow into them; not built in version 1.
 |---|---|
 | `tkone-schedule` | Rule-only grammar; `document` module; `Schedule` builder; `Selector` with `next_after`, `uncovered`; `CalendarResolver`. `calendar_of`, `time_zone_of` and the `[cal=]` code check are removed. |
 | `tkone-calendar` | `Calendars` implements `CalendarResolver`; `for_spec` is removed. |
-| `tkone-trigger` | `BusinessSchedule` takes a `Schedule`; execution options (catch-up) stay builder arguments. |
-| Python bindings | Documents passed as dicts or YAML/JSON strings. |
+| `tkone-trigger` | `BusinessSchedule` takes a `Schedule` and stores the last slot's `at`; execution options (catch-up) stay builder arguments. `time_schedule` reads its zone from `tz` only, and aligns steps to the clock (`TimeAnchor::Midnight`): with no `@start` to anchor them, `HH:15M:00` would otherwise take its phase from when the process started. |
+| Python bindings | `Document` from a dict or JSON string, iterated as `Slot`s; `Schedule` is one rule. |
 | Grammar, ABNF, IETF draft, spec docs | Bounds, `!` and `\|` removed; conformance examples rewritten. |
 | example-app | Use cases rewritten as documents. |
 | `tkone-tempo` (docs, schema) | See below. |
@@ -479,8 +487,12 @@ Each step leaves the workspace building and tested.
    data, until, count), `ScheduleDoc`, `CalendarResolver` (implemented by
    tkone-calendar's `Calendars`), `Selector` with `next_after` and
    `uncovered`, `ScheduleDoc::selector` — done.
-2. **Move users over**: tkone-calendar, tkone-trigger, Python, example-app, docs.
-3. **Remove** bounds, `!` and `|` from the grammar, ABNF, IETF draft and spec docs.
+2. **Move users over**: tkone-calendar, tkone-trigger, Python, example-app,
+   docs — done.
+3. **Remove** bounds, `!` and `|` from the grammar, ABNF, IETF draft and spec
+   docs; add `~DAY` for the holiday calendars that needed `!` and `|` —
+   done. The iterator builders keep `with_end`, `with_count` and
+   `with_exclusions` (one spec per call) for a single rule.
 4. **Tempo on paper**: ERD, schema and sequence diagrams.
 5. **Thin tempo prototype**: PostgreSQL definitions, instances and
    occurrences, running the accrual example end to end. This is what tests

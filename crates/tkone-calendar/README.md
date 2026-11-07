@@ -7,6 +7,7 @@ as its business-day processor:
 ```rust
 use tkone_calendar::Calendars;
 use tkone_schedule::date::SpecIteratorBuilder;
+use tkone_schedule::schedule::document::ScheduleDoc;
 
 let london = Calendars::builtin().get("GBLO")?;
 let payments = SpecIteratorBuilder::new_with_start("YY-1M-31L~MF", london, start).build()?;
@@ -14,15 +15,21 @@ let payments = SpecIteratorBuilder::new_with_start("YY-1M-31L~MF", london, start
 // Business days in both London and TARGET2.
 let both = Calendars::builtin().get("GBLO+EUTA")?;
 
-// A schedule that names its calendar: the text alone fixes its dates.
-let spec = "YY-MM-BD#3 ~MF @2026-01-01 [cal=GBLO+USNY] x12";
-let cal = Calendars::builtin().for_spec(spec)?;
-let iter = SpecIteratorBuilder::from_spec(spec, cal)?.build()?;
+// A schedule document names its calendar; `Calendars` resolves the code.
+let doc: ScheduleDoc = serde_yaml_ng::from_str("
+version: 1
+time_zone: Europe/London
+calendar: GBLO+USNY
+start: 2026-01-01
+count: 12
+rules: [{ rule: 'YY-MM-BD#3T09:00:00' }]
+")?;
+let schedule = doc.schedule(Calendars::builtin())?;
 ```
 
-A schedule that names a calendar (`[cal=GBLO]`) only builds with that
-calendar; given any other, building fails rather than running on the wrong
-days.
+A datetime schedule on a calendar with a time zone checks each date there:
+a time that falls on another date in the calendar's zone fails rather than
+run on the wrong business day.
 
 Runnable use cases, in [`example-app`](../example-app/src/calendar/):
 

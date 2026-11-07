@@ -2,15 +2,24 @@
 //!
 //! A broker reconciles positions at 16:30 New York time on every day the
 //! New York Stock Exchange trades, and runs its month-end report at 18:00 on
-//! the last trading day of the month:
+//! the last trading day of the month. One schedule document holds both
+//! jobs, each a named rule:
 //!
-//! ```text
-//! YY-MM-DD~SBT16:30:00 | YY-MM-BD#LT18:00:00 @2026-11-23[America/New_York] ..2026-12-04 [cal=XNYS]
+//! ```yaml
+//! version: 1
+//! time_zone: America/New_York
+//! calendar: XNYS
+//! start: 2026-11-23
+//! until: 2026-12-04
+//! rules:
+//!   - id: reconciliation
+//!     rule: YY-MM-DD~SBT16:30:00
+//!   - id: month-end-report
+//!     rule: YY-MM-BD#LT18:00:00
 //! ```
 //!
 //! `~SB` drops the days the exchange is closed instead of moving the job.
-//! The calendar is in the text, so a job runner given the wrong calendar
-//! refuses to start.
+//! Each run carries the ids of the rules that produced it.
 //!
 //! Early closes (13:00 on the day after Thanksgiving) are not holidays and
 //! are not modelled; the 16:30 job still runs that day.
@@ -21,30 +30,46 @@
 
 use fallible_iterator::FallibleIterator;
 use tkone_calendar::Calendars;
-use tkone_schedule::datetime::{describe, SpecIteratorBuilder};
+use tkone_schedule::schedule::document::ScheduleDoc;
 
-const SPEC: &str =
-    "YY-MM-DD~SBT16:30:00 | YY-MM-BD#LT18:00:00 @2026-11-23[America/New_York] ..2026-12-04 [cal=XNYS]";
+const JOBS: &str = "
+version: 1
+time_zone: America/New_York
+calendar: XNYS
+start: 2026-11-23
+until: 2026-12-04
+rules:
+  - id: reconciliation
+    rule: YY-MM-DD~SBT16:30:00
+  - id: month-end-report
+    rule: YY-MM-BD#LT18:00:00
+";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("{SPEC}\n  {}\n", describe(SPEC)?);
+    let doc: ScheduleDoc = serde_yaml_ng::from_str(JOBS)?;
+    for rule in &doc.rules {
+        println!("{:<17} {}", rule.id.as_deref().unwrap_or("-"), tkone_schedule::datetime::describe(&rule.rule)?);
+    }
+    println!();
 
     let calendars = Calendars::builtin();
-    let nyse = calendars.for_spec(SPEC)?;
-    let runs: Vec<_> = SpecIteratorBuilder::from_spec(SPEC, nyse.clone())?.build()?.collect()?;
+    let runs: Vec<_> = doc.schedule(calendars)?.slots()?.collect()?;
     for run in &runs {
-        let job = if run.observed().format("%H:%M").to_string() == "18:00" { "month-end report" } else { "reconciliation" };
-        println!("  {}  {job}", run.observed().format("%a %Y-%m-%d %H:%M %Z"));
+        let jobs: Vec<_> = run.sources.iter().filter_map(|s| s.rule_id.as_deref()).collect();
+        println!("  {}  {}", run.at.format("%a %Y-%m-%d %H:%M %Z"), jobs.join(", "));
     }
+    let nyse = calendars.get("XNYS")?;
     let from = chrono::NaiveDate::from_ymd_opt(2026, 11, 23).unwrap();
     let to = chrono::NaiveDate::from_ymd_opt(2026, 12, 4).unwrap();
     for h in nyse.holidays_between(from, to) {
         println!("  no jobs on {}: {}", h.observed.format("%a %Y-%m-%d"), h.name);
     }
 
-    // The same text with the London calendar does not build.
-    if let Err(e) = SpecIteratorBuilder::from_spec(SPEC, calendars.get("GBLO")?)?.build() {
-        println!("\nWith the London calendar instead: {e}");
+    // Without a calendar, `~SB` and `BD#L` would silently mean weekdays: the
+    // document is refused instead.
+    let no_calendar = ScheduleDoc { calendar: None, ..doc };
+    if let Err(e) = no_calendar.schedule(calendars) {
+        println!("\nWithout `calendar`: {e}");
     }
     Ok(())
 }

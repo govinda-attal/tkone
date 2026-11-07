@@ -1,6 +1,6 @@
-//! A count, shared by the three builders: `with_count(n)`, or `xN` written in
-//! the spec. Stop after *n* results, counted from the start. Excluded
-//! occurrences (`!`, or `with_exclusions`) are not counted.
+//! A count, shared by the three builders: `with_count(n)`. Stop after *n*
+//! results, counted from the start. Excluded occurrences (`with_exclusions`)
+//! are not counted.
 //!
 //! A counted schedule is resumed by replaying it from its stored start, which
 //! is cheap because it has at most *n* results, and keeps the count exact.

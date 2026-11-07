@@ -3,6 +3,11 @@ use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime
 use crate::{prelude::*, DstPolicy, Occurrence};
 
 /// `"a"`, `"a and b"`, `"a, b and c"` — for spec descriptions.
+/// Just before `t`, so results "after" it include `t` itself.
+pub(crate) fn just_before<Tz: TimeZone>(t: &DateTime<Tz>) -> DateTime<Tz> {
+    t.clone() - Duration::nanoseconds(1)
+}
+
 pub(crate) fn join(parts: &[String]) -> String {
     match parts {
         [] => String::new(),

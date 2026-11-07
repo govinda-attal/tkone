@@ -20,8 +20,6 @@ normative:
   RFC8174:
   RFC5234:
   RFC7405:
-  RFC3339:
-  RFC9557:
 informative:
   RFC5545:
   RFC6557:
@@ -41,13 +39,14 @@ informative:
 
 --- abstract
 
-This document specifies the tkone schedule format, a compact text notation for recurring dates
-and times. A schedule fits on one line and can express rules found in business calendars,
-such as "the 31st of every month, or the last day when the month is shorter, moved to the next
-business day", "the third business day of each month", "every other Tuesday and Thursday" and
-"36 monthly payments". Each occurrence records both the date the rule produced and the date
-after a business-day adjustment. A schedule can carry its own start, end, time zone and number
-of occurrences.
+This document specifies the tkone schedule format, a compact text notation for a recurrence
+rule of dates and times. A schedule is a single rule that fits on one line and can express
+rules found in business calendars, such as "the 31st of every month, or the last day when the
+month is shorter, moved to the next business day", "the third business day of each month",
+"every other Tuesday and Thursday" and "the Monday nearest 29 January". Each occurrence records
+both the date the rule produced and the date after an adjustment. The context a rule is
+evaluated in, such as its start, time zone, holiday calendar and bounds, is supplied by the
+application and is outside the scope of this document.
 
 --- middle
 
@@ -72,9 +71,7 @@ YY-MM-L~2P            two business days before the last day
                       of every month
 YY-MM-BD#3            the third business day of every month
 YY-MM-[TUE,THU]/2W    Tuesday and Thursday, every other week
-YY-MM-01~MF @2025-04-01 x36
-                      36 monthly payments from April 2025,
-                      Modified Following
+YY-05-24~PMON         the Monday on or before 24 May
 ~~~
 
 This document defines the syntax ({{grammar}}), the inputs that are well-formed but invalid
@@ -86,10 +83,12 @@ The format schedules operations: when payments run, jobs fire and reports are du
 define the economics of financial instruments (calculation periods, stubs, fixing offsets, day
 counts), for which other standards exist.
 
-What a business day is depends on a holiday calendar. A schedule can name its calendar
-(`[cal=GBLO]`), so that the text alone fixes its dates; the calendars themselves are not part
-of the format. A schedule that names none is evaluated with a calendar supplied alongside it,
-so that the same text can be used for different markets.
+A schedule describes one recurrence rule and nothing around it. The start it is counted from,
+the time zone it is read in, the holiday calendar that decides what a business day is, an end
+or a number of occurrences, the combination of several rules, and dates to leave out are
+supplied by the application that evaluates it, for example in a separate schedule document.
+This document does not define how. Keeping them apart lets the same text be used in different
+time zones and for different markets.
 
 # Conventions and Definitions
 
@@ -107,8 +106,7 @@ Business day:
   Friday, whatever the calendar says.
 
 Start:
-: The time a schedule is counted from. It is written in the schedule (`@`) or supplied by the
-  system that evaluates it.
+: The time a schedule is counted from, supplied by the system that evaluates it.
 
 An implementation MUST reject a schedule that does not match the grammar in {{grammar}}, or
 that breaks a rule in {{validity-rules}}. An implementation MUST produce the occurrences that
@@ -123,11 +121,10 @@ input.
 
 A schedule can describe an unbounded number of occurrences, some of them very close together
 (`HH:MM:SS` occurs every second). An implementation that collects occurrences SHOULD bound how
-many it produces, or require an end or a count.
+many it produces, or require an end or a count from the application.
 
-Some valid schedules never produce an occurrence, such as the 30th of February, or a schedule
-whose exclusion removes every date. An implementation MUST NOT search for an occurrence
-indefinitely; it SHOULD give up after a bounded search and report an error.
+Some valid schedules never produce an occurrence, such as the 30th of February. An
+implementation MUST NOT search for an occurrence indefinitely; it SHOULD give up after a bounded search and report an error.
 
 Lists and ranges expand into sets of values. {{validity-rules}} caps a date range at 10,000
 values; an implementation SHOULD also bound the total size of the sets it builds.
@@ -135,9 +132,8 @@ values; an implementation SHOULD also bound the total size of the sets it builds
 The occurrences of a schedule depend on data outside it: the time zone database {{TZDB}}
 {{RFC6557}} and the holiday calendar. Two systems that evaluate the same schedule with different
 data can produce different occurrences. Systems that must agree, for example on a payment date,
-need to agree on that data too, and to protect its integrity. Naming the calendar in the
-schedule (`[cal=…]`) makes a mismatch detectable, but two systems can still hold different
-versions of the same calendar.
+need to agree on that data, and on the calendar and time zone each schedule is evaluated with,
+and to protect the data's integrity.
 
 # IANA Considerations
 
@@ -147,8 +143,7 @@ This document has no IANA actions.
 
 # Collected ABNF {#collected-abnf}
 
-This appendix collects the ABNF of {{grammar}} in one place. `ALPHA`, `DIGIT` and `SP` are
-defined in {{RFC5234}}, Appendix B.1.
+This appendix collects the ABNF of {{grammar}} in one place. `DIGIT` and `SP` are defined in {{RFC5234}}, Appendix B.1.
 
 <!-- include: abnf -->
 

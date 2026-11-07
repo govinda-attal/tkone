@@ -20,8 +20,12 @@ YY-1M-31L~NB                  the 31st of every month (or the last day), then th
 YY-MM-L~2P                    two business days before the last day of every month
 YY-3M-15                      the 15th of every 3rd month, counted from the start
 YY-MM-DDT1H:30M:00            every day, every 90 minutes
-YY-MM-01~MF @2025-04-01 x36   36 monthly payments from April 2025: a whole schedule in one line
+YY-05-24~PMON                 the Monday on or before 24 May
 ```
+
+A spec is one rule. What surrounds it (when it starts, in which time zone, on whose business
+days, until when, and what to leave out) is written next to it, in a schedule document; see
+[Around a rule](#around-a-rule-the-schedule-document).
 
 ---
 
@@ -53,15 +57,14 @@ Read it left to right as "which years, which months, which days".
 Ranges such as `[01-06]` are written inside brackets, because `-` also separates the parts.
 
 `2Y`, `3M` and steps are counted from the schedule's start (see
-[Start, end, time zone, count and calendar](#start-end-time-zone-count-and-calendar)), not from January. Started in
-February, `YY-3M-15` runs in February, May, August and November.
+[Around a rule](#around-a-rule-the-schedule-document)), not from January. Started in February,
+`YY-3M-15` runs in February, May, August and November.
 
 ### Adjustment (optional)
 
 What to do when the date lands on a day you can't use. A *business day* is a weekday that is not
-a holiday. The holiday calendar is supplied alongside the schedule, one per market if needed, so the same
-text works for London and New York; or the schedule names it (`[cal=GBLO]`, see
-[Start, end, time zone, count and calendar](#start-end-time-zone-count-and-calendar)) to fix it.
+a holiday. The holiday calendar is supplied alongside the rule, one per market if needed, so the
+same text works for London and New York.
 
 | Adjustment | Meaning |
 |------------|---------|
@@ -70,11 +73,16 @@ text works for London and New York; or the schedule names it (`[cal=GBLO]`, see
 | `~SB` | if not a business day: skip it (no occurrence) instead of moving it |
 | `~NW` · `~PW` · `~W` | if on a weekend: move to the next · previous · nearest weekday |
 | `~2N` · `~3P` | always move 2 business days later · 3 business days earlier |
+| `~MON` · `~NMON` · `~PMON` | if not a Monday: move to the nearest · next · previous Monday (any day: `~FRI`, `~NSUN`, …) |
 
 The moving adjustments always produce a date. `~SB` instead *drops* a date that isn't a
 business day, so it can sit on top of any rule: `YY-MM-15~SB` is the 15th only when it is a
 business day, `YY-MM-[MON,WED,FRI]~SB` is those weekdays except holidays, and `YY-MM-DD/2W~SB`
 is business days every other week.
+
+The day-of-the-week adjustments count calendar days and ignore holidays. They state holidays
+that move to a Monday: `YY-05-24~PMON` is the Monday on or before 24 May, and `YY-01-29~MON` the
+Monday nearest 29 January (at most three days away, so it can be 1 February).
 
 ### Time part
 
@@ -112,39 +120,6 @@ YY-1M-31L~WT11:00:00             11:00 on the 31st (or the last day), moved off 
 
 ## Going further
 
-Whole schedules can be combined, trimmed and bounded. These go at the end of a schedule, in
-this order:
-
-```text
-<schedule> | <schedule> | …   ! <exclusion> | …   @<start>   ..<end>   x<count>
-```
-
-### Combining schedules
-
-Join any number of schedules with `|` to get all their occurrences, in order. This covers the
-irregular cases that one rule can't:
-
-```text
-YY-MM-BD#3 | YY-MM-L~PB                       the 3rd and the last business day of each month
-09:[30,45]:00 | 10-15:15M:00 | 16:00:00       every 15 minutes from 09:30 to 16:00
-YY-MM-BD#1T09:00:00 | YY-MM-FRI#LT17:00:00    09:00 on the 1st business day, 17:00 on the last Friday
-```
-
-### Excluding dates
-
-Everything after `!` is excluded. A date or datetime schedule excludes by date; a time schedule
-excludes by time. The exclusion is itself a schedule, so it can be a single date, a recurring
-date, or several joined with `|`:
-
-```text
-YY-MM-DD ! YY-12-25 | YY-01-01                every day except 25 December and 1 January
-YY-MM-[MON-FRI]T09:00:00 ! 2025-12-[24-31]     09:00 on weekdays, but not 24–31 December 2025
-1H:00:00 ! 12:MM:SS                           every hour, except during the 12:00 hour
-```
-
-Exclusions apply to the schedule's own date (the scheduled date, before any `~` adjustment) and
-to everything before the `!`, including all parts of a `|` combination.
-
 ### Weeks and rotations
 
 A week cycle, written after the day rule (`/2W`, `/4W[1,2]`), keeps only dates in some weeks.
@@ -172,47 +147,44 @@ YY-3M[1-2]-15                 the 15th in the first two months of every three
 
 Months and other filters only remove dates from these cycles; they never restart the count.
 
-### Start, end, time zone, count and calendar
+### Around a rule: the schedule document
 
-A schedule can carry its own start, end, time zone, number of occurrences and holiday calendar,
-so the text alone defines it:
+A spec is one rule. Everything around it lives in a **schedule document** (YAML or JSON), or is
+set in code on the library's `Schedule` builder:
 
-```text
-YY-3M-15~NB @2025-02-15 ..2027-02-15                      quarterly from 15 Feb 2025, until 15 Feb 2027
-YY-MM-[TUE,THU]/2WT18:00:00 @2025-01-07[Europe/London]     every other Tue and Thu at 18:00 London time
-1H:00:00 @2025-01-06T09:00:00[Europe/Paris] ..2025-01-06T17:00   hourly, 09:00 to 17:00 Paris time
-YY-MM-01~MF @2025-04-01 x36                                36 monthly payments from April 2025
-YY-1M-31L~MF @2025-01-31 ..+30Y                            monthly for 30 years from 31 Jan 2025
-YY-MM-BD#3 ~MF [cal=GBLO+USNY]                             3rd business day open in both London and New York
+```yaml
+version: 1
+time_zone: Europe/London
+calendar: GBLO
+start: 2025-01-06T00:00:00
+until: 2025-12-31
+rules:
+  - id: rota
+    rule: YY-MM-[MON-FRI]/4W[1,2]T07:00:00
+  - id: month-end
+    rule: YY-MM-L~PBT18:00:00
+exclude:
+  dates: [2025-12-24]
+  rules: ["YY-12-[25-31]"]
 ```
 
-- **`@start`** is where the counting begins (cadences, weeks, positions, steps and the time
-  grid) and the earliest time a result can have. The first result is the first match at or after
-  it: `YY-MM-15 @2025-01-10` begins on 15 January.
-- **`..end`** is the latest time a result can have. A date without a time covers that whole day.
-- **`..+30Y`** ends after a duration instead: years, months, weeks and days, as in `+30Y`,
-  `+5Y6M` or `+2W`. The schedule covers exactly that long from the start, so 30 years of
-  monthly payments is 360 of them, and 20 years of fortnightly ones is however many fall in
-  20 years. It needs a start, written or supplied.
-- **The time zone** goes in brackets after a date or time, as in `[Europe/London]` (the
-  RFC 9557 form), and applies to the start, the end and every time in the schedule. A UTC
-  offset such as `+01:00` only fixes the instant it is written on; a zone also decides how the
-  clock changes.
-- **`xN`** stops after *N* occurrences, counted from the start. Excluded dates don't use one up,
-  so `x12` always means twelve. With an end as well, whichever comes first stops the schedule.
-- **`[cal=GBLO]`** names the holiday calendar the business days come from. Several joined with
-  `+` must all be open. Without it, `YY-MM-BD#3` means different dates in London and New York, so
-  a stored schedule needs its calendar kept somewhere else; with it, the schedule says which
-  days it means wherever it is read. A system that does not have that calendar refuses the
-  schedule rather than guessing. Codes are agreed between the systems involved; the usual ones
-  are FpML business centres (`GBLO`, `USNY`, `EUTA`) and exchange codes (`XNYS`). Write times in
-  the calendar's own time zone: a run at 02:00 UTC is still the previous evening in New York,
-  so a schedule on `XNYS` written that way is refused rather than run on the wrong day.
-
-Each is optional. A schedule without a start counts from whenever it is first used, so
-`YY-MM-01~MF x36` is a template: "36 monthly payments from whenever the loan starts", and so is
-`YY-MM-FRI/2W~NB ..+20Y`: "every other Friday for 20 years". One without an end or a count
-repeats indefinitely.
+- **`start`** is where the counting begins (cadences, weeks, positions, steps and the time
+  grid) and the earliest time a result can have. It is an anchor, not an occurrence: the first
+  result is the first match at or after it.
+- **`until`** is the latest time a result can have. A date without a time covers that whole day.
+- **`time_zone`** applies to the start, the end and every time in the schedule, and decides how
+  the clock changes are handled.
+- **`count`** stops after *N* occurrences, counted from the start. Excluded dates don't use one
+  up, so `count: 12` always means twelve. With `until` as well, whichever comes first stops the
+  schedule.
+- **`calendar`** names the holiday calendar the business days come from (`GBLO`, or `GBLO+USNY`
+  for days open in both). Without it, `YY-MM-BD#3` means different dates in London and New York;
+  with it, the schedule says which days it means wherever it is read.
+- **`rules`** are one or more specs. Their occurrences are merged in time order, and each
+  carries the `id` of the rule that produced it. This covers the irregular cases that one rule
+  can't, such as the 3rd and the last business day of each month.
+- **`exclude`** leaves out given dates, or the dates a date spec produces. Exclusions apply to
+  the schedule's own date (the scheduled date, before any `~` adjustment) and to every rule.
 
 ---
 
@@ -247,15 +219,14 @@ fixed rules for daylight saving:
 - **Steps follow the wall clock**: every 6 hours from midnight is 00:00, 06:00, 12:00 and 18:00
   on every day, including the days the clocks change.
 
-### What a schedule needs besides its text
+### What a rule needs besides its text
 
-One thing is never written in a schedule: **the holidays themselves**. A schedule can name its
-holiday calendar (`[cal=GBLO]`), but the calendar's data comes from elsewhere.
-
-A start and a time zone are needed to read a schedule. They can be written in it (`@…`,
-`[Zone]`) or supplied by the system that runs it. How a schedule is stored and picked up again
-later is up to that system. The [README](README.md) covers what the tkone library offers for
-this.
+A start, a time zone and, for business days, a holiday calendar are needed to read a rule. They
+are never written in it: they come from the schedule document, or from the system that runs
+it. Even then, **the holidays themselves** are not in the schedule: a document names its
+calendar (`calendar: GBLO`), but the calendar's data comes from elsewhere. How a schedule is
+stored and picked up again later is up to that system. The [README](README.md) covers what the
+tkone library offers for this.
 
 ### For payments and banking operations
 
@@ -271,14 +242,14 @@ The common business-day conventions map directly onto adjustments:
 | N business days before / after | `~NP` / `~NN` |
 
 Instalment collections are usually defined by a start and a count or an end date, which the
-schedule text can hold (`@2025-04-01 x36`, `..2028-03-31`), or by a term (`..+30Y`).
+schedule document holds (`start`, `count`, `until`).
 
 ### For rostering and operations
 
 Rotations are written as cycles from a start: weeks on and off (`/4W[1,2]`), days on and off
-(`8D[1-4]`), or a mix of patterns joined with `|`. `~SB` keeps only business days, so
-`YY-MM-DD/2W~SB` is "business days, every other week". Exclusions take out holidays or term breaks,
-and the time zone keeps shift times right across clock changes.
+(`8D[1-4]`), or a mix of patterns as several rules of one schedule. `~SB` keeps only business
+days, so `YY-MM-DD/2W~SB` is "business days, every other week". A schedule's exclusions take out
+holidays or term breaks, and its time zone keeps shift times right across clock changes.
 
 ---
 
@@ -337,6 +308,7 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Every other week on several weekdays | ✗ | ✗ | ✓ | ✓ `[TUE,THU]/2W` |
 | Rotations ("4 on, 4 off", weeks 1–2 of 4) | ✗ | ✗ | partly | ✓ `8D[1-4]`, `/4W[1,2]` |
 | Easter and the holidays around it | ✗ | ✗ | ✗ | ✓ `EAS-2`, `OEAS+1` |
+| Move to a day of the week (the Monday nearest a date) | ✗ | ✗ | ✗ | ✓ `~MON`, `~PMON` |
 | **Business days** | | | | |
 | Nth business day of the month (with holidays) | ✗ | ✗ | ✗ | ✓ `BD#3`, `BD#[1-5]` |
 | Move to the next business day (with holidays) | ✗ | ✗ | ✗ | ✓ `~NB` |
@@ -349,13 +321,12 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Several times a day, hour ranges | ✓ | ✓ | ✓ | ✓ `[09,12,17]`, `09-16` |
 | Every 90 minutes | ✗ | ✗ | ✓ | ✓ `1H:30M:00` |
 | Clock-change behaviour defined | ✗ | ✗ | partly | ✓ |
-| **Composition and bounds** | | | | |
-| Combine several rules into one schedule | ✗ | ✗ | partly | ✓ `A \| B` |
-| Exclude given dates | ✗ | partly | ✓ | ✓ `! …` |
-| Start, end and time zone in the text | ✗ | ✗ | ✓ | ✓ `@… ..…[Zone]` |
-| Holiday calendar named in the text | ✗ | ✗ | ✗ | ✓ `[cal=GBLO]` |
-| Stop after N occurrences | ✗ | partly | ✓ | ✓ `x36` |
-| Run for a term from the start | ✗ | ✗ | ✗ | ✓ `..+30Y` |
+| **Composition and bounds** (tkone: in the schedule document) | | | | |
+| Combine several rules into one schedule | ✗ | ✗ | partly | ✓ `rules` |
+| Exclude given dates | ✗ | partly | ✓ | ✓ `exclude` |
+| Start, end and time zone | ✗ | ✗ | ✓ | ✓ `start`, `until`, `time_zone` |
+| Holiday calendar named with the schedule | ✗ | ✗ | ✗ | ✓ `calendar` |
+| Stop after N occurrences | ✗ | partly | ✓ | ✓ `count` |
 
 *This compares the standard formats. Some products add their own extensions.*
 
@@ -370,14 +341,14 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Rent collected on the 31st, or the last day, next business day | `YY-1M-31L~NB` |
 | Supplier payment run at month end, never into the next month | `YY-1M-L~MF` |
 | Quarterly fee collected on the 15th, counted from the start | `YY-3M-15~NB` |
-| 36 instalments collected on the 1st, Modified Following | `YY-MM-01~MF @2025-04-01 x36` |
-| Loan repayments collected at month end for 30 years | `YY-1M-31L~MF @2025-01-31 ..+30Y [cal=GBLO]` |
-| Direct debits every other Friday for 20 years | `YY-MM-FRI/2W~NB @2025-01-03 ..+20Y` |
+| 36 instalments collected on the 1st, Modified Following | `YY-MM-01~MF`, with `count: 36` |
+| Loan repayments collected at month end for 30 years | `YY-1M-31L~MF`, with `until` 30 years after `start` and `calendar: GBLO` |
+| Direct debits every other Friday | `YY-MM-FRI/2W~NB` |
 | Payroll on the last business day of the month | `YY-MM-BD#L` |
 | Settlement run on the 3rd business day of the month | `YY-MM-BD#3` |
 | Month-end close tasks on the first three business days and the last | `YY-MM-BD#[1-3,L]` |
 | Standing order on the 15th, only when it is a business day | `YY-MM-15~SB` |
-| Dollar payment run at 16:30 on New York business days | `YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York] [cal=USNY]` |
+| Dollar payment run at 16:30 on New York business days | `YY-MM-DD~SBT16:30:00`, with `time_zone: America/New_York` and `calendar: USNY` |
 | Weekly sweep every 5 business days | `YY-MM-5BD` |
 | Every 15 months | `1Y-3M-15` |
 
@@ -389,26 +360,28 @@ no month end, no business days, and "one month after January 31" is left to the 
 | Board pack on the 2nd Wednesday at 08:00 | `YY-MM-WED#2T08:00:00` |
 | Month-end close at 11:00 on the nearest weekday | `YY-1M-31L~WT11:00:00` |
 | Reminders at 09:00, 12:00 and 17:00 on the 2nd business day | `YY-MM-BD#2T[09,12,17]:00:00` |
-| Overnight batch at 02:00 on weekdays, except 25 December and 1 January | `YY-MM-[MON-FRI]T02:00:00 ! YY-12-25 \| YY-01-01` |
+| Overnight batch at 02:00 on weekdays, except 25 December and 1 January | `YY-MM-[MON-FRI]T02:00:00`, excluding `YY-12-25` and `YY-01-01` |
 | Annual review on 15 June every two years | `2Y-06-15` |
-| Good Friday and Easter Monday | `YY-MM-EAS-2 \| YY-MM-EAS+1` |
-| Weekdays, except Good Friday and Easter Monday | `YY-MM-[MON-FRI] ! YY-MM-EAS-2 \| YY-MM-EAS+1` |
+| Good Friday and Easter Monday | `YY-MM-EAS-2` and `YY-MM-EAS+1`, as two rules |
+| Weekdays, except Good Friday and Easter Monday | `YY-MM-[MON-FRI]`, excluding `YY-MM-EAS-2` and `YY-MM-EAS+1` |
+| A holiday kept on the Monday on or before 24 May | `YY-05-24~PMON` |
+| A holiday kept on the Monday nearest 29 January | `YY-01-29~MON` |
 
 ### Intraday
 
 | What | Schedule |
 |------|----------|
 | Prices every 15 minutes, 09:00–16:45, on business days | `YY-MM-1BDT09-16:15M:00` |
-| Every 15 minutes during market hours, 09:30–16:00, Mon–Fri | `YY-MM-[MON-FRI]T09:[30,45]:00 \| YY-MM-[MON-FRI]T10-15:15M:00 \| YY-MM-[MON-FRI]T16:00:00` |
+| Every 15 minutes during market hours, 09:30–16:00, Mon–Fri | three rules: `YY-MM-[MON-FRI]T09:[30,45]:00`, `YY-MM-[MON-FRI]T10-15:15M:00` and `YY-MM-[MON-FRI]T16:00:00` |
 | Snapshot every 30 minutes on Mondays, Wednesdays and Fridays | `YY-MM-[MON,WED,FRI]THH:30M:00` |
 
 ### Rostering and timetables
 
 | What | Schedule |
 |------|----------|
-| Nurses' rota: day shifts 07:00, two weeks on and two off | `YY-MM-[MON-FRI]/4W[1,2]T07:00:00 @2025-01-06[Europe/London]` |
-| Plant shift pattern: four days on, four off, from 06:00 | `YY-MM-8D[1-4]T06:00:00 @2025-01-01[America/Chicago]` |
-| Fortnightly tutorial on Tuesday and Thursday, term time only | `YY-MM-[TUE,THU]/2WT14:00:00 ! YY-[07-08]-DD @2025-01-07` |
+| Nurses' rota: day shifts 07:00, two weeks on and two off | `YY-MM-[MON-FRI]/4W[1,2]T07:00:00`, from a Monday start |
+| Plant shift pattern: four days on, four off, from 06:00 | `YY-MM-8D[1-4]T06:00:00`, counted from the start |
+| Fortnightly tutorial on Tuesday and Thursday, term time only | `YY-MM-[TUE,THU]/2WT14:00:00`, excluding `YY-[07-08]-DD` |
 
 ---
 
@@ -424,8 +397,8 @@ The format is deliberately small. Some things it leaves out:
   adjusted date" is computed in code, not written in one spec.
 - **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; an
   occurrence has no length.
-- **One start for every part.** All parts of a `|` combination count from the same start;
-  a part can't be offset by a week or a day.
+- **One start for every rule.** All rules of a schedule count from the same start; a rule
+  can't be offset by a week or a day.
 - **Weeks run Monday to Sunday.** There is no setting for another first day of the week, and no
   ISO week numbers. Neither is needed for most schedules. A weekday list picks days by name in
   any week (`[MON-THU,SUN]` is a Sunday-to-Thursday working week), and a single day every other
@@ -433,19 +406,19 @@ The format is deliberately small. Some things it leaves out:
   including Sunday depends on it. For that, count days from a start on the first day of your
   week: a 14-day cycle is a two-week cycle that begins on the start's weekday.
 
-  | Week beginning on Sunday (or any other day) | Schedule |
-  |---------------------------------------------|----------|
-  | Sunday and Tuesday, every other week | `YY-MM-14D[1,3] @2025-01-05` (a Sunday) |
-  | Sunday to Thursday, every other week | `YY-MM-14D[1-5] @2025-01-05` |
-  | Sunday to Thursday, one week in three | `YY-MM-21D[1-5] @2025-01-05` |
-  | Friday to Monday, every other week | `YY-MM-14D[1-4] @2025-01-03` (a Friday) |
-  | Sunday and Tuesday at 09:00 New York time, every other week | `YY-MM-14D[1,3]T09:00:00 @2025-01-05[America/New_York]` |
+  | Week beginning on Sunday (or any other day) | Schedule | Start |
+  |---------------------------------------------|----------|-------|
+  | Sunday and Tuesday, every other week | `YY-MM-14D[1,3]` | a Sunday |
+  | Sunday to Thursday, every other week | `YY-MM-14D[1-5]` | a Sunday |
+  | Sunday to Thursday, one week in three | `YY-MM-21D[1-5]` | a Sunday |
+  | Friday to Monday, every other week | `YY-MM-14D[1-4]` | a Friday |
+  | Sunday and Tuesday at 09:00, every other week | `YY-MM-14D[1,3]T09:00:00` | a Sunday |
 
   Day *k* of the cycle is the start's weekday plus *k* − 1, so `14D[1,3]` from a Sunday is
   Sunday and Tuesday. With a week cycle instead, `YY-MM-[SUN,TUE]/2W` pairs each Sunday with the
   *following* week's Tuesday, because Sunday ends a Monday-to-Sunday week.
-- **No holiday data.** A schedule can name its calendar (`[cal=GBLO]`) but not list holidays;
-  the calendar itself comes from elsewhere, such as `tkone-calendar`. A schedule can name
+- **No holiday data.** A schedule document names its calendar (`calendar: GBLO`) but does not
+  list holidays; the calendar itself comes from elsewhere, such as `tkone-calendar`. A schedule can name
   Easter-based dates (`YY-MM-EAS-2` is Good Friday), but which days a market closes is the
   calendar's job.
 
@@ -457,6 +430,8 @@ The format is deliberately small. Some things it leaves out:
   options (`with_count`, clock alignment, daylight-saving modes) and plain-English descriptions
 - [Grammar and rules](GRAMMAR.md): the precise definition, for validating or implementing the
   format
+- [Schedule documents](../../docs/schedule-document.md): the start, time zone, calendar, bounds,
+  rules and exclusions around a spec
 - [Date spec reference](src/date/date-spec.md)
 - [Time spec reference](src/time/time-spec.md)
 - [Combined date and time reference](src/datetime/date-time-spec.md)

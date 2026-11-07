@@ -1,13 +1,11 @@
 use std::marker::PhantomData;
 
-use chrono::{DateTime, Duration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
 
 use fallible_iterator::FallibleIterator;
 
 use super::{engine, spec::Spec};
-use crate::bounds::{just_before, split_bounds};
 use crate::limits::{skip_through, Limits};
-use crate::merge::{add_exclusions, split_exclusions, union_parts, Merge};
 use crate::utils::resolve_local;
 use crate::{prelude::*, DstPolicy, IntervalMode, TimeAnchor};
 
@@ -54,6 +52,8 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, START, END, S> {
     /// Wall-clock start given to `resume_with_start`.
     anchor: Option<NaiveDateTime>,
     limits: Limits,
+    /// Time specs given to `with_exclusions`.
+    exclusions: Vec<String>,
     marker_sealed: PhantomData<S>,
 }
 
@@ -86,8 +86,7 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
 
     /// Repeat a spec without a step every day. On its own, `09:30:00` (or
     /// `[09,17]:00:00`) yields its times on the current day only; with this,
-    /// it yields them every day, as it does in a union. A spec with a step is
-    /// unaffected.
+    /// it yields them every day. A spec with a step is unaffected.
     pub fn repeat_daily(mut self) -> Self {
         self.daily = true;
         self
@@ -103,19 +102,17 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
         dst_policy: DstPolicy,
     ) -> Result<SpecIterator<Tz>> {
         let mut iter = SpecIterator::new(spec, cursor, start, end, dst_policy)?;
-        if self.daily {
-            iter.each_part(|part| part.daily = true);
-        }
+        iter.daily = self.daily;
+        iter.exclusions = self.exclusions.iter().map(|spec| spec.parse()).collect::<Result<_>>()?;
         Ok(iter)
     }
 
-    /// Skip the times that match `spec`, another time spec (a union is
-    /// allowed): `.with_exclusions("12:MM:SS")` skips the 12:00 hour. The
-    /// same as writing `! spec` at the end of the schedule's spec, and
-    /// combined with any exclusions already there. Steps in `spec` are
-    /// counted from the start.
-    pub fn with_exclusions(mut self, spec: impl AsRef<str>) -> Self {
-        self.spec = add_exclusions(&self.spec, spec.as_ref());
+    /// Skip the times that match `spec`, another time spec:
+    /// `.with_exclusions("12:MM:SS")` skips the 12:00 hour. Call it again to
+    /// skip the times of more specs. Steps in `spec` are counted from the
+    /// start.
+    pub fn with_exclusions(mut self, spec: impl Into<String>) -> Self {
+        self.exclusions.push(spec.into());
         self
     }
 
@@ -134,34 +131,19 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
     /// `given_start`).
     ///
     /// - The start is the builder's (`new_with_start`, yielded as-is first;
-    ///   `resume_with_start`), else one written in the spec (`@…`: the
-    ///   grid's anchor and an inclusive lower bound), else none.
-    /// - The end is the builder's (`with_end`, `with_end_spec`), else one
-    ///   written in the spec (`..…`).
+    ///   `resume_with_start`, the grid's anchor), else none.
+    /// - The end is the builder's (`with_end`, `with_end_spec`), if any.
     /// - With `with_count`, a resumed schedule is replayed from its start.
     fn assemble(&self, given_start: bool, end: BuilderEnd<Tz>) -> Result<SpecIterator<Tz>> {
-        let (body, bounds) = split_bounds(&self.spec)?;
-        if let Some(cal) = bounds.calendar() {
-            return Err(Error::Calendar(format!("a time spec has no business days; remove [cal={cal}]")));
-        }
+        let body = self.spec.as_str();
         let tz = &self.timezone;
         let policy = self.dst_policy;
         let end = match end {
             BuilderEnd::At(end) => Some(end.with_timezone(tz)),
             BuilderEnd::Spec(end_spec) => Some(end_from_spec(&end_spec, &self.dtm, policy)?),
-            BuilderEnd::None => {
-                // A duration counts from the builder's start, else the written one.
-                let start = match (given_start, &self.limits.resume_start) {
-                    (true, _) => Some(self.dtm.clone()),
-                    (false, Some(start)) => Some(start.with_timezone(tz)),
-                    (false, None) => bounds.start_in(tz, policy)?,
-                };
-                bounds.end_in(tz, policy, start.as_ref())?
-            }
+            BuilderEnd::None => None,
         };
-        // A builder count (`with_count`) takes precedence over one written (`xN`).
-        let limits = Limits { count: self.limits.count.or(bounds.count()), ..self.limits.clone() };
-        let count = limits.count;
+        let count = self.limits.count;
         let configured = |iter: SpecIterator<Tz>| {
             let mut iter = iter.with_interval_mode(self.interval_mode).with_time_anchor(self.time_anchor);
             iter.remaining = count;
@@ -171,64 +153,18 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
             let start = Some(self.dtm.clone());
             return Ok(configured(self.new_iter(body, self.dtm.clone(), start, end, policy)?));
         }
-        if let Some(start) = limits.replay_from(self.local)? {
+        if let Some(start) = self.limits.replay_from(self.local)? {
             // A counted `resume_with_start`: replay from the start.
             let start = start.with_timezone(tz);
             let continuous = configured(self.new_iter(body, start.clone(), Some(start), end, policy)?);
             return skip_through(continuous, &self.dtm, instant);
         }
-        if self.anchor.is_none() {
-            if let Some(start) = bounds.start_in(tz, policy)? {
-                return self.with_text_start(body, start, end, count);
-            }
-        }
         let iter = configured(self.new_iter(body, self.dtm.clone(), None, end, policy)?);
-        let mut iter = resumed(iter, body, self.interval_mode, self.local, self.anchor)?;
+        let mut iter = resumed(iter, self.interval_mode, self.local, self.anchor);
         // Steps in exclusion specs count from the stored start, if any.
         if let Some(anchor) = self.anchor {
             iter.exclusion_anchor = anchor;
         }
-        Ok(iter)
-    }
-
-    /// A start written in the spec: the grid's anchor, and results at or
-    /// after it.
-    fn with_text_start(
-        &self,
-        body: &str,
-        start: DateTime<Tz>,
-        end: Option<DateTime<Tz>>,
-        count: Option<usize>,
-    ) -> Result<SpecIterator<Tz>> {
-        let anchor = start.naive_local();
-        let policy = self.dst_policy;
-        let fresh = |cursor: DateTime<Tz>| -> Result<SpecIterator<Tz>> {
-            let mut iter = self.new_iter(body, cursor, None, end.clone(), policy)?
-                .with_interval_mode(self.interval_mode)
-                .with_time_anchor(self.time_anchor);
-            iter.remaining = count;
-            iter.exclusion_anchor = anchor;
-            iter.each_part(|part| {
-                part.anchor = Some(anchor);
-                part.today = Some(anchor.date());
-                // In `Elapsed`, later steps measure real time from each result.
-                part.anchor_once = self.interval_mode == IntervalMode::Elapsed;
-            });
-            Ok(iter)
-        };
-        if count.is_some() {
-            return skip_through(fresh(just_before(&start))?, &self.dtm, instant);
-        }
-        if self.dtm < start {
-            return fresh(just_before(&start));
-        }
-        // After the start: resume on the grid counted from it.
-        let iter = self.new_iter(body, self.dtm.clone(), None, end, policy)?
-            .with_interval_mode(self.interval_mode)
-            .with_time_anchor(self.time_anchor);
-        let mut iter = resumed(iter, body, self.interval_mode, self.local, Some(anchor))?;
-        iter.exclusion_anchor = anchor;
-        iter.remaining = count;
         Ok(iter)
     }
 }
@@ -257,6 +193,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             local: None,
             anchor: None,
             limits: Limits::default(),
+            exclusions: Vec::new(),
             marker_sealed: PhantomData,
         }
     }
@@ -280,11 +217,9 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
     /// Resume a stored schedule from its original `start`: times strictly
     /// after `last`, on the grid counted from `start`.
     ///
-    /// Required for a union spec (`A | B`), whose parts would otherwise count
-    /// their steps from another part's time. For a plain spec it gives the
-    /// same results as [`resume_after`](Self::resume_after). A union in
-    /// [`IntervalMode::Elapsed`] cannot be resumed
-    /// ([`Error::UnsupportedResume`]).
+    /// Required for a schedule with [`with_count`](Self::with_count), which
+    /// is replayed from its start to keep the count. Otherwise it gives the
+    /// same results as [`resume_after`](Self::resume_after).
     pub fn resume_with_start(
         spec: &str,
         tz: Tz,
@@ -322,6 +257,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
             local: self.local,
             anchor: self.anchor,
             limits: self.limits,
+            exclusions: self.exclusions,
             marker_sealed: PhantomData,
         }
     }
@@ -333,32 +269,6 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, EndDateTime<Tz>, Sealed> {
     }
 }
 
-impl SpecIteratorBuilder<chrono_tz::Tz, NoStart, NoEnd, NotSealed> {
-    /// Build from the spec's own text alone: its start (`@…`), end (`..…`)
-    /// and time zone (`[Europe/London]`, UTC if none is named). Without a
-    /// start, results begin after now.
-    ///
-    /// ```rust
-    /// use tkone_schedule::time::SpecIteratorBuilder;
-    /// use fallible_iterator::FallibleIterator;
-    ///
-    /// let times: Vec<_> = SpecIteratorBuilder::from_spec("2H:00:00 @2025-01-06T09:00:00[Europe/London] ..2025-01-06T15:00")?
-    ///     .build()?
-    ///     .map(|t| Ok(t.format("%H:%M %Z").to_string()))
-    ///     .collect()?;
-    /// assert_eq!(times, ["09:00 GMT", "11:00 GMT", "13:00 GMT", "15:00 GMT"]);
-    /// # Ok::<(), tkone_schedule::Error>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the start, end or time zone is malformed.
-    pub fn from_spec(spec: &str) -> Result<Self> {
-        let (_, bounds) = split_bounds(spec)?;
-        Ok(Self::new_after(spec, bounds.cursor()?))
-    }
-}
-
 /// An end given to the builder.
 enum BuilderEnd<Tz: TimeZone> {
     None,
@@ -366,51 +276,31 @@ enum BuilderEnd<Tz: TimeZone> {
     Spec(String),
 }
 
-/// The first time of `end_spec` (a union is allowed) after `start`, on any day:
-/// `13:00:00` from a 14:00 start is 13:00 the next day.
+/// The first time of `end_spec` after `start`, on any day: `13:00:00` from
+/// a 14:00 start is 13:00 the next day.
 fn end_from_spec<Tz: TimeZone>(end_spec: &str, start: &DateTime<Tz>, policy: DstPolicy) -> Result<DateTime<Tz>> {
     let local = start.naive_local();
-    let mut end = None;
-    for part in union_parts(end_spec).unwrap_or_else(|| vec![end_spec]) {
-        let next = engine::next_after(&part.parse()?, local, local).ok_or(Error::InvalidEndSpec)?;
-        end = Some(end.map_or(next, |e: NaiveDateTime| e.min(next)));
-    }
-    resolve_local(&start.timezone(), end.ok_or(Error::InvalidEndSpec)?, policy)
+    let end = engine::next_after(&end_spec.parse()?, local, local).ok_or(Error::InvalidEndSpec)?;
+    resolve_local(&start.timezone(), end, policy)
 }
 
 /// Apply any `resume_after` / `resume_with_start` cursor.
 fn resumed<Tz: TimeZone>(
-    iter: SpecIterator<Tz>,
-    spec: &str,
+    mut iter: SpecIterator<Tz>,
     mode: IntervalMode,
     local: Option<NaiveDateTime>,
     anchor: Option<NaiveDateTime>,
-) -> Result<SpecIterator<Tz>> {
-    let union = union_parts(split_exclusions(spec).0).is_some();
-    match (anchor, local) {
-        (None, Some(_)) if union => {
-            return Err(Error::UnsupportedResume(
-                "a union spec must be resumed with `resume_with_start`".into(),
-            ))
-        }
-        (Some(_), _) if union && mode == IntervalMode::Elapsed => {
-            return Err(Error::UnsupportedResume("a union spec in `IntervalMode::Elapsed`".into()))
-        }
-        _ => {}
-    }
-    let mut iter = iter;
+) -> SpecIterator<Tz> {
     // Elapsed steps continue from the instant, so they keep its own local
     // time; wall-clock steps continue from the stored wall clock, on the grid
     // counted from the stored start if there is one.
     if mode == IntervalMode::WallClock {
-        iter.each_part(|part| {
-            if let Some(local) = local {
-                part.local = local;
-            }
-            part.anchor = anchor;
-        });
+        if let Some(local) = local {
+            iter.local = local;
+        }
+        iter.anchor = anchor;
     }
-    Ok(iter)
+    iter
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
@@ -433,6 +323,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             local: None,
             anchor: None,
             limits: Limits::default(),
+            exclusions: Vec::new(),
             marker_sealed: PhantomData,
         }
     }
@@ -457,6 +348,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             local: self.local,
             anchor: self.anchor,
             limits: self.limits,
+            exclusions: self.exclusions,
             marker_sealed: PhantomData,
         }
     }
@@ -482,6 +374,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
             local: self.local,
             anchor: self.anchor,
             limits: self.limits,
+            exclusions: self.exclusions,
             marker_sealed: PhantomData,
         }
     }
@@ -550,22 +443,15 @@ pub struct SpecIterator<Tz: TimeZone> {
     /// Inclusive upper bound.
     end: Option<DateTime<Tz>>,
     done: bool,
-    /// For a union spec (`A | B`), its parts; the other fields are unused.
-    union: Option<Box<Merge<SpecIterator<Tz>, DateTime<Tz>>>>,
-    /// A union part: fixed times of day recur every day instead of only on
+    /// `repeat_daily`: fixed times of day recur every day instead of only on
     /// the current day.
     daily: bool,
-    /// The exclusion specs after a `!`: matching times are skipped.
+    /// The `with_exclusions` specs: matching times are skipped.
     exclusions: Vec<Spec>,
     /// Where steps in the exclusion specs are counted from.
     exclusion_anchor: NaiveDateTime,
     /// `with_count`: results left.
     remaining: Option<usize>,
-    /// The day whose fixed times a spec without a step yields (the start's
-    /// day for a start written in the spec); `None` means the cursor's day.
-    today: Option<NaiveDate>,
-    /// Use `anchor` for the first result only (`Elapsed` from a written start).
-    anchor_once: bool,
 }
 
 fn instant<Tz: TimeZone>(t: &DateTime<Tz>) -> DateTime<Tz> {
@@ -580,27 +466,6 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         end: Option<DateTime<Tz>>,
         dst_policy: DstPolicy,
     ) -> Result<Self> {
-        if let (spec, Some(exclusions)) = split_exclusions(spec) {
-            let mut iter = Self::new(spec, cursor, start, end, dst_policy)?;
-            iter.exclusions = union_parts(exclusions)
-                .unwrap_or_else(|| vec![exclusions])
-                .into_iter()
-                .map(str::parse)
-                .collect::<Result<Vec<Spec>>>()?;
-            return Ok(iter);
-        }
-        if let Some(parts) = union_parts(spec) {
-            let parts = parts
-                .into_iter()
-                .map(|part| {
-                    let part = Self::new(part, cursor.clone(), start.clone(), end.clone(), dst_policy)?;
-                    Ok(Self { daily: true, ..part })
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let mut outer = parts[0].clone();
-            outer.union = Some(Box::new(Merge::new(parts, instant)));
-            return Ok(outer);
-        }
         let cursor_local = cursor.naive_local();
         Ok(Self {
             tz: cursor.timezone(),
@@ -614,13 +479,10 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
             start,
             end,
             done: false,
-            union: None,
             daily: false,
             exclusions: Vec::new(),
             exclusion_anchor: cursor_local,
             remaining: None,
-            today: None,
-            anchor_once: false,
         })
     }
 
@@ -632,21 +494,13 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
             .any(|spec| engine::next_after(spec, self.exclusion_anchor, before) == Some(local))
     }
 
-    /// Apply `f` to this iterator, or to each part of a union.
-    fn each_part(&mut self, f: impl Fn(&mut Self)) {
-        match &mut self.union {
-            Some(union) => union.parts_mut().iter_mut().for_each(f),
-            None => f(self),
-        }
-    }
-
     fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
-        self.each_part(|part| part.interval_mode = mode);
+        self.interval_mode = mode;
         self
     }
 
     fn with_time_anchor(mut self, anchor: TimeAnchor) -> Self {
-        self.each_part(|part| part.time_anchor = anchor);
+        self.time_anchor = anchor;
         self
     }
 
@@ -696,9 +550,6 @@ impl<Tz: TimeZone> FallibleIterator for SpecIterator<Tz> {
 impl<Tz: TimeZone> SpecIterator<Tz> {
     /// The next result before exclusions and `with_count`.
     fn next_unlimited(&mut self) -> Result<Option<DateTime<Tz>>> {
-        if let Some(union) = &mut self.union {
-            return union.next();
-        }
         if self.done {
             return Ok(None);
         }
@@ -715,10 +566,9 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
                 self.done = true;
                 return Ok(None);
             };
-            // A spec without a step names fixed times of day; on its own it
-            // yields them on the current day only. In a union they recur.
-            let today = self.today.unwrap_or(self.local.date());
-            if !self.daily && !engine::has_step(&self.spec) && next.date() != today {
+            // A spec without a step names fixed times of day: on the
+            // current day only, unless `repeat_daily`.
+            if !self.daily && !engine::has_step(&self.spec) && next.date() != self.local.date() {
                 self.done = true;
                 return Ok(None);
             }
@@ -748,10 +598,6 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
                 return Ok(None);
             }
             self.cursor = instant.clone();
-            if self.anchor_once {
-                self.anchor = None;
-                self.anchor_once = false;
-            }
             return Ok(Some(instant));
         }
     }

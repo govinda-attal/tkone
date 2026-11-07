@@ -1654,13 +1654,25 @@ fn test_skip_non_business_days() {
     assert_eq!(take("YY-MM-DD~SB", day(1, 12), 5), ["01-13", "01-14", "01-16", "01-17", "01-20"]);
     // The 15th, only when it is a business day: Feb 15 and Mar 15 2025 are Saturdays.
     assert_eq!(dates_from("YY-MM-15~SB", (2025, 1, 15), 3), ["2025-01-15", "2025-04-15", "2025-05-15"]);
-    // Business days every other week.
-    assert_eq!(
-        take("YY-MM-DD/2W~SB @2025-01-06", day(1, 1), 7),
-        ["01-06", "01-07", "01-08", "01-09", "01-10", "01-20", "01-21"]
-    );
+    // Business days every other week, from Monday 6 January.
+    let fortnights: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-DD/2W~SB", HolidayOn15Jan, day(1, 6))
+        .build()
+        .unwrap()
+        .take(7)
+        .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(fortnights, ["01-06", "01-07", "01-08", "01-09", "01-10", "01-20", "01-21"]);
     // Skipped dates are not counted.
-    assert_eq!(take("YY-MM-15~SB @2025-01-01 x3", day(1, 1), 9), ["04-15", "05-15", "07-15"]);
+    let counted: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-15~SB", HolidayOn15Jan, day(1, 1))
+        .with_count(3)
+        .build()
+        .unwrap()
+        .take(9)
+        .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(counted, ["04-15", "05-15", "07-15"]);
     // Display, and with a time part.
     assert_eq!("YY-MM-DD/2W~SB".parse::<crate::date::Spec>().unwrap().to_string(), "YY-MM-DD/2W~SB");
     let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after("YY-MM-DD~SBT09:00:00", HolidayOn15Jan, day(1, 14))
@@ -1675,8 +1687,8 @@ fn test_skip_non_business_days() {
 
 #[test]
 fn test_every_business_day_two_ways() {
-    // `1BD` and `DD~SB` give the same dates, including from a Saturday
-    // written start with the cursor exactly at it.
+    // `1BD` and `DD~SB` give the same dates, including in a schedule
+    // anchored at a Saturday.
     let tz = chrono_tz::America::New_York;
     let sat = tz.with_ymd_and_hms(2025, 1, 4, 0, 0, 0).unwrap();
     let take = |spec: &str| -> Vec<String> {
@@ -1689,8 +1701,13 @@ fn test_every_business_day_two_ways() {
             .unwrap()
     };
     let expected = ["01-06", "01-07", "01-08", "01-09", "01-10", "01-13", "01-14", "01-16", "01-17", "01-20"];
-    for spec in ["YY-MM-1BD", "YY-MM-DD~SB", "YY-MM-1BD @2025-01-04", "YY-MM-DD~SB @2025-01-04"] {
+    for spec in ["YY-MM-1BD", "YY-MM-DD~SB"] {
         assert_eq!(take(spec), expected, "{spec}");
+    }
+    for rule in ["YY-MM-1BDT00:00:00", "YY-MM-DD~SBT00:00:00"] {
+        let schedule = crate::schedule::Schedule::builder(sat, HolidayOn15Jan).rule(rule).build().unwrap();
+        let got: Vec<_> = schedule.slots().unwrap().take(10).map(|s| Ok(s.at.format("%m-%d").to_string())).collect().unwrap();
+        assert_eq!(got, expected, "{rule}");
     }
 }
 
@@ -1727,8 +1744,16 @@ fn test_easter() {
     assert_eq!(dates_after("YY-MM-EAS+250", (2038, 1, 1), 1), ["2038-12-31"]);
     // ...but a late Orthodox Easter can reach into the next year.
     assert_eq!(dates_after("YY-MM-OEAS+250", (2174, 1, 1), 1), ["2174-01-14"]);
-    // Bounds.
-    assert_eq!(dates_after("YY-MM-EAS-2 @2025-01-01 ..+3Y", (2024, 1, 1), 9), ["2025-04-18", "2026-04-03", "2027-03-26"]);
+    // With an end.
+    let tz = chrono_tz::America::New_York;
+    let bounded: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-EAS-2", WeekendSkipper::new(), tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap())
+        .with_end(tz.with_ymd_and_hms(2027, 12, 31, 0, 0, 0).unwrap())
+        .build()
+        .unwrap()
+        .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(bounded, ["2025-04-18", "2026-04-03", "2027-03-26"]);
 }
 
 #[test]
@@ -1744,15 +1769,16 @@ fn test_easter_adjusted_and_combined() {
         .unwrap();
     assert_eq!(got, [Occurrence::AdjustedLater(day(2025, 4, 20), day(2025, 4, 21))]);
     // Weekdays except Good Friday and Easter Monday.
-    assert_eq!(
-        dates_after("YY-MM-[MON-FRI] ! YY-MM-EAS-2 | YY-MM-EAS+1", (2025, 4, 15), 4),
-        ["2025-04-16", "2025-04-17", "2025-04-22", "2025-04-23"]
-    );
-    // Both as one union.
-    assert_eq!(
-        dates_after("YY-MM-EAS-2 | YY-MM-EAS+1", (2025, 1, 1), 4),
-        ["2025-04-18", "2025-04-21", "2026-04-03", "2026-04-06"]
-    );
+    let weekdays: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-[MON-FRI]", WeekendSkipper::new(), day(2025, 4, 15))
+        .with_exclusions("YY-MM-EAS-2")
+        .with_exclusions("YY-MM-EAS+1")
+        .build()
+        .unwrap()
+        .take(4)
+        .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+        .collect()
+        .unwrap();
+    assert_eq!(weekdays, ["2025-04-16", "2025-04-17", "2025-04-22", "2025-04-23"]);
     // With a time.
     let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after("YY-MM-OEAS-2T09:00:00", WeekendSkipper::new(), day(2026, 1, 1))
         .build()

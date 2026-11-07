@@ -123,6 +123,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "fallible-iterator",
+ "serde_yaml_ng",
  "tkone-calendar",
  "tkone-schedule",
 ]

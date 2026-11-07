@@ -1,9 +1,9 @@
-//! Business-day schedules: datetime specs on a holiday calendar, resumed from
+//! Business-day schedules: a [`Schedule`] on a holiday calendar, resumed from
 //! stored state so a restart never loses a run.
 //!
 //! A time spec repeats within the day and can simply start again from now.
-//! A business schedule (`YY-MM-BD#3T09:00:00 [cal=GBLO]`) runs once a day or
-//! less: a run missed while the process was down must not vanish. So a
+//! A business schedule (`YY-MM-BD#3T09:00:00` on London's calendar) runs once
+//! a day or less: a run missed while the process was down must not vanish. So a
 //! [`BusinessSchedule`] keeps the last run it fired in a [`StateStore`] and,
 //! when rebuilt, resumes after it. Runs it finds in the past are handled by
 //! its [`CatchUp`] policy.
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, FixedOffset, Utc};
 use fallible_iterator::FallibleIterator;
 use tkone_schedule::biz_day::BizDayProcessor;
-use tkone_schedule::datetime::{SpecIterator, SpecIteratorBuilder};
+use tkone_schedule::schedule::{Schedule, Slot, Slots};
 use tkone_schedule::{Error, Occurrence};
 
 use crate::ScheduleIter;
@@ -27,14 +27,14 @@ use crate::ScheduleIter;
 
 /// Where a [`BusinessSchedule`] keeps the last run it fired, by schedule key.
 ///
-/// The value is the run's [`actual`](Occurrence::actual) time with its UTC
-/// offset, which is what [`SpecIteratorBuilder::resume_after`] needs.
-/// Implement it on your database to share state between processes.
+/// The value is the run's time (its [`Slot::at`]) with its UTC offset; the
+/// schedule resumes with the slots after it. Implement it on your database to
+/// share state between processes.
 pub trait StateStore: Send + 'static {
     /// The last run recorded for `key`, if any.
     fn load(&self, key: &str) -> Result<Option<DateTime<FixedOffset>>, Error>;
-    /// Records `last_actual` as the last run for `key`.
-    fn save(&mut self, key: &str, last_actual: DateTime<FixedOffset>) -> Result<(), Error>;
+    /// Records `last` as the last run for `key`.
+    fn save(&mut self, key: &str, last: DateTime<FixedOffset>) -> Result<(), Error>;
 }
 
 /// A [`StateStore`] in memory: state lasts as long as the process. Clones
@@ -54,8 +54,8 @@ impl StateStore for MemoryStore {
         Ok(self.0.lock().expect("store lock").get(key).copied())
     }
 
-    fn save(&mut self, key: &str, last_actual: DateTime<FixedOffset>) -> Result<(), Error> {
-        self.0.lock().expect("store lock").insert(key.to_string(), last_actual);
+    fn save(&mut self, key: &str, last: DateTime<FixedOffset>) -> Result<(), Error> {
+        self.0.lock().expect("store lock").insert(key.to_string(), last);
         Ok(())
     }
 }
@@ -100,12 +100,12 @@ impl StateStore for FileStore {
         Ok(self.read()?.get(key).copied())
     }
 
-    fn save(&mut self, key: &str, last_actual: DateTime<FixedOffset>) -> Result<(), Error> {
+    fn save(&mut self, key: &str, last: DateTime<FixedOffset>) -> Result<(), Error> {
         if key.contains(['\t', '\n']) {
             return Err(Error::Custom(format!("schedule key `{key}` must not contain a tab or newline")));
         }
         let mut all = self.read()?;
-        all.insert(key.to_string(), last_actual);
+        all.insert(key.to_string(), last);
         let text: String = all.iter().map(|(k, t)| format!("{k}\t{}\n", t.to_rfc3339())).collect();
         let tmp = self.path.with_extension("tmp");
         let io = |e: std::io::Error| Error::Custom(format!("{}: {e}", self.path.display()));
@@ -132,28 +132,26 @@ pub enum CatchUp {
 
 // ── BusinessSchedule ─────────────────────────────────────────────────────────
 
-/// A datetime schedule on business days, resumed from a [`StateStore`].
+/// A [`Schedule`] on business days, resumed from a [`StateStore`].
 ///
 /// ```rust,no_run
+/// use chrono::TimeZone;
+/// use tkone_schedule::schedule::Schedule;
 /// use tkone_trigger::{BusinessSchedule, CatchUp, FileStore, FireContext, Scheduler};
 /// # use tkone_schedule::biz_day::WeekendSkipper;
 /// # async fn run() -> Result<(), tkone_schedule::Error> {
 /// # let calendar = WeekendSkipper::new();
-/// // With tkone-calendar: `let calendar = Calendars::builtin().for_spec(SPEC)?;`
-/// let schedule = BusinessSchedule::new(
-///     "YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York]",
-///     calendar,
-///     FileStore::new("schedules.state"),
-///     "usd-payment-run",
-///     CatchUp::Latest,
-/// )?;
+/// // With tkone-calendar: `let calendar = Calendars::builtin().get("XNYS")?;`
+/// let start = chrono_tz::America::New_York.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap();
+/// let payments = Schedule::builder(start, calendar).rule("YY-MM-DD~SBT16:30:00").build()?;
+/// let schedule = BusinessSchedule::new(payments, FileStore::new("schedules.state"), "usd-payment-run", CatchUp::Latest)?;
 /// let mut scheduler = Scheduler::new(schedule, |_ctx: FireContext, e: String| async move { eprintln!("{e}") });
 /// scheduler.add(|ctx: FireContext| async move { println!("fired: {ctx:?}"); Ok(()) });
 /// scheduler.try_run().await?;
 /// # Ok(()) }
 /// ```
 pub struct BusinessSchedule<B: BizDayProcessor, S: StateStore> {
-    iter: SpecIterator<chrono_tz::Tz, B>,
+    slots: Slots<B>,
     zone: chrono_tz::Tz,
     store: S,
     key: String,
@@ -163,64 +161,64 @@ pub struct BusinessSchedule<B: BizDayProcessor, S: StateStore> {
     now: fn() -> DateTime<Utc>,
 }
 
-fn to_utc(o: Occurrence<DateTime<chrono_tz::Tz>>) -> Occurrence<DateTime<Utc>> {
-    match o {
-        Occurrence::Exact(t) => Occurrence::Exact(t.with_timezone(&Utc)),
-        Occurrence::AdjustedLater(a, t) => Occurrence::AdjustedLater(a.with_timezone(&Utc), t.with_timezone(&Utc)),
-        Occurrence::AdjustedEarlier(a, t) => Occurrence::AdjustedEarlier(a.with_timezone(&Utc), t.with_timezone(&Utc)),
+/// A slot as a run: its time, moved from its first rule's actual time when an
+/// adjustment moved it.
+fn to_run(slot: Slot) -> Occurrence<DateTime<Utc>> {
+    let at = slot.at.with_timezone(&Utc);
+    let actual = slot.sources.first().map_or(at, |source| source.actual.with_timezone(&Utc));
+    match actual.cmp(&at) {
+        std::cmp::Ordering::Equal => Occurrence::Exact(at),
+        std::cmp::Ordering::Less => Occurrence::AdjustedLater(actual, at),
+        std::cmp::Ordering::Greater => Occurrence::AdjustedEarlier(actual, at),
     }
 }
 
 impl<B: BizDayProcessor, S: StateStore> BusinessSchedule<B, S> {
-    /// Builds the schedule `spec` on the business days of `bdp`, keeping its
-    /// state in `store` under `key`.
+    /// Runs `schedule`, keeping its state in `store` under `key`.
     ///
-    /// - **Time zone:** the one written in the spec (`@…[America/New_York]`),
-    ///   else UTC. Write the calendar's own zone: a run whose date differs
+    /// - **Time zone and business days:** the schedule's. On a calendar with
+    ///   a time zone, start the schedule in that zone: a run whose date differs
     ///   there is refused (see `BizDayProcessor::time_zone`).
     /// - **Where it starts:** after the last run stored under `key`; the
     ///   first time, after now.
     ///
     /// # Errors
     ///
-    /// If the spec is not a datetime spec, is invalid, names a calendar
-    /// other than `bdp`, or the store cannot be read. A schedule that needs
-    /// its start to resume (a union, or a cycle with positions) must write
-    /// one (`@2026-01-02`).
-    pub fn new(spec: &str, bdp: B, store: S, key: impl Into<String>, catch_up: CatchUp) -> Result<Self, Error> {
-        Self::with_clock(spec, bdp, store, key, catch_up, Utc::now)
+    /// If the store cannot be read.
+    pub fn new(schedule: Schedule<B>, store: S, key: impl Into<String>, catch_up: CatchUp) -> Result<Self, Error> {
+        Self::with_clock(schedule, store, key, catch_up, Utc::now)
     }
 
     #[doc(hidden)]
     /// As [`new`](Self::new), with `now` as the clock (for tests).
     pub fn with_clock(
-        spec: &str,
-        bdp: B,
+        schedule: Schedule<B>,
         store: S,
         key: impl Into<String>,
         catch_up: CatchUp,
         now: fn() -> DateTime<Utc>,
     ) -> Result<Self, Error> {
         let key = key.into();
-        let zone = tkone_schedule::time_zone_of(spec)?.unwrap_or(chrono_tz::UTC);
-        let iter = match store.load(&key)? {
-            Some(last) => SpecIteratorBuilder::resume_after(spec, bdp, zone, last).build()?,
-            None => SpecIteratorBuilder::new_after(spec, bdp, now().with_timezone(&zone)).build()?,
+        let zone = schedule.zone();
+        let after = match store.load(&key)? {
+            Some(last) => last.with_timezone(&zone),
+            None => now().with_timezone(&zone),
         };
-        Ok(Self { iter, zone, store, key, catch_up, pending: None, now })
+        let slots = schedule.slots_after(&after)?;
+        Ok(Self { slots, zone, store, key, catch_up, pending: None, now })
     }
 
     fn pull(&mut self) -> Result<Option<Occurrence<DateTime<Utc>>>, Error> {
         if let Some(o) = self.pending.take() {
             return Ok(Some(o));
         }
-        Ok(self.iter.next()?.map(to_utc))
+        Ok(self.slots.next()?.map(to_run))
     }
 
     fn record(&mut self, o: &Occurrence<DateTime<Utc>>) -> Result<(), Error> {
-        // Stored with the schedule's local offset, as `resume_after` expects.
-        let actual = o.actual().with_timezone(&self.zone);
-        let fixed = DateTime::parse_from_rfc3339(&actual.to_rfc3339()).expect("RFC 3339 round-trips");
+        // Stored with the schedule's local offset, readable as it stands.
+        let at = o.observed().with_timezone(&self.zone);
+        let fixed = DateTime::parse_from_rfc3339(&at.to_rfc3339()).expect("RFC 3339 round-trips");
         self.store.save(&self.key, fixed)
     }
 }
@@ -268,7 +266,11 @@ mod tests {
     use chrono::TimeZone;
     use tkone_schedule::biz_day::WeekendSkipper;
 
-    const DAILY: &str = "YY-MM-DD~SBT09:00:00 @2026-01-01[Europe/London]";
+    /// Weekdays at 09:00 in London, from 1 January 2026.
+    fn daily() -> Schedule<WeekendSkipper> {
+        let start = chrono_tz::Europe::London.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DD~SBT09:00:00").build().unwrap()
+    }
 
     fn monday_noon() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 11, 2, 12, 0, 0).unwrap()
@@ -283,7 +285,7 @@ mod tests {
     }
 
     fn schedule(store: MemoryStore, catch_up: CatchUp) -> BusinessSchedule<WeekendSkipper, MemoryStore> {
-        BusinessSchedule::with_clock(DAILY, WeekendSkipper::new(), store, "daily", catch_up, monday_noon).unwrap()
+        BusinessSchedule::with_clock(daily(), store, "daily", catch_up, monday_noon).unwrap()
     }
 
     #[test]
@@ -318,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fired_records_the_actual_time_with_its_offset() {
+    fn test_fired_records_the_time_with_its_offset() {
         let store = MemoryStore::new();
         let mut s = schedule(store.clone(), CatchUp::Latest);
         let run = s.try_next_fire().unwrap().unwrap();
@@ -347,24 +349,17 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_errors() {
-        // A date spec has no time to fire at.
-        assert!(BusinessSchedule::new("YY-MM-BD#3", WeekendSkipper::new(), MemoryStore::new(), "k", CatchUp::Latest).is_err());
-        // A spec naming a calendar needs that calendar.
-        assert!(BusinessSchedule::new("YY-MM-BD#3T09:00:00 [cal=GBLO]", WeekendSkipper::new(), MemoryStore::new(), "k", CatchUp::Latest).is_err());
-    }
-
-    #[test]
     fn test_on_a_real_calendar_across_thanksgiving() {
         use tkone_calendar::Calendars;
-        const SPEC: &str = "YY-MM-DD~SBT16:30:00 @2026-01-02[America/New_York] [cal=XNYS]";
         fn monday_after() -> DateTime<Utc> {
             Utc.with_ymd_and_hms(2026, 11, 30, 12, 0, 0).unwrap()
         }
         let mut store = MemoryStore::new();
         store.save("eod", DateTime::parse_from_rfc3339("2026-11-25T16:30:00-05:00").unwrap()).unwrap();
-        let cal = Calendars::builtin().for_spec(SPEC).unwrap();
-        let mut s = BusinessSchedule::with_clock(SPEC, cal, store, "eod", CatchUp::Latest, monday_after).unwrap();
+        let start = chrono_tz::America::New_York.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap();
+        let cal = Calendars::builtin().get("XNYS").unwrap();
+        let eod = Schedule::builder(start, cal).rule("YY-MM-DD~SBT16:30:00").build().unwrap();
+        let mut s = BusinessSchedule::with_clock(eod, store, "eod", CatchUp::Latest, monday_after).unwrap();
         // Thanksgiving (Thu 26) is skipped by the calendar; Fri 27 was missed
         // and is fired once; then Monday's run.
         assert_eq!(fmt(&s.try_next_fire().unwrap().unwrap()), "Fri 11-27 21:30");
@@ -387,10 +382,12 @@ mod tests {
         use crate::{FireContext, Scheduler};
         use std::sync::atomic::{AtomicUsize, Ordering};
         // Ends on 30 October, so every run is in the past and fires at once.
-        let spec = "YY-MM-DD~SBT09:00:00 @2026-01-01[Europe/London] ..2026-10-30";
+        let until = chrono_tz::Europe::London.with_ymd_and_hms(2026, 10, 30, 23, 59, 59).unwrap();
+        let start = chrono_tz::Europe::London.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let ended = || Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DD~SBT09:00:00").until(until).build().unwrap();
         let mut store = MemoryStore::new();
         store.save("daily", last_tuesday()).unwrap();
-        let s = BusinessSchedule::new(spec, WeekendSkipper::new(), store.clone(), "daily", CatchUp::All).unwrap();
+        let s = BusinessSchedule::new(ended(), store.clone(), "daily", CatchUp::All).unwrap();
         let fired = Arc::new(AtomicUsize::new(0));
         let mut scheduler = Scheduler::new(s, |_: FireContext, _: String| async {});
         let count = fired.clone();
@@ -406,7 +403,7 @@ mod tests {
         assert_eq!(store.load("daily").unwrap().unwrap().to_rfc3339(), "2026-10-30T09:00:00+00:00");
 
         // A store that cannot save stops the scheduler with its error.
-        let s = BusinessSchedule::new(spec, WeekendSkipper::new(), FailingStore, "daily", CatchUp::All).unwrap();
+        let s = BusinessSchedule::new(ended(), FailingStore, "daily", CatchUp::All).unwrap();
         let scheduler = Scheduler::new(s, |_: FireContext, _: String| async {});
         assert_eq!(scheduler.try_run().await, Err(Error::Custom("disk full".into())));
     }

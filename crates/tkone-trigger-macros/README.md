@@ -58,9 +58,9 @@ async fn run_until_signal()   // stops on Ctrl-C / SIGTERM
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` or `"HH:30M:00 ! 12:MM:SS"` |
+| `spec = "..."` | yes | [`tkone_schedule`] time spec, e.g. `"1H:00:00"` or `"09-16:30M:00"` |
 | `start_spec = "..."` | no | From when on to fire: an RFC 3339 datetime (`"2026-06-01T09:00:00Z"`) **or** a time spec, meaning its next occurrence (`"09:00:00"` = the next 9 am). When omitted, from now. |
-| `tz = "..."` | no | IANA time zone the spec is read in, e.g. `"Europe/London"`. When omitted, the zone written in the spec (`@2026-06-01T09:00[Europe/London]`), else UTC. |
+| `tz = "..."` | no | IANA time zone the spec is read in, e.g. `"Europe/London"`. When omitted, UTC. |
 | `fire_on_start` | no | Fire all jobs once immediately before the first tick |
 
 The spec, `start_spec` and `tz` are checked **while compiling**: a typo or

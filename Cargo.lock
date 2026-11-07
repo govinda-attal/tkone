@@ -69,6 +69,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-targets 0.52.6",
 ]
@@ -514,6 +515,9 @@ dependencies = [
  "fallible-iterator",
  "nom",
  "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
  "thiserror",
 ]
 

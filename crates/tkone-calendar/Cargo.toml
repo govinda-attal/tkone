@@ -25,7 +25,7 @@ serde          = { workspace = true }
 serde_json     = { workspace = true }
 serde_yaml_ng  = { workspace = true, optional = true }
 thiserror      = { workspace = true }
-tkone-schedule = { workspace = true }
+tkone-schedule = { workspace = true, features = ["serde"] }
 
 [[bin]]
 name = "tkone-calendar-compile"

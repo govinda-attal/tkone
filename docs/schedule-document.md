@@ -1,7 +1,7 @@
 # Schedule documents — Design
 
-Status: **in progress**. `Schedule` is built; the document, selection and
-the grammar change are not. See [Migration](#migration).
+Status: **in progress**. `Schedule` and `ScheduleDoc` are built (the
+`serde` feature of tkone-schedule); selection and the grammar change are not. See [Migration](#migration).
 
 ## Motivation
 
@@ -90,8 +90,8 @@ exclude:
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `version` | integer | yes | Document format version; `1`. |
-| `time_zone` | IANA name | for time and datetime rules | Zone every rule, `start` and `until` is read in. No default: an implicit UTC is a bug waiting to happen. |
-| `calendar` | code or `A+B` | when a rule uses `~` | Business days for every rule. `WEEKENDS` is Saturday and Sunday only. |
+| `time_zone` | IANA name | yes | Zone every rule, `start` and `until` is read in. No default: an implicit UTC is a bug waiting to happen. |
+| `calendar` | code or `A+B` | when a rule uses business days | Business days for every rule, resolved by a `CalendarResolver`. `WEEKENDS` is Saturday and Sunday only. See [D10](#d10-no-calendar-means-no-business-days). |
 | `start` | local date or datetime | yes | Anchor for cadences and the time of day, and the inclusive lower bound. See [D1](#d1-start-is-an-anchor-not-an-occurrence). |
 | `until` | local date or datetime | no | Inclusive upper bound. A date means the whole of that day. |
 | `count` | integer | no | Stop after this many occurrences, counted after exclusions. With `until`, whichever comes first. |
@@ -367,10 +367,12 @@ schedule could change phase on every edit.
 
 ### D10. No calendar means no business days
 
-A rule using `~` in a document without `calendar` is an error. The builder's
-default today is `WeekendSkipper`, which silently treats every weekday as a
-business day; for operations that is a trap. Weekend-only is written
-`calendar: WEEKENDS`.
+A rule or exclusion using business days in a document without `calendar` is
+an error. Business days are any adjustment but `~NA` and the weekday ones
+(`~W`, …), `BD#n` and `nBD`; weekday rules (`WD#n`, `nWD`) need no calendar.
+The builder's default today is `WeekendSkipper`, which silently treats every
+weekday as a business day; for operations that is a trap. Weekend-only is
+written `calendar: WEEKENDS`.
 
 ---
 
@@ -391,7 +393,7 @@ let schedule = Schedule::builder(start, calendars.get("XNYS")?)
 for slot in schedule.slots_after(&last_fired)?.take(3) { /* … */ }
 
 let doc: ScheduleDoc = serde_yaml_ng::from_str(yaml)?;
-let schedule = doc.schedule(&calendars)?;       // resolves the calendar code
+let schedule = doc.schedule(Calendars::builtin())?;   // resolves the calendar code
 ```
 
 ```rust
@@ -463,8 +465,8 @@ Each step leaves the workspace building and tested.
 
 1. **Build the document** in tkone-schedule, beside the existing syntax:
    `Schedule` (anchored rules with ids, merged into slots, exclusions as
-   data, until, count) — done; then `ScheduleDoc`, `CalendarResolver`,
-   `Selector`, `uncovered`.
+   data, until, count), `ScheduleDoc`, `CalendarResolver` (implemented by
+   tkone-calendar's `Calendars`) — done; then `Selector`, `uncovered`.
 2. **Move users over**: tkone-calendar, tkone-trigger, Python, example-app, docs.
 3. **Remove** bounds, `!` and `|` from the grammar, ABNF, IETF draft and spec docs.
 4. **Tempo on paper**: ERD, schema and sequence diagrams.

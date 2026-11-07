@@ -28,6 +28,9 @@
 //! # Ok::<(), tkone_schedule::Error>(())
 //! ```
 
+#[cfg(feature = "serde")]
+pub mod document;
+
 use std::collections::{BTreeSet, VecDeque};
 
 use chrono::{DateTime, NaiveDate, NaiveTime};
@@ -65,6 +68,7 @@ pub struct Source {
 
 /// Which date an exclusion is tested against.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "kebab-case"))]
 pub enum ExcludeMatch {
     /// The rule's date before adjustment: excluding 25 December drops a
     /// `~NB` occurrence moved from the 25th to the 27th. The default.
@@ -316,6 +320,7 @@ fn date_spec(rule: &str) -> Result<crate::date::Spec> {
 }
 
 /// Whether `rule`, a datetime rule, asks the business-day processor anything.
+#[cfg(feature = "serde")]
 pub(crate) fn rule_uses_business_days(rule: &str) -> Result<bool> {
     Ok(date_spec(rule)?.uses_business_days())
 }

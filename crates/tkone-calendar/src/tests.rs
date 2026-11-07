@@ -298,3 +298,40 @@ fn test_compiled_data_is_up_to_date() {
         "compiled/calendars.json is out of date: cargo run -p tkone-calendar --features yaml --bin tkone-calendar-compile"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Schedule documents
+// ---------------------------------------------------------------------------
+
+fn document(calendar: &str, start: &str, rule: &str) -> tkone_schedule::schedule::Schedule<impl BizDayProcessor> {
+    let json = format!(
+        r#"{{"version": 1, "time_zone": "Europe/London", "calendar": "{calendar}", "start": "{start}", "rules": [{{"rule": "{rule}"}}]}}"#
+    );
+    let doc: tkone_schedule::schedule::document::ScheduleDoc = serde_json::from_str(&json).unwrap();
+    doc.schedule(Calendars::builtin()).unwrap()
+}
+
+fn slot_days(schedule: &tkone_schedule::schedule::Schedule<impl BizDayProcessor>, n: usize) -> Vec<String> {
+    schedule.slots().unwrap().take(n).map(|s| Ok(s.at.format("%a %d %b").to_string())).collect().unwrap()
+}
+
+#[test]
+fn test_document_calendars() {
+    // Spring bank holiday, Monday 25 May 2026; 31 May is a Sunday.
+    assert_eq!(slot_days(&document("GBLO", "2026-05-22", "YY-MM-DD~SBT18:00:00"), 3), ["Fri 22 May", "Tue 26 May", "Wed 27 May"]);
+    assert_eq!(slot_days(&document("GBLO", "2026-05-01", "YY-MM-L~PBT18:00:00"), 2), ["Fri 29 May", "Tue 30 Jun"]);
+    // Independence Day 2026 is a Saturday. The exchange closes the Friday
+    // before; the Federal Reserve stays open, so dollar payments settle.
+    assert_eq!(slot_days(&document("GBLO+XNYS", "2026-07-01", "YY-MM-DD~SBT12:00:00"), 3), ["Wed 01 Jul", "Thu 02 Jul", "Mon 06 Jul"]);
+    assert_eq!(slot_days(&document("GBLO+USNY", "2026-07-01", "YY-MM-DD~SBT12:00:00"), 3), ["Wed 01 Jul", "Thu 02 Jul", "Fri 03 Jul"]);
+}
+
+#[test]
+fn test_document_unknown_calendar() {
+    let doc: tkone_schedule::schedule::document::ScheduleDoc = serde_json::from_str(
+        r#"{"version": 1, "time_zone": "Europe/London", "calendar": "GBLO+XXXX", "start": "2026-01-01", "rules": [{"rule": "YY-MM-DD~SBT09:00:00"}]}"#,
+    )
+    .unwrap();
+    let err = doc.schedule(Calendars::builtin()).unwrap_err();
+    assert!(matches!(&err, tkone_schedule::Error::Calendar(why) if why.contains("XXXX")), "{err:?}");
+}

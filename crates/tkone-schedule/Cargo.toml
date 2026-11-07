@@ -16,13 +16,23 @@ readme      = "README.md"
 [package.metadata.rdme]
 readme-path = "README.md"
 
+[features]
+# Schedule documents (`schedule::document`): YAML or JSON schedules, read
+# with any serde format.
+serde = ["dep:serde", "chrono/serde"]
+
 [dependencies]
 chrono            = { workspace = true }
 chrono-tz         = { workspace = true }
 fallible-iterator = { workspace = true }
 nom               = { workspace = true }
 regex             = { workspace = true }
+serde             = { workspace = true, optional = true }
 thiserror         = { workspace = true }
+
+[dev-dependencies]
+serde_json        = { workspace = true }
+serde_yaml_ng     = { workspace = true }
 
 [lints]
 workspace = true

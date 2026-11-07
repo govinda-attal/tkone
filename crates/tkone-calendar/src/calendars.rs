@@ -99,3 +99,28 @@ impl Calendars {
         self.by_code.values()
     }
 }
+
+/// Resolves a schedule document's `calendar` (`GBLO`, `GBLO+USNY`):
+///
+/// ```rust
+/// use tkone_calendar::Calendars;
+/// use tkone_schedule::schedule::document::ScheduleDoc;
+/// use fallible_iterator::FallibleIterator;
+///
+/// let doc: ScheduleDoc = serde_json::from_str(r#"{
+///     "version": 1, "time_zone": "Europe/London", "calendar": "GBLO",
+///     "start": "2026-05-22", "rules": [{ "rule": "YY-MM-DD~SBT18:00:00" }]
+/// }"#)?;
+/// let schedule = doc.schedule(Calendars::builtin())?;
+/// // Monday 25 May 2026 is the Spring bank holiday.
+/// let days: Vec<_> = schedule.slots()?.take(2).map(|s| Ok(s.at.format("%a %d").to_string())).collect()?;
+/// assert_eq!(days, ["Fri 22", "Tue 26"]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+impl tkone_schedule::schedule::document::CalendarResolver for Calendars {
+    type Bdp = Calendar;
+
+    fn resolve(&self, code: &str) -> tkone_schedule::Result<Calendar> {
+        self.get(code).map_err(|e| tkone_schedule::Error::Calendar(e.to_string()))
+    }
+}

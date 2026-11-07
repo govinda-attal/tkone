@@ -596,6 +596,7 @@ impl Spec {
     /// Whether the spec asks the business-day processor anything: an
     /// adjustment other than `~NA` and the weekday ones (`~W`, …), `BD#n`, or
     /// `nBD`. Weekday rules use [`crate::biz_day::WeekendSkipper`] instead.
+    #[cfg(feature = "serde")]
     pub(crate) fn uses_business_days(&self) -> bool {
         let adjusts = !matches!(self.biz_day_adj, None | Some(BizDayAdjustment::NA | BizDayAdjustment::Weekday(_)));
         adjusts

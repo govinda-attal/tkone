@@ -551,6 +551,8 @@ mod bounds_tests;
 mod grammar_tests;
 #[cfg(test)]
 mod schedule_tests;
+#[cfg(all(test, feature = "serde"))]
+mod document_tests;
 
 pub use error::{Error, Result};
 
@@ -601,6 +603,7 @@ pub fn calendar_of(spec: &str) -> Result<Option<String>> {
 ///
 /// Configure via `.with_dst_policy(…)` on any [`SpecIteratorBuilder`](date::SpecIteratorBuilder).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "kebab-case"))]
 pub enum DstPolicy {
     /// Silently resolve DST edge cases — the default.
     ///
@@ -636,6 +639,7 @@ pub enum DstPolicy {
 /// is 5 real hours) but 06, 12, 18, 00, **07** in `Elapsed`, staying an hour
 /// off the clock until fall-back.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "kebab-case"))]
 pub enum IntervalMode {
     /// Steps move the wall clock, like cron — the default.
     ///
@@ -670,6 +674,7 @@ pub enum IntervalMode {
 /// day's times restart from that day's midnight (`5H:00:00` gives 00:00,
 /// 05:00, … 20:00, then 00:00 the next day).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(rename_all = "kebab-case"))]
 pub enum TimeAnchor {
     /// Every date follows the start's time of day: steps keep its phase and
     /// `ForEach` / `AsIs` fields carry its values — the default.

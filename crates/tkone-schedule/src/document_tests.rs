@@ -181,3 +181,62 @@ fn calendars_resolve_by_code() {
     assert!(build(&ny).unwrap().slots().unwrap().take(3).count().is_ok());
     assert_eq!(build(&doc("GBLO")).unwrap().slots().unwrap().next().unwrap().unwrap().at, london(2026, 1, 1, 9, 0));
 }
+
+// ---------------------------------------------------------------------------
+// Instance documents
+// ---------------------------------------------------------------------------
+
+const ACCOUNT: &str = "
+version: 1
+start: 2026-03-15
+until: 2027-03-14
+rules:
+  - id: month-end
+    rule: YY-MM-L~PBT18:00:00
+exclude:
+  dates: [2026-12-31]
+";
+
+#[test]
+fn reads_an_instance() {
+    let definition = build(&ACCRUAL.replace("until: 2026-06-01\n", "")).unwrap();
+    let account = yaml(ACCOUNT).selector(&definition).unwrap();
+    assert_eq!(account.start(), &london(2026, 3, 15, 0, 0));
+    // `until` is a date: the whole of 14 March 2027.
+    assert_eq!(account.until(), Some(&crate::bounds::just_before(&london(2027, 3, 15, 0, 0))));
+    // The definition excludes 29 May, May's month end: it is missed.
+    let mut missed = Vec::new();
+    let next = account.next_after(&definition, &london(2026, 5, 1, 0, 0), &london(2026, 7, 1, 0, 0), |m| missed.push(m.at)).unwrap();
+    let crate::schedule::Next::Due(slot) = next else { panic!("{next:?}") };
+    assert_eq!(missed, [london(2026, 5, 29, 18, 0)]);
+    assert_eq!(slot.at, london(2026, 6, 30, 18, 0));
+    assert_eq!(slot.sources[0].rule_id.as_deref(), Some("month-end"));
+    // A count becomes `until`.
+    let three = yaml(&ACCOUNT.replace("until: 2027-03-14", "count: 3")).selector(&definition).unwrap();
+    assert_eq!(three.until(), Some(&london(2026, 5, 29, 18, 0)));
+}
+
+#[test]
+fn an_instance_uses_its_definitions_zone_calendar_and_options() {
+    let definition = build(ACCRUAL).unwrap();
+    for (field, line) in [
+        ("time_zone", "time_zone: Europe/London"),
+        ("calendar", "calendar: GBLO"),
+        ("options", "options: { dst_policy: strict }"),
+    ] {
+        let doc = format!("{ACCOUNT}{line}\n");
+        match yaml(&doc).selector(&definition) {
+            Err(Error::InvalidSchedule(why)) => assert!(why.contains(&format!("may not set `{field}`")), "{why}"),
+            other => panic!("{field}: {other:?}"),
+        }
+    }
+    // With no calendar in the definition, an instance's business days would
+    // silently be weekdays.
+    let plain = build("version: 1\ntime_zone: Europe/London\nstart: 2026-01-01\nrules: [{ rule: YY-MM-DDT18:00:00 }]").unwrap();
+    match yaml(ACCOUNT).selector(&plain) {
+        Err(Error::InvalidSchedule(why)) => assert!(why.contains("its definition has no `calendar`"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    let weekday = ACCOUNT.replace("YY-MM-L~PBT18:00:00", "YY-MM-L~WT18:00:00");
+    assert!(yaml(&weekday).selector(&plain).is_ok());
+}

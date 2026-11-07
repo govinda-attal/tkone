@@ -30,6 +30,9 @@
 
 #[cfg(feature = "serde")]
 pub mod document;
+pub mod selector;
+
+pub use selector::{Next, Selector, SelectorBuilder};
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -279,7 +282,8 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
     ///
     /// [`Error::InvalidSchedule`] when there are no rules, a rule or
     /// exclusion does not parse or has bounds, exclusions or a union written
-    /// in it, two rules share an id, or `until` is before the start.
+    /// in it, two rules share an id, `until` is before the start, or the
+    /// count is 0.
     pub fn build(self) -> Result<Schedule<B>> {
         let mut schedule = self.0;
         let invalid = |what: String| Error::InvalidSchedule(what);
@@ -290,6 +294,9 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
         schedule.until = schedule.until.map(|until| until.with_timezone(&zone));
         if schedule.until.is_some_and(|until| until < schedule.start) {
             return Err(invalid("`until` is before the start".into()));
+        }
+        if schedule.count == Some(0) {
+            return Err(invalid("`count` must be at least 1".into()));
         }
         let mut ids = BTreeSet::new();
         for (n, rule) in schedule.rules.iter().enumerate() {

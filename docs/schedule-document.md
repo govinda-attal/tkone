@@ -1,7 +1,8 @@
 # Schedule documents — Design
 
-Status: **in progress**. `Schedule` and `ScheduleDoc` are built (the
-`serde` feature of tkone-schedule); selection and the grammar change are not. See [Migration](#migration).
+Status: **in progress**. `Schedule`, `Selector` and `ScheduleDoc` (the
+`serde` feature of tkone-schedule) are built; moving users over and the
+grammar change are not. See [Migration](#migration).
 
 ## Motivation
 
@@ -198,35 +199,45 @@ contains exactly the instances whose next due is `t`: an index lookup, with
 no walk over selectors.
 
 ```rust
-/// An instance document, built with the definition's zone and calendar.
-pub struct Selector { /* rules, exclusions, window, anchor */ }
+impl<B: BizDayProcessor> Schedule<B> {
+    /// A selection from this schedule, anchored at `start`, read with this
+    /// schedule's zone, business days and options.
+    pub fn selector(&self, start: DateTime<Tz>) -> SelectorBuilder<B>;
+}
 
-pub enum Next<Tz: TimeZone> {
-    /// The next instant the selector picks that the definition produces.
+pub enum Next {
+    /// The selector's next slot that the definition produces.
     Due(Slot),
-    /// The window ended, or the selection ran out.
+    /// The selector has no more slots: its window has ended.
     Done,
-    /// Nothing found before the horizon.
+    /// The selector has slots, but none the definition produces before the horizon.
     NotFound,
 }
 
-impl Selector {
-    /// The first instant strictly after `after`, no later than `horizon`,
-    /// that this selector picks and `definition` produces. Instants the
-    /// selector wants but the definition does not produce are passed to
+impl<B: BizDayProcessor> Selector<B> {
+    /// The first slot strictly after `after`, no later than `horizon`,
+    /// that this selector picks and `definition` produces. Slots the
+    /// selector wants that the definition does not produce are passed to
     /// `missed`.
-    pub fn next_after<B: BizDayProcessor>(
+    pub fn next_after(
         &self,
         definition: &Schedule<B>,
-        after: DateTime<Tz>,
-        horizon: DateTime<Tz>,
+        after: &DateTime<Tz>,
+        horizon: &DateTime<Tz>,
         missed: impl FnMut(Slot),
-    ) -> Result<Next<Tz>>;
+    ) -> Result<Next>;
 }
 ```
 
-`next_after` steps the selector's own occurrences from `after` and keeps the
-first one the definition also produces. The horizon is not optional: acct-4's
+A document reads as either: `ScheduleDoc::schedule(&calendars)` for a
+definition, `ScheduleDoc::selector(&definition)` for an instance.
+
+`next_after` merges the selector's slots after `after` with the
+definition's and keeps the first instant both have. `Due` carries the
+selector's slot: its sources are the instance's rules, with their actual
+times (acct-1's 31 May). A definition that has ended does not make its
+instances `Done`: their slots are reported missed and the result is
+`NotFound`, so an instance outliving its definition is visible. The horizon is not optional: acct-4's
 17:00 never exists, and an unbounded search would never return.
 
 Pseudo code for tempo:
@@ -252,13 +263,12 @@ if due.is_empty() {
 ### Checking an instance against its definition
 
 ```rust
-/// Instants in `horizon` the instance selects that the definition never
-/// produces. Empty means the instance is a subset over that horizon.
-pub fn uncovered<B: BizDayProcessor>(
-    definition: &Schedule<B>,
-    instance: &Selector,
-    horizon: RangeInclusive<DateTime<Tz>>,
-) -> Result<Vec<Slot>>;
+impl<B: BizDayProcessor> Selector<B> {
+    /// The selector's slots in `window` that `definition` does not
+    /// produce. Empty means the instance is a subset over that window.
+    pub fn uncovered(&self, definition: &Schedule<B>, window: RangeInclusive<DateTime<Tz>>)
+        -> Result<Vec<Slot>>;
+}
 ```
 
 A proof for all time is not offered. Pure Gregorian rules repeat every 400
@@ -346,8 +356,9 @@ instance is due in it, even when the claimer is behind.
 
 ### D7. Instance `count` becomes `until` at registration
 
-At registration, tempo enumerates the selection, finds the nth occurrence
-and stores it as `until`. The count then stays a property of the schedule,
+When a selector is built, its nth slot becomes `until`, counted over the
+selector's own slots, not over those the definition produces: a month end
+the definition lacks still counts. The count then stays a property of the schedule,
 not of execution: 12 monthly accruals end at the 12th month even if one was
 skipped by the overlap policy. A skip is an execution failure that must be
 visible as one, not a reason to accrue a 13th month. Instances never carry
@@ -368,7 +379,7 @@ schedule could change phase on every edit.
 ### D10. No calendar means no business days
 
 A rule or exclusion using business days in a document without `calendar` is
-an error. Business days are any adjustment but `~NA` and the weekday ones
+an error, and so is one in an instance document whose definition has none. Business days are any adjustment but `~NA` and the weekday ones
 (`~W`, …), `BD#n` and `nBD`; weekday rules (`WD#n`, `nWD`) need no calendar.
 The builder's default today is `WeekendSkipper`, which silently treats every
 weekday as a business day; for operations that is a trap. Weekend-only is
@@ -466,7 +477,8 @@ Each step leaves the workspace building and tested.
 1. **Build the document** in tkone-schedule, beside the existing syntax:
    `Schedule` (anchored rules with ids, merged into slots, exclusions as
    data, until, count), `ScheduleDoc`, `CalendarResolver` (implemented by
-   tkone-calendar's `Calendars`) — done; then `Selector`, `uncovered`.
+   tkone-calendar's `Calendars`), `Selector` with `next_after` and
+   `uncovered`, `ScheduleDoc::selector` — done.
 2. **Move users over**: tkone-calendar, tkone-trigger, Python, example-app, docs.
 3. **Remove** bounds, `!` and `|` from the grammar, ABNF, IETF draft and spec docs.
 4. **Tempo on paper**: ERD, schema and sequence diagrams.

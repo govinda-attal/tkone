@@ -42,7 +42,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
 use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{rule_uses_business_days, ExcludeMatch, Schedule};
+use super::{rule_uses_business_days, ExcludeMatch, Schedule, ScheduleBuilder, Selector, SelectorBuilder};
 use crate::biz_day::{BizDayProcessor, Direction, WeekendSkipper};
 use crate::bounds::just_before;
 use crate::utils::resolve_local;
@@ -237,36 +237,40 @@ pub trait CalendarResolver {
 pub enum BusinessDays<B> {
     /// A calendar from the [`CalendarResolver`].
     Calendar(B),
-    /// [`WEEKENDS`], or no calendar.
+    /// [`WEEKENDS`].
     Weekends(WeekendSkipper),
+    /// No calendar: nothing in the document uses business days. An instance
+    /// document read against it may not either.
+    NoCalendar(WeekendSkipper),
 }
+
 
 impl<B: BizDayProcessor> BizDayProcessor for BusinessDays<B> {
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool> {
         match self {
             BusinessDays::Calendar(bdp) => bdp.is_biz_day(dtm),
-            BusinessDays::Weekends(bdp) => bdp.is_biz_day(dtm),
+            BusinessDays::Weekends(bdp) | BusinessDays::NoCalendar(bdp) => bdp.is_biz_day(dtm),
         }
     }
 
     fn find_biz_day(&self, dtm: &NaiveDateTime, direction: Direction) -> Result<NaiveDateTime> {
         match self {
             BusinessDays::Calendar(bdp) => bdp.find_biz_day(dtm, direction),
-            BusinessDays::Weekends(bdp) => bdp.find_biz_day(dtm, direction),
+            BusinessDays::Weekends(bdp) | BusinessDays::NoCalendar(bdp) => bdp.find_biz_day(dtm, direction),
         }
     }
 
     fn add(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime> {
         match self {
             BusinessDays::Calendar(bdp) => bdp.add(dtm, num),
-            BusinessDays::Weekends(bdp) => bdp.add(dtm, num),
+            BusinessDays::Weekends(bdp) | BusinessDays::NoCalendar(bdp) => bdp.add(dtm, num),
         }
     }
 
     fn sub(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime> {
         match self {
             BusinessDays::Calendar(bdp) => bdp.sub(dtm, num),
-            BusinessDays::Weekends(bdp) => bdp.sub(dtm, num),
+            BusinessDays::Weekends(bdp) | BusinessDays::NoCalendar(bdp) => bdp.sub(dtm, num),
         }
     }
 
@@ -274,13 +278,14 @@ impl<B: BizDayProcessor> BizDayProcessor for BusinessDays<B> {
         match self {
             BusinessDays::Calendar(bdp) => bdp.code(),
             BusinessDays::Weekends(_) => Some(WEEKENDS.into()),
+            BusinessDays::NoCalendar(_) => None,
         }
     }
 
     fn time_zone(&self) -> Option<Tz> {
         match self {
             BusinessDays::Calendar(bdp) => bdp.time_zone(),
-            BusinessDays::Weekends(_) => None,
+            BusinessDays::Weekends(_) | BusinessDays::NoCalendar(_) => None,
         }
     }
 }
@@ -292,13 +297,11 @@ impl ScheduleDoc {
     ///
     /// [`Error::InvalidSchedule`] for a document that is not version 1, has no
     /// or an unknown `time_zone`, uses business days without a `calendar`,
-    /// or fails the [`ScheduleBuilder`](super::ScheduleBuilder)'s checks; the
+    /// or fails the [`ScheduleBuilder`]'s checks; the
     /// resolver's error for an unknown calendar.
     pub fn schedule<R: CalendarResolver>(&self, calendars: &R) -> Result<Schedule<BusinessDays<R::Bdp>>> {
         let invalid = |what: String| Error::InvalidSchedule(what);
-        if self.version != VERSION {
-            return Err(invalid(format!("version {} is not supported; this reads version {VERSION}", self.version)));
-        }
+        self.check_version()?;
         let zone: Tz = match &self.time_zone {
             None => return Err(invalid("`time_zone` is required".into())),
             Some(name) => name.parse().map_err(|_| invalid(format!("`time_zone`: {name} is not an IANA time zone")))?,
@@ -307,18 +310,74 @@ impl ScheduleDoc {
             Some(WEEKENDS) => BusinessDays::Weekends(WeekendSkipper::new()),
             Some(code) => BusinessDays::Calendar(calendars.resolve(code)?),
             None => {
-                self.needs_no_calendar()?;
-                BusinessDays::Weekends(WeekendSkipper::new())
+                self.needs_no_calendar("the document")?;
+                BusinessDays::NoCalendar(WeekendSkipper::new())
             }
         };
         let policy = self.options.dst_policy.unwrap_or_default();
-        let mut builder = Schedule::builder(self.start.first(&zone, policy)?, bdp)
-            .exclude_match(self.exclude.by)
+        let builder = Schedule::builder(self.start.first(&zone, policy)?, bdp)
             .dst_policy(policy)
             .interval_mode(self.options.interval_mode.unwrap_or_default())
             .time_anchor(self.options.time_anchor.unwrap_or_default());
+        self.fill(builder, &zone, policy)?.build()
+    }
+
+    /// Read this document as an instance's selection from `definition`,
+    /// a schedule built from the definition's document.
+    ///
+    /// An instance document has the definition's time zone, business days
+    /// and options; it may not set `time_zone`, `calendar` or `options`. Its
+    /// `count` becomes `until` (see [`SelectorBuilder::build`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidSchedule`] for a document that is not version 1, sets
+    /// `time_zone`, `calendar` or `options`, uses business days when the
+    /// definition has no calendar, or fails the builder's checks.
+    pub fn selector<B: BizDayProcessor>(
+        &self,
+        definition: &Schedule<BusinessDays<B>>,
+    ) -> Result<Selector<BusinessDays<B>>> {
+        self.check_version()?;
+        let own = [
+            ("time_zone", self.time_zone.is_some()),
+            ("calendar", self.calendar.is_some()),
+            ("options", !self.options.is_empty()),
+        ];
+        if let Some((field, _)) = own.iter().find(|(_, set)| *set) {
+            return Err(Error::InvalidSchedule(format!(
+                "an instance document may not set `{field}`; it uses its definition's"
+            )));
+        }
+        if matches!(definition.bdp, BusinessDays::NoCalendar(_)) {
+            self.needs_no_calendar("its definition")?;
+        }
+        let zone = definition.zone();
+        let policy = definition.options.0;
+        let builder = definition.selector(self.start.first(&zone, policy)?);
+        SelectorBuilder(self.fill(builder.0, &zone, policy)?).build()
+    }
+
+    fn check_version(&self) -> Result<()> {
+        if self.version != VERSION {
+            return Err(Error::InvalidSchedule(format!(
+                "version {} is not supported; this reads version {VERSION}",
+                self.version
+            )));
+        }
+        Ok(())
+    }
+
+    /// Add the window, rules and exclusions to `builder`.
+    fn fill<B: BizDayProcessor>(
+        &self,
+        mut builder: ScheduleBuilder<B>,
+        zone: &Tz,
+        policy: DstPolicy,
+    ) -> Result<ScheduleBuilder<B>> {
+        builder = builder.exclude_match(self.exclude.by);
         if let Some(until) = self.until {
-            builder = builder.until(until.last(&zone, policy)?);
+            builder = builder.until(until.last(zone, policy)?);
         }
         if let Some(count) = self.count {
             builder = builder.count(count);
@@ -335,15 +394,16 @@ impl ScheduleDoc {
         for spec in &self.exclude.rules {
             builder = builder.exclude_rule(spec);
         }
-        builder.build()
+        Ok(builder)
     }
 
     /// Fails when a rule or exclusion uses business days: without a
     /// `calendar`, they would silently be weekdays.
-    fn needs_no_calendar(&self) -> Result<()> {
+    /// `whose` is the document that would name the calendar.
+    fn needs_no_calendar(&self, whose: &str) -> Result<()> {
         let uses = |what: &str, spec: &str| {
             Error::InvalidSchedule(format!(
-                "{what} `{spec}` uses business days, but the document has no `calendar` \
+                "{what} `{spec}` uses business days, but {whose} has no `calendar` \
                  (write `calendar: {WEEKENDS}` for Saturday and Sunday off)"
             ))
         };

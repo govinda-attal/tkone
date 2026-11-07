@@ -593,6 +593,28 @@ impl Spec {
             || self.weeks.as_ref().is_some_and(|w| !first_only(&w.positions))
     }
 
+    /// Whether the spec asks the business-day processor anything: an
+    /// adjustment other than `~NA` and the weekday ones (`~W`, …), `BD#n`, or
+    /// `nBD`. Weekday rules use [`crate::biz_day::WeekendSkipper`] instead.
+    pub(crate) fn uses_business_days(&self) -> bool {
+        let adjusts = !matches!(self.biz_day_adj, None | Some(BizDayAdjustment::NA | BizDayAdjustment::Weekday(_)));
+        adjusts
+            || matches!(self.days, DayCycle::NthBizDay { calendar: BizDayCalendar::BizDay, .. })
+            || matches!(self.days, DayCycle::NextNth(_, NextNthDayOption::BizDay))
+    }
+
+    /// How many business days later than its actual date the adjustment can
+    /// move a date: `n` for `~nN`, 1 for the others that can move it later
+    /// (`~NB`, `~MF`, …), 0 when it never does (`~PB`, `~nP`, none).
+    pub(crate) fn forward_reach(&self) -> u32 {
+        match &self.biz_day_adj {
+            None | Some(BizDayAdjustment::NA | BizDayAdjustment::SkipNonBizDay | BizDayAdjustment::Prev(_)) => 0,
+            Some(BizDayAdjustment::Weekday(Direction::Prev) | BizDayAdjustment::BizDay(Direction::Prev)) => 0,
+            Some(BizDayAdjustment::Next(n)) => *n,
+            Some(_) => 1,
+        }
+    }
+
     /// Describes the spec in plain English, to check it reads as intended
     /// before it is scheduled.
     ///

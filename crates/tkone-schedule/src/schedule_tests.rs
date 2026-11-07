@@ -256,6 +256,10 @@ fn slots_after_agrees_across_holidays() {
         "YY-MM-L~PBT18:00:00",
         "YY-MM-[TUE,THU]/2W~NBT18:00:00",
         "YY-MM-DD~NBT1H:30:00",
+        // Moved two and three business days later: further than ~NB.
+        "YY-MM-DD~2NT[09,18]:00:00",
+        "YY-MM-[MON,FRI]~3NT09:00:00",
+        "YY-MM-DD~MFT12:00:00",
     ] {
         let schedule = Schedule::builder(start, Holidays::london()).rule(rule).build().unwrap();
         agrees(&schedule, 30);
@@ -275,6 +279,14 @@ fn slots_after_agrees_across_dst() {
     for start in [at(2026, 3, 25, 0, 0), at(2026, 10, 21, 0, 0)] {
         let schedule = Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DDT[00,01,02,03]:30:00").build().unwrap();
         agrees(&schedule, 8);
+        // Elapsed steps: each day's times count from its first, not from
+        // wherever iteration starts.
+        let elapsed = Schedule::builder(start, WeekendSkipper::new())
+            .rule("YY-MM-DDT7H:15:00")
+            .interval_mode(crate::IntervalMode::Elapsed)
+            .build()
+            .unwrap();
+        agrees(&elapsed, 8);
     }
 }
 

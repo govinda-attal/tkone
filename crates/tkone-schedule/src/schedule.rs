@@ -96,6 +96,8 @@ pub struct Schedule<B: BizDayProcessor> {
     exclude_rules: Vec<String>,
     exclude_match: ExcludeMatch,
     options: (DstPolicy, IntervalMode, TimeAnchor),
+    /// The most business days any rule's adjustment moves a date later.
+    reach: u32,
 }
 
 /// Builds a [`Schedule`]; see [`Schedule::builder`].
@@ -119,6 +121,7 @@ impl<B: BizDayProcessor> Schedule<B> {
             exclude_rules: Vec::new(),
             exclude_match: ExcludeMatch::default(),
             options: Default::default(),
+            reach: 0,
         })
     }
 
@@ -186,13 +189,18 @@ impl<B: BizDayProcessor> Schedule<B> {
         })
     }
 
-    /// Where rule iterators start for `slots_after(after)`: before the
-    /// previous business day. An adjustment moves a date at most to the next
-    /// business day, so an occurrence whose actual date is earlier than that
-    /// cannot be observed after `after`.
+    /// Where rule iterators start for `slots_after(after)`: just before a
+    /// midnight early enough that no occurrence observed after `after` is
+    /// missed. An adjustment moves a date at most `reach` business days
+    /// later, so an earlier actual date cannot be observed after `after`.
+    /// Starting at a midnight, never mid-day, keeps `Elapsed` steps counted
+    /// from each day's first time rather than from `after`.
     fn lookback(&self, after: &DateTime<Tz>) -> Result<DateTime<Tz>> {
-        let previous = self.bdp.sub(&after.naive_local(), 1)?.date();
-        let midnight = resolve_local(&self.zone(), previous.and_time(NaiveTime::MIN), DstPolicy::Adjust)?;
+        let date = match self.reach {
+            0 => after.date_naive(),
+            reach => self.bdp.sub(&after.naive_local(), reach)?.date(),
+        };
+        let midnight = resolve_local(&self.zone(), date.and_time(NaiveTime::MIN), DstPolicy::Adjust)?;
         Ok(just_before(&midnight))
     }
 }
@@ -291,6 +299,7 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
             bare(&rule.spec).map_err(|why| invalid(format!("{name} (`{}`) {why}", rule.spec)))?;
             SpecIterator::anchored(&rule.spec, schedule.bdp.clone(), &schedule.start, &schedule.start, schedule.options)
                 .map_err(|e| invalid(format!("{name} (`{}`): {e}", rule.spec)))?;
+            schedule.reach = schedule.reach.max(date_spec(&rule.spec)?.forward_reach());
         }
         for spec in &schedule.exclude_rules {
             bare(spec).map_err(|why| invalid(format!("exclusion `{spec}` {why}")))?;
@@ -299,6 +308,16 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
         }
         Ok(schedule)
     }
+}
+
+/// The date part of a datetime rule.
+fn date_spec(rule: &str) -> Result<crate::date::Spec> {
+    rule.parse::<crate::datetime::Spec>()?.date_spec.parse()
+}
+
+/// Whether `rule`, a datetime rule, asks the business-day processor anything.
+pub(crate) fn rule_uses_business_days(rule: &str) -> Result<bool> {
+    Ok(date_spec(rule)?.uses_business_days())
 }
 
 /// Fails when `spec` has more than a rule written in it.

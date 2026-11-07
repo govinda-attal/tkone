@@ -112,6 +112,18 @@ pub(super) fn adjust<BDP: BizDayProcessor>(
             }
             ws.find_biz_day(&observed, dir.clone())?
         }
+        BizDayAdjustment::ToWeekday(day, dir) => {
+            let ahead = (i64::from(day.num_days_from_monday()) - i64::from(observed.weekday().num_days_from_monday())).rem_euclid(7);
+            let days = match dir {
+                _ if ahead == 0 => return Ok(raw),
+                Direction::Next => ahead,
+                Direction::Prev => ahead - 7,
+                // 7 is odd: never a tie.
+                Direction::Nearest if ahead <= 3 => ahead,
+                Direction::Nearest => ahead - 7,
+            };
+            observed + chrono::Duration::days(days)
+        }
         BizDayAdjustment::BizDay(dir) => {
             if bdp.is_biz_day(&observed)? {
                 return Ok(raw);

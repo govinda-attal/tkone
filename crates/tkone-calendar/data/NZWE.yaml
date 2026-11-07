@@ -24,7 +24,7 @@ holidays:
   - name: Day after New Year's Day
     rule: "YY-01-02"
   - name: Wellington Anniversary Day
-    rule: "YY-01-MON ! YY-01-[01-18,26-31]"
+    rule: "YY-01-22~MON"
     note: The Monday nearest 22 January.
   - name: Waitangi Day
     rule: "YY-02-06"

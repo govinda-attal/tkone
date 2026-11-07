@@ -285,6 +285,11 @@ fn adjustment(adj: &BizDayAdjustment) -> String {
             .to_string(),
         BizDayAdjustment::Prev(n) => format!(", moved {} earlier", count(*n, "business day")),
         BizDayAdjustment::Next(n) => format!(", moved {} later", count(*n, "business day")),
+        BizDayAdjustment::ToWeekday(day, d) => match d {
+            Direction::Nearest => format!(", moved to the nearest {}", weekday(*day)),
+            Direction::Next => format!(", moved to the next {} when it is not one", weekday(*day)),
+            Direction::Prev => format!(", moved to the previous {} when it is not one", weekday(*day)),
+        },
     }
 }
 

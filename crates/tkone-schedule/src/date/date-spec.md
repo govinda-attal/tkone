@@ -91,10 +91,14 @@ holiday data and works for any year.
 | `~SB` | **Skip**: if not a biz day, **drop** the date — no result, nothing moved (configured processor) |
 | `~nN` | **Unconditional**: add *n* biz days (e.g. `~2N`) |
 | `~nP` | **Unconditional**: subtract *n* biz days (e.g. `~3P`) |
+| `~DAY` | If result is not that day of the week, move to the **nearest** one, at most 3 days away (e.g. `YY-01-29~MON`: the Monday nearest 29 January) |
+| `~NDAY` | If result is not that day of the week, move to the **next** one (e.g. `YY-05-18~NMON`: the Monday on or after 18 May) |
+| `~PDAY` | If result is not that day of the week, move to the **previous** one (e.g. `YY-05-24~PMON`: the Monday on or before 24 May) |
 
 `~NW`/`~PW`/`~W` always use the built-in WeekendSkipper (Sat/Sun only).  
 `~NB`/`~PB`/`~B`/`~MF`/`~MP`/`~SB` use the configured `BizDayProcessor` and can account for custom holidays.  
-`~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.
+`~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.  
+`~DAY`/`~NDAY`/`~PDAY` (`DAY` is `MON` … `SUN`) count calendar days and ignore business days: they state holidays such as "the Monday nearest 29 January".
 
 ### Ways to use `~SB`
 

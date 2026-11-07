@@ -112,7 +112,7 @@
       },
       {
         "name": "Victoria Day",
-        "rule": "YY-05-MON ! YY-05-[01-17,25-31]",
+        "rule": "YY-05-24~PMON",
         "note": "The Monday before 25 May."
       },
       {
@@ -388,7 +388,7 @@
       },
       {
         "name": "Auckland Anniversary Day",
-        "rule": "YY-01-MON | YY-02-01 ! YY-01-[01-25] | YY-02-[TUE-SUN]",
+        "rule": "YY-01-29~MON",
         "note": "The Monday nearest 29 January, which can be 1 February."
       },
       {
@@ -515,7 +515,7 @@
       },
       {
         "name": "Wellington Anniversary Day",
-        "rule": "YY-01-MON ! YY-01-[01-18,26-31]",
+        "rule": "YY-01-22~MON",
         "note": "The Monday nearest 22 January."
       },
       {

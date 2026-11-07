@@ -24,7 +24,7 @@ holidays:
   - name: Day after New Year's Day
     rule: "YY-01-02"
   - name: Auckland Anniversary Day
-    rule: "YY-01-MON | YY-02-01 ! YY-01-[01-25] | YY-02-[TUE-SUN]"
+    rule: "YY-01-29~MON"
     note: The Monday nearest 29 January, which can be 1 February.
   - name: Waitangi Day
     rule: "YY-02-06"

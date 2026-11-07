@@ -248,6 +248,9 @@ pub enum NextNthDayOption {
 /// | `~MP` | `ModifiedPreceding` | non-biz day | previous business day, or next if that is in the previous month |
 /// | `~3P` | `Prev(3)` | always | 3 business days earlier |
 /// | `~2N` | `Next(2)` | always | 2 business days later |
+/// | `~MON` | `ToWeekday(Mon, Nearest)` | not a Monday | the nearest Monday, at most 3 days away |
+/// | `~NMON` | `ToWeekday(Mon, Next)` | not a Monday | the next Monday |
+/// | `~PMON` | `ToWeekday(Mon, Prev)` | not a Monday | the previous Monday |
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum BizDayAdjustment {
     /// No adjustment (`~NA`). Default.
@@ -272,6 +275,11 @@ pub enum BizDayAdjustment {
     Prev(u32),
     /// Unconditionally advance by *n* business days (`~nN`).
     Next(u32),
+    /// Move to a day of the week, unless the date is already one: the
+    /// nearest (`~MON`), the next (`~NMON`) or the previous (`~PMON`).
+    /// `YY-01-29~MON` is "the Monday nearest 29 January"; `YY-05-24~PMON` is
+    /// "the Monday on or before 24 May". Ignores business days.
+    ToWeekday(Weekday, Direction),
 }
 
 /// A fully parsed date recurrence specification.
@@ -541,6 +549,14 @@ impl fmt::Display for BizDayAdjustment {
             BizDayAdjustment::ModifiedPreceding => write!(f, "~MP"),
             BizDayAdjustment::Next(n) => write!(f, "~{}N", n),
             BizDayAdjustment::Prev(n) => write!(f, "~{}P", n),
+            BizDayAdjustment::ToWeekday(day, dir) => {
+                let dir = match dir {
+                    Direction::Next => "N",
+                    Direction::Prev => "P",
+                    Direction::Nearest => "",
+                };
+                write!(f, "~{dir}{}", WeekdayStartingMonday(*day))
+            }
         }
     }
 }
@@ -594,23 +610,42 @@ impl Spec {
     }
 
     /// Whether the spec asks the business-day processor anything: an
-    /// adjustment other than `~NA` and the weekday ones (`~W`, …), `BD#n`, or
-    /// `nBD`. Weekday rules use [`crate::biz_day::WeekendSkipper`] instead.
-    #[cfg(feature = "serde")]
-    pub(crate) fn uses_business_days(&self) -> bool {
-        let adjusts = !matches!(self.biz_day_adj, None | Some(BizDayAdjustment::NA | BizDayAdjustment::Weekday(_)));
+    /// adjustment other than `~NA` and the weekday ones (`~W`, `~MON`, …),
+    /// `BD#n`, or `nBD`. Weekday rules use
+    /// [`crate::biz_day::WeekendSkipper`] instead.
+    ///
+    /// ```rust
+    /// use tkone_schedule::date::Spec;
+    ///
+    /// let uses = |spec: &str| spec.parse::<Spec>().unwrap().uses_business_days();
+    /// assert!(uses("YY-MM-L~PB") && uses("YY-MM-BD#3"));
+    /// assert!(!uses("YY-MM-L~PW") && !uses("YY-01-29~MON") && !uses("YY-MM-WD#3"));
+    /// ```
+    pub fn uses_business_days(&self) -> bool {
+        let adjusts = !matches!(
+            self.biz_day_adj,
+            None | Some(BizDayAdjustment::NA | BizDayAdjustment::Weekday(_) | BizDayAdjustment::ToWeekday(..))
+        );
         adjusts
             || matches!(self.days, DayCycle::NthBizDay { calendar: BizDayCalendar::BizDay, .. })
             || matches!(self.days, DayCycle::NextNth(_, NextNthDayOption::BizDay))
     }
 
-    /// How many business days later than its actual date the adjustment can
-    /// move a date: `n` for `~nN`, 1 for the others that can move it later
-    /// (`~NB`, `~MF`, …), 0 when it never does (`~PB`, `~nP`, none).
+    /// How many business days to look back from a date to find every
+    /// actual date the adjustment can move onto it or later: `n` for `~nN`,
+    /// 1 for the business-day ones that can move a date later (`~NB`, `~MF`,
+    /// …), 0 when it never does (`~PB`, `~nP`, none). Weekday ones move by
+    /// calendar days, at most 2 (`~NW`), 3 (`~MON`) or 6 (`~NMON`); a
+    /// business day back is at least a calendar day back, so as many
+    /// business days are enough.
     pub(crate) fn forward_reach(&self) -> u32 {
         match &self.biz_day_adj {
             None | Some(BizDayAdjustment::NA | BizDayAdjustment::SkipNonBizDay | BizDayAdjustment::Prev(_)) => 0,
             Some(BizDayAdjustment::Weekday(Direction::Prev) | BizDayAdjustment::BizDay(Direction::Prev)) => 0,
+            Some(BizDayAdjustment::ToWeekday(_, Direction::Prev)) => 0,
+            Some(BizDayAdjustment::ToWeekday(_, Direction::Nearest)) => 3,
+            Some(BizDayAdjustment::ToWeekday(_, Direction::Next)) => 6,
+            Some(BizDayAdjustment::Weekday(_)) => 2,
             Some(BizDayAdjustment::Next(n)) => *n,
             Some(_) => 1,
         }
@@ -1082,6 +1117,15 @@ fn parse_day_cycle(input: &'_ str) -> Res<'_, DayCycle> {
 fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
     let (input, _) = char('~').parse(input)?;
     alt((
+        // Before `NW`, `~W`, `~SB`, …: `~NWED`, `~WED`, `~SUN`.
+        pair(opt(alt((char('N'), char('P')))), parse_weekday_enum).map(|(dir, day)| {
+            let dir = match dir {
+                Some('N') => Direction::Next,
+                Some(_) => Direction::Prev,
+                None => Direction::Nearest,
+            };
+            BizDayAdjustment::ToWeekday(day.0, dir)
+        }),
         value(BizDayAdjustment::SkipNonBizDay, tag("SB")),
         value(BizDayAdjustment::ModifiedFollowing, tag("MF")),
         value(BizDayAdjustment::ModifiedPreceding, tag("MP")),

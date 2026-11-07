@@ -6,22 +6,15 @@
 //! shows everything to fix.
 
 use std::collections::{BTreeSet, HashSet};
-use std::sync::LazyLock;
 
 use chrono::{Datelike, Days, NaiveDate, Weekday};
 use fallible_iterator::FallibleIterator;
-use regex::Regex;
 use tkone_schedule::biz_day::WeekendSkipper;
 use tkone_schedule::date::NaiveSpecIterator;
 
 use crate::calendar::{Calendar, Holiday, Weekend};
 use crate::model::{CalendarFile, Dates, Substitute};
 use crate::{Error, Result};
-
-/// `~` and the adjustment after it.
-static ADJUSTMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"~\s*([A-Z0-9]*)").unwrap());
-/// A count (`x3`), standing alone as in a schedule's bounds.
-static COUNT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|\s)x\d").unwrap());
 
 /// Most dates a rule may give in one year. A holiday rule gives one or two;
 /// more is a mistake such as `YY-MM-DD`.
@@ -108,24 +101,19 @@ pub(crate) fn build(file: &CalendarFile) -> Result<Calendar> {
         let substitute = h.substitute.unwrap_or(file.substitute);
         match (&h.rule, &h.dates) {
             (Some(rule), None) => {
-                if rule.contains('@') || rule.contains("..") || COUNT.is_match(rule) {
-                    problem(format!("rule `{rule}` has bounds; use `from` and `until`"));
-                    continue;
-                }
-                if rule.contains("[cal=") {
-                    problem(format!("rule `{rule}` names a calendar; a holiday rule uses only weekends"));
-                    continue;
-                }
-                if let Some(adj) = ADJUSTMENT
-                    .captures_iter(rule)
-                    .map(|c| c[1].to_string())
-                    .find(|adj| !matches!(adj.as_str(), "W" | "NW" | "PW"))
-                {
-                    problem(format!(
-                        "rule `{rule}` uses `~{adj}`; a holiday rule may only move off weekends (`~W`, `~NW`, `~PW`), \
-                         since business days come from this calendar"
-                    ));
-                    continue;
+                match rule.parse::<tkone_schedule::date::Spec>() {
+                    Err(e) => {
+                        problem(format!("rule `{rule}`: {e}"));
+                        continue;
+                    }
+                    Ok(spec) if spec.uses_business_days() => {
+                        problem(format!(
+                            "rule `{rule}` uses business days; a holiday rule may only use weekdays and weekends \
+                             (`~W`, `~NW`, `~PW`, `~MON`, `WD#n`), since business days come from this calendar"
+                        ));
+                        continue;
+                    }
+                    Ok(_) => {}
                 }
                 if !h.except.is_empty() && h.source.is_none() {
                     problem("`except` needs a `source`".into());

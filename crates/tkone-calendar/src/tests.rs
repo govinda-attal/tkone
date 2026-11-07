@@ -88,7 +88,7 @@ fn test_rules_dates_and_exceptions() {
         r#"{"name": "May Day", "rule": "YY-05-MON#1", "except": ["2020-05-04"], "source": "moved"},
            {"name": "May Day", "dates": ["2020-05-08"], "source": "moved"},
            {"name": "Juneteenth", "rule": "YY-06-19~NW", "from": 2022, "until": 2023},
-           {"name": "Victoria Day", "rule": "YY-05-MON ! YY-05-[01-17,25-31]"}"#,
+           {"name": "Victoria Day", "rule": "YY-05-24~PMON"}"#,
     );
     let cal = Calendar::from_file(&f).unwrap();
     assert_eq!(days_off(&cal, 2020), ["05-08 Fri May Day", "05-18 Mon Victoria Day"]);
@@ -108,9 +108,10 @@ fn test_checks() {
         p[0].clone()
     };
     assert!(one(r#"{"name": "A", "rule": "YY-01-01", "dates": ["2021-01-01"], "source": "s"}"#).contains("either"));
-    assert!(one(r#"{"name": "A", "rule": "YY-01-01~NB"}"#).contains("`~NB`"));
-    assert!(one(r#"{"name": "A", "rule": "YY-01-01 @2021-01-01"}"#).contains("bounds"));
-    assert!(one(r#"{"name": "A", "rule": "YY-01-01 [cal=GBLO]"}"#).contains("names a calendar"));
+    assert!(one(r#"{"name": "A", "rule": "YY-01-01~NB"}"#).contains("uses business days"));
+    assert!(one(r#"{"name": "A", "rule": "YY-01-BD#1"}"#).contains("uses business days"));
+    assert!(one(r#"{"name": "A", "rule": "YY-01-01 @2021-01-01"}"#).contains("invalid date spec"));
+    assert!(one(r#"{"name": "A", "rule": "YY-01-01 | YY-12-31"}"#).contains("invalid date spec"));
     assert!(one(r#"{"name": "A", "rule": "YY-MM-DD"}"#).contains("more than"));
     assert!(one(r#"{"name": "A", "rule": "YY-02-30"}"#).contains("YY-02-30"));
     assert!(one(r#"{"name": "A", "rule": "YY-01-01", "except": ["2021-01-02"], "source": "s"}"#).contains("not a date the rule gives"));
@@ -130,7 +131,7 @@ fn test_checks() {
     .iter()
     .any(|p| p.contains("both excepted and listed")));
     // Two entries giving the same date.
-    assert!(check(r#"{"name": "A", "rule": "YY-01-01"}, {"name": "A", "rule": "YY-MM-01 ! YY-[02-12]-01"}"#)
+    assert!(check(r#"{"name": "A", "rule": "YY-01-01"}, {"name": "A", "rule": "YY-01-01~NW"}"#)
         .iter()
         .any(|p| p.contains("2021-01-01 appears twice")));
 

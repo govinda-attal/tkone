@@ -1789,3 +1789,55 @@ fn test_easter_parsing() {
         assert!(bad.parse::<Spec>().is_err(), "{bad} should be rejected");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Moving to a day of the week: `~MON`, `~NMON`, `~PMON`
+// ---------------------------------------------------------------------------
+
+/// The observed dates of `spec` from 2020, one a year.
+fn yearly(spec: &str, n: usize) -> Vec<String> {
+    let start = chrono::Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), start)
+        .build()
+        .unwrap()
+        .take(n)
+        .map(|o| Ok(o.observed().format("%a %Y-%m-%d").to_string()))
+        .collect()
+        .unwrap()
+}
+
+#[test]
+fn test_to_weekday() {
+    // Auckland Anniversary: the Monday nearest 29 January.
+    assert_eq!(
+        yearly("YY-01-29~MON", 7),
+        ["Mon 2020-01-27", "Mon 2021-02-01", "Mon 2022-01-31", "Mon 2023-01-30", "Mon 2024-01-29", "Mon 2025-01-27", "Mon 2026-01-26"]
+    );
+    // Victoria Day: the Monday on or before 24 May.
+    assert_eq!(yearly("YY-05-24~PMON", 4), ["Mon 2020-05-18", "Mon 2021-05-24", "Mon 2022-05-23", "Mon 2023-05-22"]);
+    // The Monday on or after 18 May: the same days.
+    assert_eq!(yearly("YY-05-18~NMON", 4), yearly("YY-05-24~PMON", 4));
+    // The actual date is kept: Saturday 29 January 2022 moved to Monday 31.
+    let start = chrono::Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap();
+    let first = SpecIteratorBuilder::new_after("YY-01-29~MON", WeekendSkipper::new(), start).build().unwrap().next().unwrap().unwrap();
+    assert_eq!(first.actual().date_naive().to_string(), "2022-01-29");
+    assert!(matches!(first, Occurrence::AdjustedLater(..)));
+}
+
+#[test]
+fn test_to_weekday_parsing() {
+    use crate::date::{BizDayAdjustment, Spec};
+    use crate::biz_day::Direction;
+    for spec in ["YY-01-29~MON", "YY-05-24~PMON", "YY-05-18~NMON", "YY-MM-DD~NWED", "YY-MM-DD~SUN", "YY-MM-DD~PSAT"] {
+        assert_eq!(spec.parse::<Spec>().unwrap().to_string(), spec);
+    }
+    // Weekday names are read before `~NW`, `~W` and `~SB`.
+    assert_eq!("YY-MM-DD~NWED".parse::<Spec>().unwrap().biz_day_adj, Some(BizDayAdjustment::ToWeekday(chrono::Weekday::Wed, Direction::Next)));
+    assert_eq!("YY-MM-DD~NW".parse::<Spec>().unwrap().biz_day_adj, Some(BizDayAdjustment::Weekday(Direction::Next)));
+    assert_eq!("YY-MM-DD~SB".parse::<Spec>().unwrap().biz_day_adj, Some(BizDayAdjustment::SkipNonBizDay));
+    assert!("YY-MM-DD~XMON".parse::<Spec>().is_err());
+    assert_eq!(
+        "YY-01-29~MON".parse::<Spec>().unwrap().describe(),
+        "on the 29th of January, moved to the nearest Monday"
+    );
+}

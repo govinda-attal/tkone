@@ -46,10 +46,11 @@ holidays:
 ```
 
 **Rules** are tkone date specs giving one date a year (`YY-12-25`,
-`YY-11-THU#4`, `YY-MM-EAS-2`, `YY-05-MON ! YY-05-[01-17,25-31]` for "the
-Monday from 18 to 24 May"). They may move off weekends with `~W`, `~NW` or
-`~PW`, but not use business days (`~NB`): business days are what the calendar
-defines. They have no bounds (`@`, `..`, `x`); use `from` and `until`.
+`YY-11-THU#4`, `YY-MM-EAS-2`, `YY-05-24~PMON` for "the Monday on or before
+24 May", `YY-01-29~MON` for "the Monday nearest 29 January"). They may move
+off weekends (`~W`, `~NW`, `~PW`) or to a day of the week (`~MON`, `~NMON`,
+`~PMON`), but not use business days (`~NB`, `BD#n`): business days are what
+the calendar defines. The years a rule applies to are `from` and `until`.
 
 **Substitute days.** A rule's holiday that falls on a weekend moves by the
 calendar's `substitute`, or the holiday's own:

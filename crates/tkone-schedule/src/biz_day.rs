@@ -99,9 +99,8 @@ pub trait BizDayProcessor: Debug + Clone + Send + Sync + 'static {
     fn sub(&self, dtm: &NaiveDateTime, num: u32) -> Result<NaiveDateTime>;
 
     /// The code of the holiday calendar this is (`GBLO`, or `GBLO+USNY` for a
-    /// joint one), if it is one. A spec that names a calendar (`[cal=GBLO]`)
-    /// only builds with a processor whose code names the same calendars.
-    /// `None` by default.
+    /// joint one), if it is one. A schedule document's `calendar` and a
+    /// selector's definition are checked against it. `None` by default.
     fn code(&self) -> Option<String> {
         None
     }

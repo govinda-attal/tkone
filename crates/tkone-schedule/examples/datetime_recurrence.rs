@@ -1,7 +1,8 @@
 //! Combined date + time recurrence with business-day adjustment.
 //!
 //! Schedules the last business day of every month at 11:00 London time,
-//! using the `~W` (next weekday) adjustment.
+//! using the `~PB` (previous business day) adjustment; business days are
+//! weekdays here, with `WeekendSkipper`.
 //!
 //! Run with:
 //!   cargo run -p tkone-schedule --example datetime_recurrence
@@ -16,7 +17,7 @@ fn main() {
     let now = Utc::now().with_timezone(&London).trunc_subsecs(0);
 
     // Step 1: find the first occurrence strictly after now.
-    let start = *SpecIteratorBuilder::new_after("YY-1M-L~WT11:00:00", bdp.clone(), now)
+    let start = *SpecIteratorBuilder::new_after("YY-1M-L~PBT11:00:00", bdp.clone(), now)
         .build()
         .unwrap()
         .next()
@@ -25,7 +26,7 @@ fn main() {
         .observed();
 
     // Step 2: iterate from that start datetime (inclusive).
-    let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, start)
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PBT11:00:00", bdp, start)
         .build()
         .unwrap();
 

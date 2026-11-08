@@ -310,8 +310,10 @@ instants in the iterator's timezone.
   instant.
 - **Overlaps** (fall-back): the repeated hour is visited once, at the earlier
   offset.
-- **No duplicates**: results strictly increase; a later result that lands on
-  the same instant is dropped.
+- **Actual times strictly increase**: a later result whose actual time
+  lands on an instant already given is dropped. Observed times can repeat:
+  `YY-MM-DD~NBT09:00:00` gives Monday 09:00 for Saturday, Sunday and
+  Monday. A [`schedule::Schedule`] merges those into one slot.
 
 [`DstPolicy::Strict`] turns gaps and overlaps into errors instead. On the
 time and datetime iterators, [`IntervalMode::Elapsed`] measures steps in

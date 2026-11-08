@@ -56,6 +56,32 @@ use tkone_schedule::{Error, Occurrence};
 use tokio::task::JoinHandle;
 pub use tokio_util::sync::CancellationToken;
 pub use inventory;
+#[doc(hidden)]
+pub use tokio as __tokio;
+
+/// Wait for Ctrl-C or, on Unix, SIGTERM: the signals that should stop a
+/// service. Used by `#[schedule]`'s `run_until_signal`.
+pub async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
 
 mod business;
 pub use business::{BusinessSchedule, CatchUp, FileStore, MemoryStore, StateStore};

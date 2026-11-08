@@ -45,7 +45,7 @@ impl MySchedule {
 }
 ```
 
-`#[schedule]` generates three associated functions on `MySchedule`:
+`#[schedule]` generates four associated functions on `MySchedule`:
 
 ```text
 fn  shutdown_token() -> CancellationToken
@@ -67,8 +67,8 @@ The spec, `start_spec` and `tz` are checked **while compiling**: a typo or
 a date spec (`"YY-MM-DD"`, which this in-memory trigger doesn't support) is a
 compile error on the attribute, not a panic at startup.
 
-A start written in the spec (`@…`) anchors its grid, for example the phase
-of `HH:15M:00`; `start_spec` only decides from when on times are fired.
+Steps are aligned to the clock: `HH:15M:00` fires at :00, :15, :30 and :45
+whenever it starts; `start_spec` only decides from when on times are fired.
 Past occurrences are never fired.
 
 ### 2 — Register jobs

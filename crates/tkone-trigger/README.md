@@ -33,7 +33,7 @@ A time spec repeats within the day and simply starts again from now after
 a restart. A schedule that runs once a day or less, such as "16:30 on New
 York business days" (`YY-MM-DD~SBT16:30:00` on the `USNY` calendar, in
 `America/New_York`), must not lose a run to a restart. [`BusinessSchedule`]
-runs such a `Schedule` on a holiday calendar (any
+runs such a [`Schedule`](tkone_schedule::schedule::Schedule) on a holiday calendar (any
 [`BizDayProcessor`](tkone_schedule::biz_day::BizDayProcessor), such as a
 `tkone-calendar` `Calendar`), records each run it fires in a
 [`StateStore`] ([`MemoryStore`], [`FileStore`], or your own), and resumes

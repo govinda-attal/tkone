@@ -253,7 +253,7 @@ pub enum NextNthDayOption {
 /// | `~PMON` | `ToWeekday(Mon, Prev)` | not a Monday | the previous Monday |
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum BizDayAdjustment {
-    /// No adjustment (`~NA`). Default.
+    /// No adjustment: the spec has no `~`. Default.
     #[default]
     NA,
     /// Roll to a nearby weekday (Mon–Fri) using [`crate::biz_day::WeekendSkipper`].
@@ -783,11 +783,15 @@ fn validate(spec: &Spec) -> core::result::Result<(), String> {
                 EASTER_OFFSETS.end()
             ));
         }
-        DayCycle::NthBizDay { options, .. } => {
+        DayCycle::NthBizDay { calendar, options } => {
+            let days = match calendar {
+                BizDayCalendar::BizDay => "business day",
+                BizDayCalendar::WeekDay => "weekday",
+            };
             for option in options {
                 if let WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)) = option {
                     if !(1..=23).contains(n) {
-                        return Err(format!("business day #{n} is out of range 1-23"));
+                        return Err(format!("{days} #{n} is out of range 1-23"));
                     }
                 }
             }

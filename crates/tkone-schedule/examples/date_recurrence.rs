@@ -1,4 +1,5 @@
-//! Date-only recurrence with business-day adjustment.
+//! Date-only recurrence with business-day adjustment: the last business day
+//! of every month (`~PB`); business days are weekdays here, with `WeekendSkipper`.
 //!
 //! Demonstrates the two-step pattern:
 //! 1. Use `new_after` to find the first occurrence after now.
@@ -18,7 +19,7 @@ fn main() {
     let now = Utc::now().with_timezone(&tz).trunc_subsecs(0);
 
     // Step 1: find the first occurrence strictly after now.
-    let start = *SpecIteratorBuilder::new_after("YY-1M-L", bdp.clone(), now)
+    let start = *SpecIteratorBuilder::new_after("YY-1M-L~PB", bdp.clone(), now)
         .build()
         .unwrap()
         .next()
@@ -27,7 +28,7 @@ fn main() {
         .observed();
 
     // Step 2: iterate from that start date (inclusive).
-    let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PB", bdp, start)
         .build()
         .unwrap();
 

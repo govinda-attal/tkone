@@ -204,6 +204,41 @@ impl<B: BizDayProcessor> Schedule<B> {
         self.slots_in(&just_before(&from), Some(until))
     }
 
+    /// The slots whose rules put them on or after the start, but whose
+    /// adjustment moved them before it: these are dropped, since nothing is
+    /// before the start ([D1] in the design).
+    ///
+    /// For a schedule that starts now, that is right: the slot is in the
+    /// past. For a fixed term, such as a loan drawn on Saturday 31 January
+    /// with month-end repayments moved to the previous business day, it is
+    /// a repayment that silently never happens. A test, or a check before
+    /// a schedule is saved, can require this to be empty.
+    ///
+    /// ```rust
+    /// use chrono::TimeZone;
+    /// use chrono_tz::Europe::London;
+    /// use tkone_schedule::biz_day::WeekendSkipper;
+    /// use tkone_schedule::schedule::Schedule;
+    ///
+    /// let drawn = London.with_ymd_and_hms(2026, 1, 31, 0, 0, 0).unwrap();
+    /// let repayments = Schedule::builder(drawn, WeekendSkipper::new()).rule("YY-MM-L~PBT00:00:00").build()?;
+    /// let lost = repayments.moved_before_start()?;
+    /// assert_eq!(lost[0].at, London.with_ymd_and_hms(2026, 1, 30, 0, 0, 0).unwrap());
+    /// assert_eq!(lost[0].sources[0].actual, drawn);
+    /// # Ok::<(), tkone_schedule::Error>(())
+    /// ```
+    ///
+    /// [D1]: https://github.com/govinda-attal/tkone/blob/main/docs/schedule-document.md#d1-start-is-an-anchor-not-an-occurrence
+    ///
+    /// # Errors
+    ///
+    /// As [`slots`](Self::slots).
+    pub fn moved_before_start(&self) -> Result<Vec<Slot>> {
+        let mut slots = self.slots_in(&just_before(&self.start), Some(self.start))?;
+        slots.before_start = true;
+        slots.collect()
+    }
+
     /// The slots strictly after `after` and no later than `until`.
     fn slots_in(&self, after: &DateTime<Tz>, until: Option<DateTime<Tz>>) -> Result<Slots<B>> {
         let after = after.with_timezone(&self.zone());
@@ -235,6 +270,7 @@ impl<B: BizDayProcessor> Schedule<B> {
             start: self.start,
             until,
             last_actual: self.last_actual(until.as_ref()),
+            before_start: false,
             remaining: self.count,
             done: false,
         })
@@ -400,6 +436,9 @@ pub struct Slots<B: BizDayProcessor> {
     until: Option<DateTime<Tz>>,
     /// See [`Schedule::last_actual`].
     last_actual: Option<NaiveDate>,
+    /// Yield only the slots moved before the start, which are otherwise
+    /// dropped; see [`Schedule::moved_before_start`].
+    before_start: bool,
     remaining: Option<usize>,
     done: bool,
 }
@@ -531,7 +570,17 @@ impl<B: BizDayProcessor> FallibleIterator for Slots<B> {
                     return Ok(None);
                 }
                 if slot.at < self.start {
+                    let excluded = self.exclusions.by == ExcludeMatch::Observed
+                        && self.exclusions.matches(slot.at.date_naive())?;
+                    if self.before_start && !excluded {
+                        return Ok(Some(slot));
+                    }
                     continue;
+                }
+                if self.before_start {
+                    self.done = true;
+                    self.ready.clear();
+                    return Ok(None);
                 }
                 if self.exclusions.by == ExcludeMatch::Observed && self.exclusions.matches(slot.at.date_naive())? {
                     continue;

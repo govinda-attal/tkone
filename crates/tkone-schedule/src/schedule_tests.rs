@@ -379,6 +379,35 @@ fn a_slot_at_the_start_opens_the_first_period() {
     assert_eq!(periods(schedule.periods().unwrap()), ["15 Jan(15 Jan)-15 Feb(15 Feb)", "15 Feb(15 Feb)-15 Mar(15 Mar)"]);
 }
 
+#[test]
+fn slots_moved_before_the_start_are_reported() {
+    let lost = |start: DateTime<Tz>, rule: &str, observed: bool| -> Vec<String> {
+        let mut builder = Schedule::builder(start, WeekendSkipper::new()).rule(rule).until(start + Duration::days(60));
+        if observed {
+            builder = builder.exclude_match(ExcludeMatch::Observed).exclude_date(d(2026, 1, 30));
+        }
+        let schedule = builder.build().unwrap();
+        let lost = schedule.moved_before_start().unwrap();
+        // They are not slots.
+        assert!(schedule.slots().unwrap().all(|s| Ok(s.at >= start)).unwrap());
+        lost.iter().map(|s| format!("{} from {}", s.at.format("%a %d"), s.sources[0].actual.format("%a %d"))).collect()
+    };
+    // Saturday 31 January 2026.
+    let sat = at(2026, 1, 31, 0, 0);
+    assert_eq!(lost(sat, "YY-MM-L~PBT00:00:00", false), ["Fri 30 from Sat 31"]);
+    assert_eq!(lost(sat, "YY-MM-L~MFT00:00:00", false), ["Fri 30 from Sat 31"]);
+    // Sunday 1 February: Saturday is before the start, so only Sunday's.
+    assert_eq!(lost(at(2026, 2, 1, 0, 0), "YY-MM-DD~PBT09:00:00", false), ["Fri 30 from Sun 01"]);
+    // Moved later, or not moved: nothing lost.
+    assert!(lost(sat, "YY-MM-L~NBT00:00:00", false).is_empty());
+    assert!(lost(at(2026, 1, 15, 0, 0), "YY-MM-L~PBT00:00:00", false).is_empty());
+    // Excluded where it landed: dropped anyway, so not reported.
+    assert!(lost(sat, "YY-MM-L~PBT00:00:00", true).is_empty());
+    // Ends, even when every date is excluded.
+    let none = Schedule::builder(sat, WeekendSkipper::new()).rule("YY-MM-DD~3PT00:00:00").exclude_rule("YY-MM-DD").build().unwrap();
+    assert!(none.moved_before_start().unwrap().is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Invalid schedules
 // ---------------------------------------------------------------------------

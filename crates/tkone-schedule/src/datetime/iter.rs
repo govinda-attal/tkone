@@ -593,11 +593,14 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
         let date = occurrence.observed().date();
         let midnight = date.and_time(NaiveTime::MIN);
         // On the `new_after` date only times after the cursor are candidates,
-        // and `Elapsed` steps continue from the cursor itself.
-        let on_cursor_date = !self.first_date_taken && date == self.initial_local.date();
+        // and `Elapsed` steps continue from the cursor itself. Just before an
+        // anchoring start there is no previous occurrence, and every time of
+        // the date is a candidate: those whose actual time is before the
+        // start are dropped below, but one moved there from a later date is
+        // kept, so a schedule can report it (`moved_before_start`).
+        let on_cursor_date = !self.first_date_taken && !self.options.fresh_start && date == self.initial_local.date();
         let (local, prev) = if on_cursor_date {
-            // Just before a written start there is no previous occurrence.
-            (self.initial_local, (!self.options.fresh_start).then(|| self.cursor.clone()))
+            (self.initial_local, Some(self.cursor.clone()))
         } else {
             (midnight - Duration::nanoseconds(1), None)
         };

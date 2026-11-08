@@ -82,6 +82,8 @@ fn every_period_is_accounted_for() {
     let schedule = repayments(calendar.clone());
     let periods: Vec<Period> = schedule.periods().unwrap().collect().unwrap();
 
+    // No repayment was moved before the drawdown and dropped.
+    assert!(schedule.moved_before_start().unwrap().is_empty());
     // The drawdown opens the first period; 120 repayments close them.
     assert_eq!(periods.len(), 120);
     assert_eq!(periods[0].start.at, midnight(2026, 1, 15));
@@ -105,6 +107,21 @@ fn every_period_is_accounted_for() {
 
     // The loan is repaid in full.
     assert_eq!(amortise(&schedule, Accrual::Unadjusted).1, 0);
+}
+
+#[test]
+fn a_drawdown_on_a_month_end_weekend() {
+    // Drawn on Saturday 31 January 2026 and repaid at each month end, moved
+    // to the previous business day: January's falls on Friday the 30th,
+    // before the loan exists, and is dropped. The check catches it.
+    let schedule = Schedule::builder(midnight(2026, 1, 31), calendar())
+        .rule("YY-MM-L~PBT00:00:00")
+        .until(midnight(2036, 1, 31))
+        .build()
+        .unwrap();
+    let lost = schedule.moved_before_start().unwrap();
+    assert_eq!(lost.len(), 1);
+    assert_eq!((lost[0].at, lost[0].sources[0].actual), (midnight(2026, 1, 30), midnight(2026, 1, 31)));
 }
 
 #[test]

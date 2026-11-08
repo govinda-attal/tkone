@@ -307,6 +307,15 @@ count from it) and bounds the stream; it is a slot only if a rule
 produces it. A start written in the spec (`@…`) did this before the grammar
 became rule-only; schedules now do it without the string.
 
+A slot is never before the start, so a rule date on or after the start
+that an adjustment moves before it is dropped. For a schedule that starts
+now that is right: the slot is past. For a fixed term it is a payment that
+never happens: a loan drawn on Saturday 31 January with month-end
+repayments on `~PB` loses January's, moved to Friday the 30th.
+`Schedule::moved_before_start()` lists such slots, so a test or a check
+before saving can require none. Refusing them in `build()` was rejected: a
+schedule started now, on a weekend, would then fail to build.
+
 `start` is required. Lazy selection asks for the slots after any instant
 and must get the same answer from each: a cadence, or a time carried from the
 start (`1H:MM:SS`), would otherwise take its phase from wherever iteration

@@ -294,6 +294,95 @@ fn slots_after_agrees_across_dst() {
 // Checks
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Bounded slots and periods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn slots_between_are_the_slots_there() {
+    let schedule = Schedule::builder(at(2025, 12, 1, 0, 0), Holidays::london())
+        .rule("YY-MM-DD~NBT09:00:00")
+        .rule("YY-MM-L~PBT18:00:00")
+        .build()
+        .unwrap();
+    let all: Vec<Slot> = schedule.slots().unwrap().take(200).collect().unwrap();
+    for (from, to) in [(at(2025, 12, 24, 9, 0), at(2026, 1, 2, 9, 0)), (at(2025, 12, 31, 18, 0), at(2025, 12, 31, 18, 0))] {
+        let want: Vec<&Slot> = all.iter().filter(|s| (from..=to).contains(&s.at)).collect();
+        let got: Vec<Slot> = schedule.slots_between(from..=to).unwrap().collect().unwrap();
+        assert_eq!(got.iter().collect::<Vec<_>>(), want, "{from}..={to}");
+    }
+    // An `until` inside the range still ends it; a count is still kept.
+    let counted = Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new()).rule("YY-MM-01T00:00:00").count(3).build().unwrap();
+    assert_eq!(counted.slots_between(at(2026, 2, 1, 0, 0)..=at(2027, 1, 1, 0, 0)).unwrap().count().unwrap(), 2);
+}
+
+#[test]
+fn slots_between_end_when_every_date_is_excluded() {
+    // No `until`, and nothing to yield: the range still ends the search.
+    for rule in ["YY-MM-DDT09:00:00", "YY-MM-L~PBT09:00:00", "YY-MM-15~2PT09:00:00"] {
+        let schedule = Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new())
+            .rule(rule)
+            .exclude_rule("YY-MM-DD")
+            .build()
+            .unwrap();
+        assert_eq!(schedule.slots_between(at(2026, 1, 1, 0, 0)..=at(2036, 1, 1, 0, 0)).unwrap().count().unwrap(), 0, "{rule}");
+    }
+}
+
+#[test]
+fn until_keeps_slots_moved_back_onto_it() {
+    // 31 January 2026 is a Saturday: its slot is Friday 30th, the until.
+    for rule in ["YY-MM-L~PBT18:00:00", "YY-MM-L~PWT18:00:00", "YY-MM-L~MFT18:00:00", "YY-MM-L~PFRIT18:00:00"] {
+        let schedule = Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new())
+            .rule(rule)
+            .until(at(2026, 1, 30, 18, 0))
+            .build()
+            .unwrap();
+        assert_eq!(first(&schedule, 5), ["Fri 30 Jan 18:00 -"], "{rule}");
+    }
+}
+
+fn periods(periods: crate::schedule::Periods<WeekendSkipper>) -> Vec<String> {
+    let f = |t: DateTime<Tz>| t.format("%d %b").to_string();
+    periods
+        .map(|p| Ok(format!("{}({})-{}({})", f(p.start.at), f(p.start.actual), f(p.end.at), f(p.end.actual))))
+        .collect()
+        .unwrap()
+}
+
+#[test]
+fn periods_run_from_the_start_with_both_times() {
+    let schedule = Schedule::builder(at(2026, 1, 15, 0, 0), WeekendSkipper::new())
+        .rule("YY-MM-L~PBT00:00:00")
+        .count(3)
+        .build()
+        .unwrap();
+    assert_eq!(
+        periods(schedule.periods().unwrap()),
+        ["15 Jan(15 Jan)-30 Jan(31 Jan)", "30 Jan(31 Jan)-27 Feb(28 Feb)", "27 Feb(28 Feb)-31 Mar(31 Mar)"]
+    );
+    // The period ending in the range starts at the slot before it.
+    assert_eq!(
+        periods(schedule.periods_between(at(2026, 2, 1, 0, 0)..=at(2026, 2, 28, 0, 0)).unwrap()),
+        ["30 Jan(31 Jan)-27 Feb(28 Feb)"]
+    );
+}
+
+#[test]
+fn a_slot_at_the_start_opens_the_first_period() {
+    let schedule = Schedule::builder(at(2026, 1, 15, 0, 0), WeekendSkipper::new())
+        .rule("YY-MM-15T00:00:00")
+        .until(at(2026, 3, 15, 0, 0))
+        .build()
+        .unwrap();
+    assert_eq!(first(&schedule, 5).len(), 3);
+    assert_eq!(periods(schedule.periods().unwrap()), ["15 Jan(15 Jan)-15 Feb(15 Feb)", "15 Feb(15 Feb)-15 Mar(15 Mar)"]);
+}
+
+// ---------------------------------------------------------------------------
+// Invalid schedules
+// ---------------------------------------------------------------------------
+
 fn error(builder: crate::schedule::ScheduleBuilder<WeekendSkipper>) -> String {
     match builder.build() {
         Err(Error::InvalidSchedule(why)) => why,

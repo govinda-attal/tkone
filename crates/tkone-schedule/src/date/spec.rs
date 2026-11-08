@@ -651,6 +651,25 @@ impl Spec {
         }
     }
 
+    /// How many business days later than its observed date an actual date
+    /// can be: the mirror of [`forward_reach`](Self::forward_reach). `n` for
+    /// `~nP`, 1 for the business-day ones that can move a date earlier
+    /// (`~PB`, `~MF`, …), 0 when it never does (`~NB`, `~nN`, none). Weekday
+    /// ones move by calendar days, at most 2 (`~PW`), 3 (`~MON`) or 6
+    /// (`~PMON`).
+    pub(crate) fn backward_reach(&self) -> u32 {
+        match &self.biz_day_adj {
+            None | Some(BizDayAdjustment::NA | BizDayAdjustment::SkipNonBizDay | BizDayAdjustment::Next(_)) => 0,
+            Some(BizDayAdjustment::Weekday(Direction::Next) | BizDayAdjustment::BizDay(Direction::Next)) => 0,
+            Some(BizDayAdjustment::ToWeekday(_, Direction::Next)) => 0,
+            Some(BizDayAdjustment::ToWeekday(_, Direction::Nearest)) => 3,
+            Some(BizDayAdjustment::ToWeekday(_, Direction::Prev)) => 6,
+            Some(BizDayAdjustment::Weekday(_)) => 2,
+            Some(BizDayAdjustment::Prev(n)) => *n,
+            Some(_) => 1,
+        }
+    }
+
     /// Describes the spec in plain English, to check it reads as intended
     /// before it is scheduled.
     ///

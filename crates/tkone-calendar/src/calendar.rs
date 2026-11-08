@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use chrono::{Datelike, NaiveDate, Weekday};
@@ -165,6 +166,90 @@ impl Calendar {
             zone.map(str::to_string),
             weekend,
             (valid_from, valid_until, confirmed_until.max(valid_from).min(valid_until)),
+            holidays,
+        ))
+    }
+
+    /// A calendar written out in full, for tests: the dates in `valid` with
+    /// `weekend` and `days_off` as the only days that are not business days.
+    /// Every date is confirmed.
+    ///
+    /// The built-in calendars change as holidays are announced and data is
+    /// corrected, so a test that pins exact dates can break on an upgrade. A
+    /// fixed calendar never changes; [`holidays_between`](Self::holidays_between)
+    /// lists a built-in calendar's days off to copy into one.
+    ///
+    /// ```rust
+    /// use chrono::{NaiveDate, Weekday};
+    /// use tkone_calendar::Calendar;
+    ///
+    /// let date = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+    /// let test = Calendar::fixed(
+    ///     "TEST",
+    ///     date(1, 1)..=date(12, 31),
+    ///     &[Weekday::Sat, Weekday::Sun],
+    ///     [date(1, 1), date(12, 25)],
+    /// )?;
+    /// assert!(!test.is_business_day(date(12, 25))?);
+    /// assert!(test.is_business_day(date(12, 24))?);
+    /// # Ok::<(), tkone_calendar::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] when `valid` is empty, every day of the week is a
+    /// weekend day, or a day off is outside `valid`.
+    pub fn fixed(
+        code: &str,
+        valid: RangeInclusive<NaiveDate>,
+        weekend: &[Weekday],
+        days_off: impl IntoIterator<Item = NaiveDate>,
+    ) -> Result<Self> {
+        let (from, until) = valid.into_inner();
+        let invalid = |problem: String| Error::Invalid { code: code.to_string(), problems: vec![problem] };
+        if from > until {
+            return Err(invalid(format!("it covers no dates: {from} is after {until}")));
+        }
+        let mut week = Weekend::default();
+        for &day in weekend {
+            week.insert(day);
+        }
+        if week.0.iter().all(|&off| off) {
+            return Err(invalid("every day of the week is a weekend day".into()));
+        }
+        let holidays = days_off
+            .into_iter()
+            .map(|date| {
+                if !(from..=until).contains(&date) {
+                    return Err(invalid(format!("the day off {date} is outside {from} to {until}")));
+                }
+                Ok(Holiday { name: "Day off".into(), actual: date, observed: date })
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self::new(code.to_string(), code.to_string(), None, None, week, (from, until, until), holidays))
+    }
+
+    /// This calendar with `dates` as days off too: a closure announced at
+    /// short notice, such as a state funeral, to see how a schedule copes.
+    /// The code, dates covered and status stay the same.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::OutOfRange`] when a date is outside the calendar's dates.
+    pub fn with_days_off(&self, dates: impl IntoIterator<Item = NaiveDate>) -> Result<Self> {
+        let mut holidays = self.inner.holidays.clone();
+        for date in dates {
+            self.index(date)?;
+            holidays.push(Holiday { name: "Day off".into(), actual: date, observed: date });
+        }
+        let inner = &self.inner;
+        Ok(Self::new(
+            inner.code.clone(),
+            inner.name.clone(),
+            inner.kind,
+            inner.zone.clone(),
+            inner.weekend,
+            (inner.valid_from, inner.valid_until, inner.confirmed_until),
             holidays,
         ))
     }

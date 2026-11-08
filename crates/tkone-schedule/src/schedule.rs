@@ -30,11 +30,14 @@
 
 #[cfg(feature = "serde")]
 pub mod document;
+pub mod period;
 pub mod selector;
 
+pub use period::{Boundary, Period, Periods};
 pub use selector::{Next, Selector, SelectorBuilder};
 
 use std::collections::{BTreeSet, VecDeque};
+use std::ops::RangeInclusive;
 
 use chrono::{DateTime, NaiveDate, NaiveTime};
 use chrono_tz::Tz;
@@ -103,6 +106,8 @@ pub struct Schedule<B: BizDayProcessor> {
     options: (DstPolicy, IntervalMode, TimeAnchor),
     /// The most business days any rule's adjustment moves a date later.
     reach: u32,
+    /// The most business days any rule's adjustment moves a date earlier.
+    back_reach: u32,
 }
 
 /// Builds a [`Schedule`]; see [`Schedule::builder`].
@@ -127,6 +132,7 @@ impl<B: BizDayProcessor> Schedule<B> {
             exclude_match: ExcludeMatch::default(),
             options: Default::default(),
             reach: 0,
+            back_reach: 0,
         })
     }
 
@@ -161,6 +167,45 @@ impl<B: BizDayProcessor> Schedule<B> {
     /// depends only on the schedule, not on where iteration starts. With a
     /// count, the schedule is replayed from its start to keep it.
     pub fn slots_after(&self, after: &DateTime<Tz>) -> Result<Slots<B>> {
+        self.slots_in(after, self.until)
+    }
+
+    /// The slots in `range`, both ends included: the same slots as
+    /// [`slots`](Self::slots) there.
+    ///
+    /// Always ends, even on a schedule with no `until`, and even when
+    /// exclusions drop every date: the place to start when a test steps
+    /// through ten years of a loan.
+    ///
+    /// ```rust
+    /// use chrono::TimeZone;
+    /// use chrono_tz::Europe::London;
+    /// use fallible_iterator::FallibleIterator;
+    /// use tkone_schedule::biz_day::WeekendSkipper;
+    /// use tkone_schedule::schedule::Schedule;
+    ///
+    /// let start = London.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    /// let payments = Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-L~PBT00:00:00").build()?;
+    /// let to = London.with_ymd_and_hms(2035, 12, 31, 0, 0, 0).unwrap();
+    /// assert_eq!(payments.slots_between(start..=to)?.count()?, 120);
+    /// # Ok::<(), tkone_schedule::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// As [`slots_after`](Self::slots_after).
+    pub fn slots_between(&self, range: RangeInclusive<DateTime<Tz>>) -> Result<Slots<B>> {
+        let (from, to) = range.into_inner();
+        let to = to.with_timezone(&self.zone());
+        let until = match self.until {
+            Some(until) if until < to => until,
+            _ => to,
+        };
+        self.slots_in(&just_before(&from), Some(until))
+    }
+
+    /// The slots strictly after `after` and no later than `until`.
+    fn slots_in(&self, after: &DateTime<Tz>, until: Option<DateTime<Tz>>) -> Result<Slots<B>> {
         let after = after.with_timezone(&self.zone());
         let from = if self.count.is_some() || after < self.start { just_before(&self.start) } else { self.lookback(&after)? };
         let exclusions = Exclusions {
@@ -188,10 +233,24 @@ impl<B: BizDayProcessor> Schedule<B> {
             ready: VecDeque::new(),
             after,
             start: self.start,
-            until: self.until,
+            until,
+            last_actual: self.last_actual(until.as_ref()),
             remaining: self.count,
             done: false,
         })
+    }
+
+    /// The latest actual date a slot no later than `until` can have: an
+    /// adjustment moves a date at most `back_reach` business days earlier.
+    /// Rules stop there, even when exclusions drop every date. `None` when
+    /// there is no `until`, or when it is too near the end of the business
+    /// days to count past it.
+    fn last_actual(&self, until: Option<&DateTime<Tz>>) -> Option<NaiveDate> {
+        let until = until?;
+        match self.back_reach {
+            0 => Some(until.date_naive()),
+            reach => self.bdp.add(&until.naive_local(), reach).ok().map(|dtm| dtm.date()),
+        }
     }
 
     /// Where rule iterators start for `slots_after(after)`: just before a
@@ -305,7 +364,9 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
             }
             SpecIterator::anchored(&rule.spec, schedule.bdp.clone(), &schedule.start, &schedule.start, schedule.options)
                 .map_err(|e| invalid(format!("{name} (`{}`): {e}", rule.spec)))?;
-            schedule.reach = schedule.reach.max(date_spec(&rule.spec)?.forward_reach());
+            let date = date_spec(&rule.spec)?;
+            schedule.reach = schedule.reach.max(date.forward_reach());
+            schedule.back_reach = schedule.back_reach.max(date.backward_reach());
         }
         for spec in &schedule.exclude_rules {
             DateSpecIterator::exclusion(spec, schedule.bdp.clone(), schedule.start.naive_local())
@@ -337,6 +398,8 @@ pub struct Slots<B: BizDayProcessor> {
     after: DateTime<Tz>,
     start: DateTime<Tz>,
     until: Option<DateTime<Tz>>,
+    /// See [`Schedule::last_actual`].
+    last_actual: Option<NaiveDate>,
     remaining: Option<usize>,
     done: bool,
 }
@@ -389,12 +452,20 @@ struct Batch {
 }
 
 impl<B: BizDayProcessor> RuleStream<B> {
-    /// The next occurrence not excluded by its actual date.
-    fn pull(&mut self, exclusions: &Exclusions<B>) -> Result<Option<Occurrence<DateTime<Tz>>>> {
+    /// The next occurrence not excluded by its actual date, if its actual
+    /// date is no later than `last_actual`.
+    fn pull(
+        &mut self,
+        exclusions: &Exclusions<B>,
+        last_actual: Option<NaiveDate>,
+    ) -> Result<Option<Occurrence<DateTime<Tz>>>> {
         if self.exhausted {
             return Ok(None);
         }
         while let Some(occurrence) = self.iter.next()? {
+            if last_actual.is_some_and(|last| occurrence.actual().date_naive() > last) {
+                break;
+            }
             if exclusions.by == ExcludeMatch::Actual && exclusions.matches(occurrence.actual().date_naive())? {
                 continue;
             }
@@ -406,13 +477,18 @@ impl<B: BizDayProcessor> RuleStream<B> {
 
     /// Read the next observed date's occurrences into `batch`, unless one is
     /// waiting or the rule is done. Dates after `until` end the rule.
-    fn fill(&mut self, exclusions: &Exclusions<B>, until: Option<NaiveDate>) -> Result<()> {
+    fn fill(
+        &mut self,
+        exclusions: &Exclusions<B>,
+        until: Option<NaiveDate>,
+        last_actual: Option<NaiveDate>,
+    ) -> Result<()> {
         if self.batch.is_some() {
             return Ok(());
         }
         let first = match self.pending.take() {
             Some(occurrence) => occurrence,
-            None => match self.pull(exclusions)? {
+            None => match self.pull(exclusions, last_actual)? {
                 Some(occurrence) => occurrence,
                 None => return Ok(()),
             },
@@ -429,7 +505,7 @@ impl<B: BizDayProcessor> RuleStream<B> {
         }
         let pair = |o: &Occurrence<DateTime<Tz>>| (*o.observed(), *o.actual());
         let mut items = vec![pair(&first)];
-        while let Some(next) = self.pull(exclusions)? {
+        while let Some(next) = self.pull(exclusions, last_actual)? {
             if next.observed().date_naive() != date {
                 self.pending = Some(next);
                 break;
@@ -472,7 +548,7 @@ impl<B: BizDayProcessor> FallibleIterator for Slots<B> {
             }
             let until = self.until.map(|until| until.date_naive());
             for stream in &mut self.streams {
-                stream.fill(&self.exclusions, until)?;
+                stream.fill(&self.exclusions, until, self.last_actual)?;
             }
             let Some(date) = self.streams.iter().filter_map(|s| s.batch.as_ref().map(|b| b.date)).min() else {
                 self.done = true;

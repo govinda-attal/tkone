@@ -67,6 +67,36 @@ impl Calendars {
         Calendar::joint(&calendars)
     }
 
+    /// Adds `calendar` under its code, replacing and returning any calendar
+    /// with that code. With [`Calendar::fixed`] or
+    /// [`Calendar::with_days_off`], a schedule document's `calendar: GBLO`
+    /// can resolve to fixed test data:
+    ///
+    /// ```rust
+    /// use chrono::NaiveDate;
+    /// use tkone_calendar::Calendars;
+    ///
+    /// let funeral = NaiveDate::from_ymd_opt(2026, 9, 21).unwrap();
+    /// let mut calendars = Calendars::builtin().clone();
+    /// calendars.insert(calendars.get("GBLO")?.with_days_off([funeral])?)?;
+    /// assert!(!calendars.get("GBLO")?.is_business_day(funeral)?);
+    /// # Ok::<(), tkone_calendar::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Invalid`] for a joint calendar (`GBLO+USNY`): add its
+    /// calendars one by one, and [`get`](Self::get) joins them.
+    pub fn insert(&mut self, calendar: Calendar) -> Result<Option<Calendar>> {
+        if calendar.code().contains('+') {
+            return Err(Error::Invalid {
+                code: calendar.code().to_string(),
+                problems: vec!["a joint calendar cannot be added; add its calendars one by one".into()],
+            });
+        }
+        Ok(self.by_code.insert(calendar.code().to_string(), calendar))
+    }
+
     /// The codes, in order.
     pub fn codes(&self) -> impl Iterator<Item = &str> {
         self.by_code.keys().map(String::as_str)

@@ -339,3 +339,46 @@ fn test_document_unknown_calendar() {
     let err = doc.schedule(Calendars::builtin()).unwrap_err();
     assert!(matches!(&err, tkone_schedule::Error::Calendar(why) if why.contains("XXXX")), "{err:?}");
 }
+
+#[test]
+fn test_fixed_calendar() {
+    use chrono::Weekday::{Fri, Sat, Sun};
+    let date = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+    // A Friday–Saturday weekend, and Sunday 22 March off.
+    let gulf = Calendar::fixed("TEST", date(1, 1)..=date(12, 31), &[Fri, Sat], [date(3, 22)]).unwrap();
+    assert!(gulf.is_business_day(date(1, 4)).unwrap(), "a Sunday");
+    assert!(!gulf.is_business_day(date(1, 2)).unwrap(), "a Friday");
+    assert!(!gulf.is_business_day(date(3, 22)).unwrap(), "the day off");
+    assert!(gulf.is_business_day(date(3, 23)).unwrap());
+    assert_eq!(gulf.status(date(12, 31)).unwrap(), Status::Confirmed);
+    assert!(matches!(gulf.is_business_day(date(1, 1).pred_opt().unwrap()), Err(Error::OutOfRange { .. })));
+
+    let err = |r: crate::Result<Calendar>| r.unwrap_err().to_string();
+    assert!(err(Calendar::fixed("TEST", date(2, 1)..=date(1, 1), &[], [])).contains("covers no dates"));
+    assert!(err(Calendar::fixed("TEST", date(1, 1)..=date(1, 31), &[Sat, Sun], [date(2, 1)])).contains("outside"));
+    let all = [Sat, Sun, Fri, chrono::Weekday::Mon, chrono::Weekday::Tue, chrono::Weekday::Wed, chrono::Weekday::Thu];
+    assert!(err(Calendar::fixed("TEST", date(1, 1)..=date(1, 31), &all, [])).contains("every day"));
+}
+
+#[test]
+fn test_days_off_at_short_notice() {
+    let funeral = NaiveDate::from_ymd_opt(2026, 9, 21).unwrap();
+    let london = Calendars::builtin().get("GBLO").unwrap();
+    let closed = london.with_days_off([funeral]).unwrap();
+    assert!(london.is_business_day(funeral).unwrap());
+    assert!(!closed.is_business_day(funeral).unwrap());
+    assert_eq!((closed.code(), closed.valid_until()), (london.code(), london.valid_until()));
+    assert!(matches!(london.with_days_off([NaiveDate::MAX]), Err(Error::OutOfRange { .. })));
+
+    // A document naming GBLO resolves to the changed calendar.
+    let mut calendars = Calendars::builtin().clone();
+    assert!(calendars.insert(closed).unwrap().is_some());
+    let doc: tkone_schedule::schedule::document::ScheduleDoc = serde_json::from_str(
+        r#"{"version": 1, "time_zone": "Europe/London", "calendar": "GBLO", "start": "2026-09-18", "rules": [{"rule": "YY-MM-DD~SBT18:00:00"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(slot_days(&doc.schedule(&calendars).unwrap(), 2), ["Fri 18 Sep", "Tue 22 Sep"]);
+    // A joint calendar is made by `get`, not added.
+    let joint = Calendars::builtin().get("GBLO+USNY").unwrap();
+    assert!(calendars.insert(joint).unwrap_err().to_string().contains("one by one"));
+}

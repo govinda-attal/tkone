@@ -75,6 +75,19 @@ days).
 Calendars whose holidays are set each year by decree, or follow a lunar
 calendar (China, Japan, India, the Gulf), are not here yet.
 
+## Calendars for tests
+
+The built-in data changes as holidays are announced, so a test that pins
+exact dates can break on an upgrade. `Calendar::fixed(code, range, weekend,
+days_off)` writes a calendar out in full and never changes.
+`calendar.with_days_off(dates)` adds a closure at short notice to see how a
+schedule copes. `Calendars::insert` puts either one under a code, so a
+schedule document's `calendar: GBLO` resolves to it.
+
+[`tests/loan.rs`](tests/loan.rs) shows the pattern: a ten-year loan stepped
+through period by period, with the interest and repayments computed by the
+test.
+
 ## Data
 
 The calendars are YAML files in [`data/`](data/), described in

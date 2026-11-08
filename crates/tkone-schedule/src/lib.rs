@@ -238,6 +238,14 @@
 //! exclusions — is set on a [`schedule::Schedule`], or written in a schedule
 //! document (YAML or JSON, the `serde` feature). See the [`schedule`] module.
 //!
+//! For tests that step through a schedule, such as checking a loan's interest
+//! and repayments over ten years: `Schedule::slots_between(range)` always
+//! ends, even with no `until`, and `Schedule::periods()` gives the time from
+//! one slot to the next with both adjusted and unadjusted boundaries. The day
+//! count and the money stay with the caller. tkone-calendar's
+//! `Calendar::fixed` writes a calendar out in full so expected dates don't
+//! change with its holiday data; its `tests/loan.rs` puts them together.
+//!
 //! The iterator builders also take an end (`with_end`), a count
 //! (`with_count`) and exclusions (`with_exclusions`) for a single rule.
 //!

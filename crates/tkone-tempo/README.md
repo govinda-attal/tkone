@@ -2,6 +2,8 @@
 
 Enterprise-grade distributed scheduler built on the `tkone-schedule` spec language. Tempo adds a persistent PostgreSQL coordination layer, a transactional outbox/inbox messaging pipeline, and horizontal worker scaling on top of the in-process primitives already provided by `tkone-schedule` and `tkone-trigger`.
 
+> **Status: design only.** The crate has no implementation yet. This README and `docs/` predate the schedule-document design (definitions and instances, [docs/schedule-document.md](../../docs/schedule-document.md)); updating them is step 4 of its migration.
+
 ---
 
 ## Contents
@@ -22,7 +24,7 @@ Enterprise-grade distributed scheduler built on the `tkone-schedule` spec langua
 ## Quick Start (Docker Compose)
 
 ```bash
-cd crates/tempo
+cd crates/tkone-tempo
 cp .env.example .env
 docker compose up -d                        # infrastructure only
 docker compose --profile workers up -d     # add all Tempo workers
@@ -35,20 +37,20 @@ See [docs/docker-compose.md](docs/docker-compose.md) for scaling, broker alterna
 
 ## What Tempo Is
 
-`tkone-schedule` and `tkone-trigger` solve in-process scheduling: parse a spec, iterate occurrences, fan out async callbacks. That model is excellent for intra-day, time-based recurrences where a missed tick on restart is acceptable.
+`tkone-schedule` and `tkone-trigger` solve in-process scheduling: parse a spec, iterate occurrences, fan out async callbacks. That model is excellent for intra-day, time-based recurrences where a missed tick on restart is acceptable, and `tkone-trigger`'s `BusinessSchedule` resumes a business-day schedule after a restart from a state store, within one process.
 
 Tempo is the layer you reach for when those constraints cannot be accepted:
 
 | Requirement | tkone-trigger | Tempo |
 |---|---|---|
 | In-process, no DB | yes | no |
-| Survives process restart | no | yes |
+| Survives process restart | `BusinessSchedule` only (state store) | yes |
 | Distributed workers | no | yes |
 | Per-entity instance runs | no | yes |
 | Reliable downstream notification | no (direct call) | yes (outbox) |
 | Completion acknowledgement | no | yes (inbox) |
 | Definition versioning | no | yes |
-| Date / datetime specs (biz-day aware) | yes | yes |
+| Date / datetime specs (biz-day aware) | `BusinessSchedule` only | yes |
 | 1M+ runs/day | no | yes |
 
 Tempo is purpose-built for **date** and **datetime** specs — end-of-month settlement runs, quarterly rebalancing, per-customer billing cycles — where each occurrence may fan out to thousands of downstream entities and every fire must be accounted for.
@@ -278,7 +280,7 @@ A naive approach calls the downstream API directly inside the fire transaction. 
 The outbox pattern decouples the atomic database write from the network call:
 
 ```
-fire transaction                outbox relay (separate goroutine)
+fire transaction                outbox relay (separate task)
 ─────────────────               ──────────────────────────────────
 BEGIN                           loop:
   INSERT schedule_defn_run        SELECT … WHERE status='PENDING'

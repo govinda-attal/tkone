@@ -99,14 +99,14 @@ exclude:
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `version` | integer | yes | Document format version; `1`. |
-| `time_zone` | IANA name | yes | Zone every rule, `start` and `until` is read in. No default: an implicit UTC is a bug waiting to happen. |
-| `calendar` | code or `A+B` | when a rule uses business days | Business days for every rule, resolved by a `CalendarResolver`. `WEEKENDS` is Saturday and Sunday only. See [D10](#d10-no-calendar-means-no-business-days). |
+| `time_zone` | IANA name | yes, in a definition | Zone every rule, `start` and `until` is read in. No default: an implicit UTC is a bug waiting to happen. |
+| `calendar` | code or `A+B` | when a rule uses business days | Business days for every rule, resolved by a `CalendarResolver`. `WEEKENDS` is Saturday and Sunday off, with no holidays; it never reaches the resolver. See [D10](#d10-no-calendar-means-no-business-days). |
 | `start` | local date or datetime | yes | Anchor for cadences and the time of day, and the inclusive lower bound. See [D1](#d1-start-is-an-anchor-not-an-occurrence). |
 | `until` | local date or datetime | no | Inclusive upper bound. A date means the whole of that day. |
-| `count` | integer | no | Stop after this many occurrences, counted after exclusions. With `until`, whichever comes first. |
-| `rules` | list | yes, at least one | Each `{ id, rule }`. `id` is optional, unique within the document, and carried on every occurrence the rule produces. |
-| `exclude.dates` | list of dates | no | Dates with no occurrences. |
-| `exclude.rules` | list of date specs | no | Dates matching any of these have no occurrences. |
+| `count` | integer | no | Stop after this many slots, counted after exclusions. With `until`, whichever comes first. |
+| `rules` | list | yes, at least one | Each `{ id, rule }`. `id` is optional, unique within the document, and carried on every slot the rule produces. |
+| `exclude.dates` | list of dates | no | Dates with no slots. |
+| `exclude.rules` | list of date specs | no | Dates matching any of these have no slots. |
 | `exclude.match` | `actual` / `observed` | no | Which date an exclusion is tested against. Default `actual`. See [D3](#d3-exclusions-match-the-actual-date-by-default). |
 | `options.dst_policy` | `adjust` / `strict` | no | As `with_dst_policy`. |
 | `options.interval_mode` | `wall-clock` / `elapsed` | no | As `with_interval_mode`. |
@@ -146,7 +146,7 @@ pub struct Source {
 }
 ```
 
-See [D4](#d4-occurrences-are-unique-by-observed-instant).
+See [D4](#d4-slots-are-unique-by-observed-instant).
 
 ---
 
@@ -154,9 +154,9 @@ See [D4](#d4-occurrences-are-unique-by-observed-instant).
 
 The same document shape serves both, read in two ways.
 
-- A **definition's** document is a **generator**: its rules produce occurrences.
+- A **definition's** document is a **generator**: its rules produce slots.
 - An **instance's** document is a **selector**: its rules pick from the
-  definition's occurrences. It can never produce an instant the definition
+  definition's slots. It can never produce an instant the definition
   does not.
 
 ### Example: interest accrual
@@ -166,6 +166,7 @@ The same document shape serves both, read in two ways.
 version: 1
 time_zone: Europe/London
 calendar: GBLO
+start: 2026-01-01
 rules:
   - id: batch
     rule: YY-MM-DD~SBT[09,13,18]:00:00
@@ -189,7 +190,7 @@ are evaluated with the definition's. (An instance calendar is
 
 Around May 2026's month end (31 May is a Sunday):
 
-| Definition occurrence | acct-1 month end 18:00 | acct-2 daily 09:00 | acct-3 opens 1 Jun | acct-4 month end **17:00** |
+| Definition slot | acct-1 month end 18:00 | acct-2 daily 09:00 | acct-3 opens 1 Jun | acct-4 month end **17:00** |
 |---|---|---|---|---|
 | Fri 29 May 09:00 | | ✓ | | |
 | Fri 29 May 13:00 | | | | |
@@ -202,7 +203,7 @@ reports it at registration (below).
 ### Selection is lazy
 
 Instance runs are not computed ahead. Each instance holds only its **next
-due** instant, computed when its previous run fires (D6). A definition run for occurrence `t`
+due** instant, computed when its previous run fires (D6). A definition run for slot `t`
 contains exactly the instances whose next due is `t`: an index lookup, with
 no walk over selectors.
 
@@ -244,27 +245,29 @@ definition, `ScheduleDoc::selector(&definition)` for an instance.
 definition's and keeps the first instant both have. `Due` carries the
 selector's slot: its sources are the instance's rules, with their actual
 times (acct-1's 31 May). A definition that has ended does not make its
-instances `Done`: their slots are reported missed and the result is
-`NotFound`, so an instance outliving its definition is visible. The horizon is not optional: acct-4's
+instances `Done`: their slots are reported missed, and the result is
+`NotFound` until the instance's own window ends, so an instance outliving
+its definition is visible. The horizon is not optional: acct-4's
 17:00 never exists, and an unbounded search would never return.
 
 Pseudo code for tempo:
 
 ```rust
-// When an instance is registered (`after` = its start), and when each of
-// its runs fires (`after` = that run's due), in the same transaction (D6):
-match selector.next_after(&definition, after, after + horizon, |m| record_missed(instance, m))? {
-    Next::Due(occ) => instance.next_due = Some(occ.at),
-    Next::Done     => instance.complete(),
-    Next::NotFound => instance.flag("no selected run within horizon"),
+// When an instance is registered (`after` = just before its start, since
+// `next_after` is strictly after), and when each of its runs fires
+// (`after` = that run's due), in the same transaction (D6):
+match selector.next_after(&definition, &after, &(after + horizon), |m| record_missed(instance, m))? {
+    Next::Due(slot) => instance.next_due = Some(slot.at),
+    Next::Done      => instance.complete(),
+    Next::NotFound  => instance.flag("no selected run within horizon"),
 }
 
-// When definition occurrence `occ` fires:
-let due = instances.where_next_due(defn, occ.at);   // index (defn_id, next_due)
+// When the definition's slot `slot` fires (an occurrence, in tempo's tables):
+let due = instances.where_next_due(defn, slot.at);  // index (defn_id, next_due)
 if due.is_empty() {
-    record_empty(&occ);                              // D8
+    record_empty(&slot);                             // D8
 } else {
-    create_defn_run(&occ, &due);                     // one instance run each,
+    create_defn_run(&slot, &due);                    // one instance run each,
 }                                                    // plus each one's next due
 ```
 
@@ -300,9 +303,9 @@ exclusion that removes an account's month end.
 RFC 5545 always makes `DTSTART` the first instance, and so does tkone's
 `new_with_start` today. In a document, `start: 2026-01-01` (a holiday) would
 then fire on a holiday. A document's `start` anchors cadences (`2W`, `3M`
-count from it) and bounds the stream; it is an occurrence only if a rule
-produces it. This is what a start written in the spec (`@…`) already does;
-schedules reach it without the string.
+count from it) and bounds the stream; it is a slot only if a rule
+produces it. A start written in the spec (`@…`) did this before the grammar
+became rule-only; schedules now do it without the string.
 
 `start` is required. Lazy selection asks for the slots after any instant
 and must get the same answer from each: a cadence, or a time carried from the
@@ -316,22 +319,22 @@ began.
 
 ### D3. Exclusions match the actual date by default
 
-That is the current behaviour, and changing the default would silently move
-existing schedules. With `~NB`, matching the actual date excludes "the 25th,
+That is what `!` exclusions did, and what the iterators' `with_exclusions`
+still does; changing the default would silently move existing schedules. With `~NB`, matching the actual date excludes "the 25th,
 moved to the 27th"; `match: observed` excludes whatever lands on the 27th.
 
-### D4. Occurrences are unique by observed instant
+### D4. Slots are unique by observed instant
 
 Two rules can land on the same instant from different actual dates:
 `YY-MM-29T18:00:00` and `YY-MM-L~PBT18:00:00` both give Fri 29 May 2026 at
-18:00. Today's union keeps the first part's occurrence and keys on actual
-time, which would give a scheduler two runs at the same instant. A document
-merges them into one occurrence carrying both sources.
+18:00. The removed `|` union kept the first part's occurrence and keyed on
+actual time, which would give a scheduler two runs at the same instant. A
+schedule merges them into one slot carrying both sources.
 
-A single rule does this too, today. `YY-MM-DD~NBT09:00:00` around 30 May
-2026 yields Saturday's and Sunday's occurrences moved to Monday 1 June 09:00,
-then Monday's own: three occurrences at one instant. The iterator is right to
-report each actual date; a document must merge them into one occurrence with
+A single rule does this too. The iterator for `YY-MM-DD~NBT09:00:00` around
+30 May 2026 yields Saturday's and Sunday's occurrences moved to Monday 1 June
+09:00, then Monday's own: three occurrences at one instant. The iterator is
+right to report each actual date; a schedule merges them into one slot with
 three sources.
 
 ### D5. Selection matches the observed instant
@@ -387,11 +390,13 @@ schedule could change phase on every edit.
 ### D10. No calendar means no business days
 
 A rule or exclusion using business days in a document without `calendar` is
-an error, and so is one in an instance document whose definition has none. Business days are any adjustment but `~NA` and the weekday ones
-(`~W`, …), `BD#n` and `nBD`; weekday rules (`WD#n`, `nWD`) need no calendar.
-The builder's default today is `WeekendSkipper`, which silently treats every
-weekday as a business day; for operations that is a trap. Weekend-only is
-written `calendar: WEEKENDS`.
+an error, and so is one in an instance document whose definition has none.
+Business days are used by `BD#n`, `nBD` and every adjustment except the
+weekday ones (`~W`, `~NW`, `~PW`) and the day-of-the-week ones (`~MON`,
+`~NMON`, `~PMON`, …); weekday rules (`WD#n`, `nWD`) need no calendar either.
+Without the check, a missing calendar would fall back to `WeekendSkipper`,
+which silently treats every weekday as a business day; for operations that
+is a trap. Weekend-only is written `calendar: WEEKENDS`.
 
 ---
 
@@ -405,11 +410,12 @@ let schedule = Schedule::builder(start, calendars.get("XNYS")?)
     .until(until)
     .named_rule("close", "YY-MM-DD~SBT16:30:00")
     .named_rule("month-end", "YY-MM-L~PBT18:00:00")
-    .exclude_date(date(2026, 11, 27))
+    .exclude_date(NaiveDate::from_ymd_opt(2026, 11, 27).unwrap())
     .exclude_rule("YY-12-24")
     .build()?;
 
-for slot in schedule.slots_after(&last_fired)?.take(3) { /* … */ }
+let mut slots = schedule.slots_after(&last_fired)?.take(3);   // a FallibleIterator
+while let Some(slot) = slots.next()? { /* … */ }
 
 let doc: ScheduleDoc = serde_yaml_ng::from_str(yaml)?;
 let schedule = doc.schedule(Calendars::builtin())?;   // resolves the calendar code
@@ -425,13 +431,13 @@ pub trait CalendarResolver {
 }
 ```
 
-Gaps in today's builders this closes:
+Gaps in the earlier builders this closed:
 
-| Today | Needed |
+| Before | Now |
 |---|---|
-| `with_exclusions` appends `! spec` to the string | Exclusions held as data, not spliced into the spec |
-| Unions only as `A \| B`; `Merge` is crate-private | Several rules with ids, merged by observed instant (D4) |
-| `new_with_start` emits the start | An anchored start, as a written `@…` gives (D1) |
+| `with_exclusions` appended `! spec` to the string | Exclusions held as data, not spliced into the spec |
+| Unions only as `A \| B`; `Merge` was crate-private | Several rules with ids, merged by observed instant (D4) |
+| `new_with_start` emits the start (the iterators still do) | An anchored start, as a written `@…` gave (D1) |
 | Calendar checked against `[cal=]` in the string | The document resolves the calendar, so there is nothing to mismatch. The calendar zone check stays. |
 
 ---

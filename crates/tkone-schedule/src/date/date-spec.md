@@ -16,7 +16,7 @@ All three components are required. The optional `/WEEKS` suffix keeps only some 
 
 | Syntax | Meaning |
 |--------|---------|
-| `YY` | Every year (wildcard) |
+| `YY` or `_` | Every year (wildcard) |
 | `nY` | Every *n* years from the start year (e.g. `1Y`, `2Y`, `3Y`) |
 | `nY[P,...]` | Years at positions *P* of every *n*-year cycle from the start year (e.g. `4Y[1,3]`) |
 | `YYYY` | Specific year only (e.g. `2025`) |
@@ -27,7 +27,7 @@ All three components are required. The optional `/WEEKS` suffix keeps only some 
 
 | Syntax | Meaning |
 |--------|---------|
-| `MM` | Every month (wildcard) |
+| `MM` or `_` | Every month (wildcard) |
 | `nM` | Every *n* months from the start month (e.g. `1M`, `3M`, `6M`) |
 | `nM[P,...]` | Months at positions *P* of every *n*-month cycle from the start month (e.g. `3M[1-2]`) |
 | `MM` (2-digit) | Specific month only (e.g. `01`, `06`, `12`) |
@@ -38,7 +38,7 @@ All three components are required. The optional `/WEEKS` suffix keeps only some 
 
 | Syntax | Meaning |
 |--------|---------|
-| `DD` | Every calendar day |
+| `DD` or `_` | Every calendar day |
 | `nD` | Every *n* calendar days (e.g. `4D`, `7D`, `14D`) |
 | `nD[P,...]` | Days at positions *P* of every *n*-day cycle from the start (e.g. `8D[1-4]` = four on, four off) |
 | `nBD` | Every *n* business days (using configured processor) |
@@ -88,15 +88,15 @@ holiday data and works for any year.
 | `~MF` | **Modified Following**: if not a biz day, move to the **next** biz day, unless that is in the next month — then the **previous** one |
 | `~MP` | **Modified Preceding**: if not a biz day, move to the **previous** biz day, unless that is in the previous month — then the **next** one |
 | `~SB` | **Skip**: if not a biz day, **drop** the date — no result, nothing moved (configured processor) |
-| `~nN` | **Unconditional**: add *n* biz days (e.g. `~2N`) |
-| `~nP` | **Unconditional**: subtract *n* biz days (e.g. `~3P`) |
+| `~nN` | **Unconditional**: add *n* biz days (e.g. `~2N`; `~N` is `~1N`) |
+| `~nP` | **Unconditional**: subtract *n* biz days (e.g. `~3P`; `~P` is `~1P`) |
 | `~DAY` | If result is not that day of the week, move to the **nearest** one, at most 3 days away (e.g. `YY-01-29~MON`: the Monday nearest 29 January) |
 | `~NDAY` | If result is not that day of the week, move to the **next** one (e.g. `YY-05-18~NMON`: the Monday on or after 18 May) |
 | `~PDAY` | If result is not that day of the week, move to the **previous** one (e.g. `YY-05-24~PMON`: the Monday on or before 24 May) |
 
 `~NW`/`~PW`/`~W` always use the built-in WeekendSkipper (Sat/Sun only).  
 `~NB`/`~PB`/`~B`/`~MF`/`~MP`/`~SB` use the configured `BizDayProcessor` and can account for custom holidays.  
-`~nN`/`~nP` are unconditional — they shift every result regardless of day-of-week.  
+`~nN`/`~nP` are unconditional — they shift every result by business days of the configured `BizDayProcessor`, whatever day it falls on.  
 `~DAY`/`~NDAY`/`~PDAY` (`DAY` is `MON` … `SUN`) count calendar days and ignore business days: they state holidays such as "the Monday nearest 29 January".
 
 ### Ways to use `~SB`
@@ -142,7 +142,7 @@ Notes:
   "skip holidays but move weekends". Use two rules in a schedule instead, each with its own
   adjustment, or an exclusion.
 - **Dropped dates are not counted** by `with_count` or a schedule's `count`, and a time part has
-  no ticks on a dropped date.
+  no times on a dropped date.
 
 > *Library:* a start given to the builder (`new_with_start`) is still returned as-is, even when it
 > is not a business day. A `schedule::Schedule`'s start is only an anchor, and is skipped like
@@ -158,7 +158,7 @@ containing the start, and the count carries across months and years.
 |------|---------|
 | `YY-MM-[TUE,THU]/2W` | Tuesday and Thursday, every other week |
 | `YY-MM-FRI/2W` | Every other Friday |
-| `YY-MM-MON/2W[2]` | Mondays in the weeks *not* containing the start |
+| `YY-MM-MON/2W[2]` | Mondays in every other week, starting with the week after the start's |
 | `YY-MM-[MON-FRI]/4W[1,2]` | Weekdays in weeks 1 and 2 of every 4 (two on, two off) |
 
 A week cycle works with any calendar day rule, adjustments and month or year filters, but not
@@ -194,7 +194,8 @@ rotations and shift patterns:
 
 Unlike a plain `nD` step, a day cycle with positions never restarts: a month filter
 (`YY-[01-02]-8D[1-4]`) only removes dates. A year cycle with positions cannot be combined with a
-month cycle, and `nBD[…]` / `nWD[…]` are not supported.
+month step or month cycle (`4Y[1]-3M-15`), nor a month cycle with positions with a year step
+(`1Y-3M[1]-15`), and `nBD[…]` / `nWD[…]` are not supported.
 
 > *Library:* a cycle with positions other than the first (`/4W[1,2]`, `8D[1-4]`) can be at any
 > position when an occurrence is stored, so resuming needs the schedule's start, given to
@@ -230,8 +231,6 @@ feature).
 ---
 
 ## Checking a spec
-
-> *Library behaviour: set when building the iterator, not written in the spec.*
 
 [`Spec::describe`](crate::date::Spec::describe) renders a spec in plain English:
 
@@ -1370,7 +1369,7 @@ Without an `nM` cadence, the step **keeps rolling while it lands in an eligible 
 
 ### Combined year+month clocks (`1Y-3M-15`)
 
-When both year and month use `NextNth`, each tick advances **both** counters simultaneously: `nY-mM` is a single cadence of `12·n + m` months. Month overflow carries into the year counter, which is why `1Y-3M-15` produces Dec→Mar with a 2-year gap rather than 1-year.
+When both the year and the month are steps (`nY`, `nM`), each tick advances **both** counters simultaneously: `nY-mM` is a single cadence of `12·n + m` months. Month overflow carries into the year counter, which is why `1Y-3M-15` goes from December 2027 to March 2029, two years on rather than one.
 
 The same clock applies to step rules under an `nM` cadence: `YY-1M-7D` adds 1 month **and** 7 days per tick (Dec 1 → Jan 8 → Feb 15 → …).
 
@@ -1412,7 +1411,7 @@ With `DstPolicy::Strict` the skipped date returns `Error::AmbiguousLocalTime` in
 
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, bdp, tz, last_actual)`, where `last_actual` is the
-stored ``actual()`` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
+stored `actual()` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
 same options; add `.with_end(end)` if the schedule has a stored end. The crate docs' section *Persisting and resuming a schedule* has the full
 pattern and the rules that keep resumed results identical to a continuous iterator.
 
@@ -1445,7 +1444,7 @@ and `YY-MM-DD~PB` gives `Exact(Fri)`, `AdjustedEarlier(Sat, Fri)`, `AdjustedEarl
 
 ## Edge cases and invalid specs
 
-The following combinations are either silently broken, produce no results, or loop indefinitely. **Avoid them.**
+The following combinations silently skip dates, produce no results, end in an error, or are rejected. **Avoid them.**
 
 ---
 
@@ -1462,8 +1461,8 @@ YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb
 
 **Safe alternatives:**
 - `YY-02-L` — last day of February (28 or 29 on leap years)
-- `YY-02-28L` — 28th, clamped to last day on overflow (same effect as `L` here)
-- `YY-02-28N` — 28th, with `AdjustedLater → 1 Mar` on non-leap years
+- `YY-02-29L` — 29th, clamped to the 28th in non-leap years (same effect as `L` here)
+- `YY-02-29N` — 29th; in non-leap years `AdjustedLater(28 Feb, 1 Mar)`
 - `YY-MM-31L` — 31st every month, clamped to last day when the month is shorter
 
 ---
@@ -1488,7 +1487,7 @@ The same applies to `BD#0` / `WD#0`, which are rejected. `BD#n` / `WD#n` accept 
 
 **Note:** `2024-02-29` works correctly because 2024 is a leap year.
 
-**Safe alternative:** `2025-02-28L` (clamped to the last day of Feb 2025, which is the 28th).
+**Safe alternative:** `2025-02-29L` (clamped to the last day of Feb 2025, the 28th).
 
 ---
 
@@ -1506,9 +1505,9 @@ The same applies to `BD#0` / `WD#0`, which are rejected. `BD#n` / `WD#n` accept 
 
 | Combination | Problem | Safe alternative |
 |-------------|---------|-----------------|
-| `YY-02-30` / `YY-02-31` | Day never exists in February; `IteratorNotConverged` | `YY-02-L` or `YY-02-28L` |
+| `YY-02-30` / `YY-02-31` | Day never exists in February; `IteratorNotConverged` | `YY-02-L` or `YY-02-29L` |
 | `YY-MM-31` (no suffix) | Silently skips short months | `YY-MM-31L` (clamp) |
 | `MON#0`, `MON#6` | Occurrence never exists; rejected at parse time | `MON#1` or `MON#L` |
 | `BD#23` | Most months have fewer business days; they are skipped | `BD#L` for the last business day |
-| `YYYY-02-29` (non-leap year) | Zero results | `YYYY-02-28L` |
+| `YYYY-02-29` (non-leap year) | Zero results | `YYYY-02-29L` |
 | `[YYYY,...]-02-29` (mix) | Non-leap years silently skipped | Filter list to leap years only |

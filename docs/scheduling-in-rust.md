@@ -37,7 +37,7 @@ A date spec uses `<years>-<months>-<days>` with an optional business-day adjustm
 "YY-MM-15"          every month on the 15th
 "YY-1M-L"           last day of every month
 "YY-MM-FRI#L"       last Friday of every month
-"YY-3M-01"          first day of every quarter
+"YY-3M-01"          the 1st of every 3rd month, counted from the start's month
 "YY-1M-L~PB"        last day of the month, adjusted to previous business day
 "YY-1M-L~NW"        last day of the month, adjusted to next weekday
 ```
@@ -47,7 +47,7 @@ A date spec uses `<years>-<months>-<days>` with an optional business-day adjustm
 Combine the two with a `T` separator:
 
 ```text
-"YY-1M-L~NBT11:00:00"     last business day of the month at 11:00
+"YY-1M-L~PBT11:00:00"     last business day of the month at 11:00
 "YY-MM-FRIT09:30:00"      every Friday at 09:30
 "YY-MM-DDT1H:00:00"       every day, every hour
 ```
@@ -67,12 +67,12 @@ let bdp = WeekendSkipper::new();
 let now = Utc::now().with_timezone(&London).trunc_subsecs(0);
 
 // Find the first occurrence strictly after now, then iterate from it
-let start = SpecIteratorBuilder::new_after("YY-1M-L~NBT11:00:00", bdp.clone(), now)
+let start = SpecIteratorBuilder::new_after("YY-1M-L~PBT11:00:00", bdp.clone(), now)
     .build().unwrap()
     .next().unwrap().unwrap()
     .observed().clone();
 
-let mut iter = SpecIteratorBuilder::new_with_start("YY-1M-L~NBT11:00:00", bdp, start)
+let mut iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PBT11:00:00", bdp, start)
     .build().unwrap();
 
 while let Some(nr) = iter.next().unwrap() {
@@ -95,9 +95,9 @@ while let Some(nr) = iter.next().unwrap() {
 
 `tkone-schedule` tells you *when* to fire. `tkone-trigger` does the firing.
 
-`Scheduler<I, E>` accepts a [`tkone_schedule::time::SpecIterator`] — the only iterator type supported — and fans each tick out to N registered async callbacks. Every callback and the `on_error` handler receive a `FireContext` carrying the `Occurrence` for that tick. Callbacks return `Result<(), E>`; any error is forwarded to `on_error` and the scheduler continues to the next tick regardless.
+`Scheduler<I, E>` takes any `ScheduleIter` — a `tkone_schedule::time::SpecIterator`, or a `BusinessSchedule` (below) — and fans each tick out to N registered async callbacks. Every callback and the `on_error` handler receive a `FireContext` carrying the `Occurrence` for that tick. Callbacks return `Result<(), E>`; any error is forwarded to `on_error` and the scheduler continues to the next tick regardless.
 
-> **Time specs only.** `tkone-trigger` is an **in-memory, intra-day** trigger. `date` and `datetime` specs are intentionally excluded: a missed tick on process restart is silently lost, which is unacceptable for daily/weekly/monthly schedules. Use the `tempo` crate for persistent, date-and-datetime-aware scheduling.
+> **Time specs in memory; business-day schedules from stored state.** A time spec runs in memory and simply starts again from now after a restart. `date` and `datetime` iterators are not accepted directly: a restart would silently lose a run, which is unacceptable for daily/weekly/monthly schedules. For those, `BusinessSchedule` runs a `tkone_schedule::schedule::Schedule` on a holiday calendar, records each run it fires in a `StateStore` (`MemoryStore`, `FileStore`, or your own), and resumes after the last one when rebuilt (`cargo run -p tkone-trigger --example business_day_jobs`). Distributed, multi-process scheduling is the job of `tkone-tempo` (designed, not yet implemented).
 
 ### FireContext and TickContext
 
@@ -107,7 +107,7 @@ pub trait TickContext {
 }
 ```
 
-`FireContext` is the concrete type passed at runtime. It implements `TickContext`, so handler signatures can be written against the trait for easier testing and mocking. The `Occurrence` it carries is always `Exact` for time specs — no business-day adjustment is applied. The full enum has three variants (used by `date`/`datetime` iterators in `tkone-schedule` and `tempo`):
+`FireContext` is the concrete type passed at runtime. It implements `TickContext`, so handler signatures can be written against the trait for easier testing and mocking. The `Occurrence` it carries is always `Exact` for time specs — no business-day adjustment is applied. The full enum has three variants (used by `date`/`datetime` iterators in `tkone-schedule`, and by `BusinessSchedule`):
 
 | Variant | Meaning |
 |---------|---------|
@@ -177,7 +177,7 @@ Key design points:
 - Multiple logically related jobs sharing one schedule (process + reconcile)
 - Services that need clean shutdown on SIGTERM without a job-queue dependency
 
-> **In-memory caveat:** `tkone-trigger` does not persist state. If the process restarts between ticks, those ticks are missed. For intra-day recurrences this is usually acceptable; for daily/weekly/monthly schedules use `tempo`.
+> **In-memory caveat:** a time-spec `Scheduler` does not persist state. If the process restarts between ticks, those ticks are missed. For intra-day recurrences this is usually acceptable; for daily/weekly/monthly schedules use `BusinessSchedule`, whose missed runs follow its `CatchUp` policy.
 
 ---
 
@@ -189,7 +189,7 @@ Two attribute macros do the work:
 
 | Macro | Applied to | What it does |
 |-------|-----------|-------------|
-| `#[schedule]` | `impl` block | Generates `run()`, `run_until_signal()`, `shutdown_token()` on the struct |
+| `#[schedule]` | `impl` block | Generates `run()`, `run_until_signal()`, `shutdown_token()` and `describe()` on the struct |
 | `#[job(Struct)]` | `async fn` | Registers the function as a job on the named scheduler at link time |
 
 ### Define a scheduler
@@ -275,8 +275,11 @@ async fn main() {
 impl PaymentSchedule {
     pub fn shutdown_token() -> CancellationToken { /* OnceLock<CancellationToken> */ }
 
+    pub fn describe() -> &'static str { "every hour, at minute 00 and second 00" }
+
     pub async fn run() {
-        let iter = SpecIteratorBuilder::new("1H:00:00", Utc).build().unwrap();
+        // `spec`, `start_spec` and `tz` from the attribute; checked while compiling
+        let iter = tkone_trigger::time_schedule("1H:00:00", None, None).expect("checked");
         let mut scheduler = Scheduler::new(iter, Self::on_error)
             .with_shutdown_token(Self::shutdown_token())
             .fire_on_start();
@@ -312,7 +315,7 @@ impl PaymentSchedule {
 ## The Full Stack at a Glance
 
 ```
-tkone-schedule          → parse "YY-1M-L~NBT11:00:00", iterate fire times
+tkone-schedule          → parse "YY-1M-L~PBT11:00:00", iterate fire times
       ↓
 tkone-trigger           → Scheduler<I, E>: sleep → fan-out → error handler
       ↓

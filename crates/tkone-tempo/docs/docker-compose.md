@@ -17,7 +17,7 @@ Docker Compose provides two things Kubernetes cannot easily offer: a zero-prereq
   - [Topic bootstrap via init container](#6-topic-bootstrap-via-init-container)
 - [Compose Profiles](#compose-profiles)
 - [Scaling Claimers](#scaling-claimers)
-- [Alternative Broker — Iggy](#alternative-broker--iggy)
+- [Broker Choice](#broker-choice)
 - [Partition Management](#partition-management)
 - [Environment Variables Reference](#environment-variables-reference)
 - [Comparison Table — Docker Compose vs Kubernetes](#comparison-table--docker-compose-vs-kubernetes)
@@ -113,7 +113,7 @@ docker compose --profile workers down -v
 
 **In Docker Compose:** PgBouncer runs as a named service that all worker containers share. A sidecar pattern is possible in Compose (putting all containers in one service using multiple `command` entries is awkward), but the operational benefit in a single-host deployment does not justify the complexity.
 
-**Consequence:** If PgBouncer crashes in Docker Compose, all workers temporarily lose their DB proxy. Docker Compose's `restart: unless-stopped` brings it back within seconds. In Kubernetes, the sidecar sidecar crash only affects one pod and Kubernetes restarts it automatically — no cluster-wide impact.
+**Consequence:** If PgBouncer crashes in Docker Compose, all workers temporarily lose their DB proxy. Docker Compose's `restart: unless-stopped` brings it back within seconds. In Kubernetes, a sidecar crash only affects one pod and Kubernetes restarts it automatically — no cluster-wide impact.
 
 The connection budget in Docker Compose is smaller than Kubernetes anyway (`default_pool_size=10` × a handful of containers), so a shared service is not a bottleneck.
 
@@ -351,7 +351,7 @@ Iggy creates streams and topics on first use if they do not exist, so no init jo
 
 ## Partition Management
 
-The `docker/init-partitions.sql` script runs automatically on first Postgres container start (via `/docker-entrypoint-initdb.d/`). It creates monthly partitions for all five partitioned tables from the current month through 14 months ahead.
+The `docker/init-partitions.sql` script runs automatically on first Postgres container start (via `/docker-entrypoint-initdb.d/`). It creates monthly partitions for all five partitioned tables from the current month through 13 months ahead (14 monthly partitions).
 
 On a long-running Compose deployment, partitions must be extended periodically:
 

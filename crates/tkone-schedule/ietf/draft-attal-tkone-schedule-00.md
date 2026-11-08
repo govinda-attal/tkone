@@ -101,7 +101,7 @@ Schedule:
 
 Occurrence:
 : One result of a schedule. It has an *actual* time, the time the rule produced, and an
-  *observed* time, the time after any business-day adjustment.
+  *observed* time, the time after any adjustment.
 
 Business day:
 : A day that the holiday calendar in use treats as a working day. A *weekday* is Monday to
@@ -247,7 +247,7 @@ A schedule that matches the grammar is still rejected if any of these rules is b
 | A weekday occurrence (`DAY#n`, `DAY#nL`) is 1–5 | `YY-MM-MON#0`, `YY-MM-FRI#6` |
 | A business-day position (`BD#n`, `BD#nL`, `BD#[…]`) is 1–23 | `YY-MM-BD#0`, `YY-MM-BD#24` |
 | A range runs forwards | `YY-[06-01]-01`, `YY-MM-[FRI-MON]`, `YY-MM-BD#[3-1]` |
-| A bracketed range expands to fewer than 10,000 values | `[1-4000000000]-MM-01` |
+| A range in brackets covers at most 10,000 values | `[1-4000000000]-MM-01` |
 | A cycle with positions (`nY[…]`, `nM[…]`, `nD[…]`, `/nW[…]`) has a length of at least 1 and positions within 1…n | `YY-3M[4]-15`, `YY-MM-8D[0]`, `YY-MM-MON/2W[3]` |
 | A year cycle with positions is not combined with a month step or month cycle | `4Y[1]-3M-15` |
 | A month cycle with positions is not combined with a year step | `1Y-3M[1]-15` |
@@ -429,8 +429,8 @@ many it produces, or require an end or a count from the application.
 Some valid schedules never produce an occurrence, such as the 30th of February. An
 implementation MUST NOT search for an occurrence indefinitely; it SHOULD give up after a bounded search and report an error.
 
-Lists and ranges expand into sets of values. {{validity-rules}} caps a date range at 10,000
-values; an implementation SHOULD also bound the total size of the sets it builds.
+Lists and ranges expand into sets of values. {{validity-rules}} caps each range in a date spec at
+10,000 values; an implementation SHOULD also bound the total size of the sets it builds.
 
 The occurrences of a schedule depend on data outside it: the time zone database {{TZDB}}
 {{RFC6557}} and the holiday calendar. Two systems that evaluate the same schedule with different

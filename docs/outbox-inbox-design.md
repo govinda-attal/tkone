@@ -2,7 +2,7 @@
 
 ## Motivation
 
-The transactional outbox/inbox pattern is domain-agnostic infrastructure. The relay and processor logic currently embedded in `tkone-tempo` is coupled to scheduling by accident — it references hardcoded table names (`schedule_outbox`, `schedule_inbox`) and a scheduling-specific processor implementation.
+The transactional outbox/inbox pattern is domain-agnostic infrastructure. The relay and processor logic in `tkone-tempo`'s design (not yet implemented) is coupled to scheduling by accident — it references hardcoded table names (`schedule_outbox`, `schedule_inbox`) and a scheduling-specific processor implementation.
 
 Extracting these into standalone crates gives every future tkone domain (payments, notifications, audit, …) the same reliable messaging guarantees without reimplementing the machinery.
 
@@ -209,7 +209,7 @@ The `UNIQUE INDEX` on `correlation_id` is the single hard guarantee. Even if the
 struct TempoInboxProcessor { pool: PgPool }
 
 impl InboxMessageProcessor for TempoInboxProcessor {
-    async fn process(&self, txn: &mut PgTransaction<'_>, msg: &InboxMessage) -> Result<()> {
+    async fn process(&self, txn: &mut PgTransaction<'_>, msg: &InboxMessage) -> Result<(), InboxProcessError> {
         // look up schedule_instance_run by correlation_id
         // update its status → COMPLETED or FAILED
         // insert schedule_defn_run_event

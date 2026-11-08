@@ -11,7 +11,7 @@ A growing Rust toolkit of libraries and applications across multiple domains. Cu
 | [Python bindings](bindings/python/README.md) | `pip install ./bindings/python`: `tkone.schedule` and `tkone.calendar` in Python, one module per crate ([conventions](bindings/README.md)) |
 | [tkone-trigger](crates/tkone-trigger/README.md) | Async scheduler on tkone-schedule: in-memory time triggers, and business-day jobs that resume from stored state |
 | [tkone-trigger-macros](crates/tkone-trigger-macros/README.md) | Declarative `#[schedule]` / `#[job]` attribute macros for zero-boilerplate wiring |
-| [tkone-tempo](crates/tkone-tempo/README.md) | Enterprise distributed scheduler with PostgreSQL persistence and transactional messaging |
+| [tkone-tempo](crates/tkone-tempo/README.md) | Enterprise distributed scheduler with PostgreSQL persistence and transactional messaging (design only; not yet implemented) |
 | [example-app](crates/example-app/src/) | Use cases that combine the crates, on real holiday calendars |
 
 ## Examples
@@ -29,7 +29,7 @@ that combine crates. A new example goes in the crate it demonstrates, or in
 | `cargo run -p tkone-trigger --example declarative_payments` | the same with `#[schedule]` and `#[job]` |
 | `cargo run -p tkone-trigger --example business_day_jobs` | a NYSE end-of-day job that survives restarts |
 | `cargo run -p example-app --bin loan-repayments` | loan servicing: collections on London + New York business days |
-| `cargo run -p example-app --bin exchange-jobs` | jobs on NYSE trading days; the wrong calendar refused |
+| `cargo run -p example-app --bin exchange-jobs` | jobs on NYSE trading days; a document without a calendar refused |
 | `cargo run -p example-app --bin payroll` | one payroll template on Sydney's and Auckland's calendars |
 | `cargo run -p example-app --bin store-deliveries` | deliveries skipping Johannesburg holidays |
 

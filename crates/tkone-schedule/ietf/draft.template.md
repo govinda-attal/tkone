@@ -99,7 +99,7 @@ Schedule:
 
 Occurrence:
 : One result of a schedule. It has an *actual* time, the time the rule produced, and an
-  *observed* time, the time after any business-day adjustment.
+  *observed* time, the time after any adjustment.
 
 Business day:
 : A day that the holiday calendar in use treats as a working day. A *weekday* is Monday to
@@ -126,8 +126,8 @@ many it produces, or require an end or a count from the application.
 Some valid schedules never produce an occurrence, such as the 30th of February. An
 implementation MUST NOT search for an occurrence indefinitely; it SHOULD give up after a bounded search and report an error.
 
-Lists and ranges expand into sets of values. {{validity-rules}} caps a date range at 10,000
-values; an implementation SHOULD also bound the total size of the sets it builds.
+Lists and ranges expand into sets of values. {{validity-rules}} caps each range in a date spec at
+10,000 values; an implementation SHOULD also bound the total size of the sets it builds.
 
 The occurrences of a schedule depend on data outside it: the time zone database {{TZDB}}
 {{RFC6557}} and the holiday calendar. Two systems that evaluate the same schedule with different

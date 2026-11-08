@@ -6,7 +6,7 @@
 <date_spec>T<time_spec>
 ```
 
-The `T` separator joins a [date spec](../date/date-spec.md) and a [time spec](../time/time-spec.md).
+The `T` separator joins a [date spec](crate::date) and a [time spec](crate::time).
 Both parts are required. Refer to those documents for the full syntax of each component. A spec
 is one rule; its start, time zone, holiday calendar, end, count, exclusions and any other rules
 are set around it ([Schedules](#schedules-a-spec-in-context)).
@@ -14,8 +14,8 @@ are set around it ([Schedules](#schedules-a-spec-in-context)).
 ### Separator detection
 
 The `T` character is only treated as the separator when it is immediately followed by a
-time-like token: `HH:`, `_:`, a bare `<n>H:`, a two-digit leading hour `<0–2><0–9>:`, an hour
-range `09-16:`, or an hour list `[09,12]:`.
+time-like token: `HH:`, `_:`, a step `<n>H:` (one or two digits), a one- or two-digit hour
+(`9:`, `09:`), an hour range `09-16:`, or an hour list `[09,12]:`.
 This prevents weekday names like `TUE` and `THU` from being confused with the separator.
 
 ```text
@@ -86,7 +86,7 @@ from an anchor chosen with `.with_time_anchor(…)`:
 | `Midnight` | 00:00:00 | hh:00:00 every hour | 00:00, 02:00, … 22:00 | 00:00 |
 
 With `Start`, every date gets the same times, and steps keep one phase across midnight
-(`2H` from 19:15 → 21:00, 23:00, 01:00, …). With `Midnight`, every date — including the start
+(`2H:00:00` from 19:15 → 21:00, 23:00, 01:00, …). With `Midnight`, every date — including the start
 date — restarts the time spec from midnight.
 
 ### 4. The start date
@@ -142,7 +142,7 @@ boundary.
 
 To continue from an occurrence stored in a database, use
 `SpecIteratorBuilder::resume_after(spec, bdp, tz, last_actual)`, where `last_actual` is the
-stored ``actual()`` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
+stored `actual()` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
 same options; add `.with_end(end)` if the schedule has a stored end. A counted schedule, or one
 with a cycle with positions, needs `resume_with_start(spec, bdp, tz, start, last_actual)`, with
 the schedule's stored start. A `schedule::Schedule` needs neither: `slots_after(t)` gives the
@@ -176,7 +176,7 @@ The start datetime is always returned as the first result (passthrough).
 
 ---
 
-### 1. `YY-1M-31L~NBT11:00:00` — Last business day of each month at 11:00
+### 1. `YY-1M-31L~NBT11:00:00` — Month end at 11:00, moved to the next business day
 
 **Start:** 2025-01-31 11:00:00
 
@@ -394,7 +394,7 @@ Jan 15 emits only 4 ticks (08:00–20:00).  Feb 15 onward emits 6 ticks (00:00�
 
 ---
 
-### 9. `YY-1M-31L~NBTHH:30M:00` — Last business day of month, every 30 minutes
+### 9. `YY-1M-31L~NBTHH:30M:00` — Month end, moved to the next business day, every 30 minutes
 
 **Start:** 2025-01-31 08:00:00
 
@@ -785,7 +785,7 @@ Use `new_with_start` if you want the `dtm` itself returned as the first result.
 
 ### High-frequency time specs without an end bound produce unbounded output
 
-**Spec:** sub-minute time specs (`HH:MM:SS`, `HH:MM:00`) on daily or more-frequent date specs
+**Spec:** per-second and per-minute time specs (`HH:MM:SS`, `HH:MM:00`) on daily or more-frequent date specs
 
 ```text
 YY-MM-DDTHH:MM:SS  →  86 400 results per day  (every second)
@@ -793,7 +793,7 @@ YY-MM-DDTHH:MM:00  →   1 440 results per day  (every minute)
 YY-MM-DDTHH:30M:00 →      48 results per day  (every 30 minutes)
 ```
 
-Always pair sub-minute specs with a `with_end` boundary or consume with a bounded `take`.
+Always pair such specs with a `with_end` boundary or consume with a bounded `take`.
 
 ---
 

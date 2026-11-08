@@ -224,7 +224,7 @@ See [kubernetes.md](kubernetes.md) for the full hosting design.
 
 Note: `INBOX` carries no foreign key into `SCHEDULE_INSTANCE_RUN`. The relationship is logical — the processor resolves the domain entity via `correlation_id` at processing time.
 
-See [outbox-inbox-design.md](../../docs/outbox-inbox-design.md) for the full crate design.
+See [outbox-inbox-design.md](../../../docs/outbox-inbox-design.md) for the full crate design.
 
 ---
 

@@ -22,7 +22,7 @@ All three components are required. Each component is one of: a wildcard (`ForEac
 | `hh` (2-digit) | At | Pin to an exact hour (e.g. `09`, `13`, `17`) |
 | `[hh,…]` / `hh-hh` | Values | Any of a list or inclusive range of hours (e.g. `[09,12,17]`, `09-16`, `[09-11,14]`) |
 
-Valid ranges: `00`–`23` for At and Values; `1H`–`23H` for Every.
+Valid ranges: `00`–`23` for At and Values; `1H`–`255H` for Every.
 
 ### Minutes
 
@@ -34,7 +34,7 @@ Valid ranges: `00`–`23` for At and Values; `1H`–`23H` for Every.
 | `mm` (2-digit) | At | Pin to an exact minute (e.g. `00`, `15`, `30`, `45`) |
 | `[mm,…]` / `mm-mm` | Values | Any of a list or inclusive range of minutes (e.g. `[00,30]`, `00-14`) |
 
-Valid ranges: `00`–`59` for At and Values; `1M`–`59M` for Every.
+Valid ranges: `00`–`59` for At and Values; `1M`–`255M` for Every.
 
 ### Seconds
 
@@ -46,7 +46,10 @@ Valid ranges: `00`–`59` for At and Values; `1M`–`59M` for Every.
 | `ss` (2-digit) | At | Pin to an exact second (e.g. `00`, `15`, `30`) |
 | `[ss,…]` / `ss-ss` | Values | Any of a list or inclusive range of seconds (e.g. `[00,30]`) |
 
-Valid ranges: `00`–`59` for At and Values; `1S`–`59S` for Every.
+Valid ranges: `00`–`59` for At and Values; `1S`–`255S` for Every.
+
+A step may exceed its field's range: `25H:00:00` is every 25 hours and `HH:90M:00` every 90
+minutes.
 
 A list or range with a single value (`[09]`, `09-09`) is the same as `At`. Lists may mix values
 and ranges, and are kept in ascending order (`[14,09-11]` is `[09-11,14]`).
@@ -78,7 +81,7 @@ Per field:
   roles. With no step, each combination of values is a time of day: `[09,17]:[00,30]:00` is
   09:00, 09:30, 17:00 and 17:30.
 - **`AsIs`** (`_`) keeps the start's value when finer than the driver; coarser, it is free like
-  `ForEach`. Useful primarily in combined datetime specs (e.g. `YY-1M-31T_:_:_`).
+  `ForEach`. Useful primarily in combined datetime specs (e.g. `YY-1M-31LT_:_:_`).
 - **`ForEach`** (`HH`/`MM`/`SS`) behaves differently depending on whether any `Every` component is present:
 
 ### ForEach when an `Every` component is present
@@ -565,7 +568,7 @@ End computed: the first `3H:30M:SS` time after 09:00:00 (a 3h30m step, seconds c
 
 ### 22. `_:_:_` — AsIs in combined datetime spec
 
-**Context:** `YY-1M-31T_:_:_` (last day of each month, keep current time)
+**Context:** `YY-1M-31LT_:_:_` (last day of each month, at the start's time of day)
 
 `AsIs` (`_`) on all components means time is preserved as-is across date advances. All time components carry; only the date portion of the combined spec changes.
 
@@ -710,7 +713,7 @@ occurrence after the start becomes the end boundary. Any valid time spec may be 
 | end_spec | Meaning when applied from start S |
 |----------|-----------------------------------|
 | `13:00:00` | The next 13:00:00 after S — today, or tomorrow if S is later than 13:00 |
-| `1H:00:00` | End 1 hour after start, on the hour |
+| `1H:00:00` | The next hour boundary after S (10:00 from 09:20) |
 | `3H:30M:SS` | End 3 hours and 30 minutes after start |
 | `8H:MM:SS` | End exactly 8 hours after start |
 
@@ -761,11 +764,10 @@ The spec is applied to the wall-clock (local) time using `chrono::Duration` arit
 
 > *Library behaviour: set when building the iterator, not written in the spec.*
 
-To continue from an occurrence stored in a database, use
-`SpecIteratorBuilder::resume_after(spec, tz, last_actual)`, where `last_actual` is the
-stored `time` parsed back from RFC 3339. Store it with its UTC offset and rebuild with the
-same options; add `.with_end(end)` if the schedule has a stored end. A counted schedule must be
-resumed with `resume_with_start(spec, tz, start, last)`, which also takes the stored start. The crate
+To continue from a time stored in a database, use
+`SpecIteratorBuilder::resume_after(spec, tz, last)`, where `last` is the last time handled,
+parsed back from RFC 3339. Store it with its UTC offset and rebuild with the same options; add
+`.with_end(end)` if the schedule has a stored end. A counted schedule must be resumed with `resume_with_start(spec, tz, start, last)`, which also takes the stored start. The crate
 docs' section *Persisting and resuming a schedule* has the full pattern and the rules that keep
 resumed results identical to a continuous iterator.
 
@@ -858,8 +860,9 @@ keeps every step at 6 real hours.
 
 - In `Elapsed` mode stepped times never fall in a gap, so `DstPolicy` does not apply to them.
   Fixed fields (`09`, `30`) are read in the UTC offset of the previous occurrence.
-- `IntervalMode` is available on the time iterator only. Combined datetime specs always use
-  wall-clock steps.
+- `IntervalMode` is also available on the datetime iterator, where the first time on each date
+  still comes from the wall clock and later times that day are whole steps of real time after
+  the previous one.
 - The time iterator yields plain `DateTime<Tz>` values, so it cannot mark a time as shifted. The
   date and datetime iterators report shifted times as `AdjustedLater`; see the datetime spec.
 
@@ -900,7 +903,7 @@ time of day — which is never after it. The iterator terminates immediately aft
 - `new_after` from any time → yields nothing.
 
 **Preferred use:** `AsIs` components are meaningful only within **combined datetime specs**
-(e.g. `YY-1M-31T_:_:_`) where the date spec advances and the time portion is preserved.
+(e.g. `YY-1M-31LT_:_:_`) where the date spec advances and the time portion is preserved.
 
 ---
 

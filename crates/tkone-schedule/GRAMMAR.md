@@ -162,7 +162,7 @@ A schedule that matches the grammar is still rejected if any of these rules is b
 | A weekday occurrence (`DAY#n`, `DAY#nL`) is 1–5 | `YY-MM-MON#0`, `YY-MM-FRI#6` |
 | A business-day position (`BD#n`, `BD#nL`, `BD#[…]`) is 1–23 | `YY-MM-BD#0`, `YY-MM-BD#24` |
 | A range runs forwards | `YY-[06-01]-01`, `YY-MM-[FRI-MON]`, `YY-MM-BD#[3-1]` |
-| A bracketed range expands to fewer than 10,000 values | `[1-4000000000]-MM-01` |
+| A range in brackets covers at most 10,000 values | `[1-4000000000]-MM-01` |
 | A cycle with positions (`nY[…]`, `nM[…]`, `nD[…]`, `/nW[…]`) has a length of at least 1 and positions within 1…n | `YY-3M[4]-15`, `YY-MM-8D[0]`, `YY-MM-MON/2W[3]` |
 | A year cycle with positions is not combined with a month step or month cycle | `4Y[1]-3M-15` |
 | A month cycle with positions is not combined with a year step | `1Y-3M[1]-15` |

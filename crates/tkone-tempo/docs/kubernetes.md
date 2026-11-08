@@ -293,7 +293,7 @@ spec:
   triggers:
     - type: kafka           # or apache-kafka / aws-sqs depending on broker
       metadata:
-        topic: tempo-schedule-completions
+        topic: tempo.schedule.completed
         consumerGroup: tempo-inbox-relay
         lagThreshold: "1000"
 ```

@@ -102,8 +102,8 @@ value.
 | `09:15M:00` | every 15 minutes, only during the 09:00 hour |
 | `09-16:15M:00` | every 15 minutes from 09:00 to 16:45 |
 
-Steps are counted from the schedule's start: `HH:15M:00` started at 09:07 runs at 09:22, 09:37,
-and so on. To stay on fixed minutes whatever the start, name them: `HH:[00,15,30,45]:00`.
+Steps are counted from the schedule's start: `HH:15M:00` started at 09:07 runs at 09:07, 09:22,
+09:37 and so on. To stay on fixed minutes whatever the start, name them: `HH:[00,15,30,45]:00`.
 
 ### Date and time together
 
@@ -112,7 +112,7 @@ time part produces:
 
 ```text
 YY-MM-WED#2T08:00:00             08:00 on the 2nd Wednesday of every month
-YY-MM-[MON-FRI]T09-16:15M:00     every 15 minutes within 09:00–16:59, Monday to Friday
+YY-MM-[MON-FRI]T09-16:15M:00     every 15 minutes from 09:00 to 16:45, Monday to Friday
 YY-1M-31L~WT11:00:00             11:00 on the 31st (or the last day), moved off weekends
 ```
 
@@ -184,7 +184,8 @@ exclude:
   carries the `id` of the rule that produced it. This covers the irregular cases that one rule
   can't, such as the 3rd and the last business day of each month.
 - **`exclude`** leaves out given dates, or the dates a date spec produces. Exclusions apply to
-  the schedule's own date (the scheduled date, before any `~` adjustment) and to every rule.
+  every rule, and by default to the scheduled date, before any `~` adjustment; `match: observed`
+  tests the observed date instead.
 
 ---
 
@@ -239,7 +240,7 @@ The common business-day conventions map directly onto adjustments:
 | Preceding | `~PB` |
 | Modified Preceding | `~MP` |
 | Nearest business day | `~B` |
-| N business days before / after | `~NP` / `~NN` |
+| N business days before / after | `~nP` / `~nN` (`~2P`, `~2N`) |
 
 Instalment collections are usually defined by a start and a count or an end date, which the
 schedule document holds (`start`, `count`, `until`).

@@ -10,7 +10,7 @@ use tkone_schedule::date::SpecIteratorBuilder;
 use tkone_schedule::schedule::document::ScheduleDoc;
 
 let london = Calendars::builtin().get("GBLO")?;
-let payments = SpecIteratorBuilder::new_with_start("YY-1M-31L~MF", london, start).build()?;
+let payments = SpecIteratorBuilder::new_after("YY-1M-31L~MF", london, start).build()?;
 
 // Business days in both London and TARGET2.
 let both = Calendars::builtin().get("GBLO+EUTA")?;
@@ -36,7 +36,7 @@ Runnable use cases, in [`example-app`](../example-app/src/calendar/):
 | Program | Industry | Shows |
 |---------|----------|-------|
 | `cargo run -p example-app --bin loan-repayments` | Loan servicing | collections on a 25-year loan, Modified Following on London + New York; due vs paid dates |
-| `cargo run -p example-app --bin exchange-jobs` | Capital markets | 16:30 jobs on NYSE trading days, month-end report; the wrong calendar refused |
+| `cargo run -p example-app --bin exchange-jobs` | Capital markets | 16:30 jobs on NYSE trading days, month-end report; a document without a calendar refused |
 | `cargo run -p example-app --bin payroll` | HR | one fortnightly template run with Sydney's and Auckland's calendars |
 | `cargo run -p example-app --bin store-deliveries` | Retail | deliveries dropped on Johannesburg holidays, including a declared election day |
 

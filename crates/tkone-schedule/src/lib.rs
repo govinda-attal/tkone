@@ -245,6 +245,8 @@
 //! count and the money stay with the caller. tkone-calendar's
 //! `Calendar::fixed` writes a calendar out in full so expected dates don't
 //! change with its holiday data; its `tests/loan.rs` puts them together.
+//! A `schedule::Timeline` reads several schedules, each on its own calendar
+//! and in its own zone, as one stream of moments (`docs/timeline.md`).
 //!
 //! The iterator builders also take an end (`with_end`), a count
 //! (`with_count`) and exclusions (`with_exclusions`) for a single rule.

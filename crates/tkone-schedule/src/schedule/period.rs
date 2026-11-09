@@ -56,7 +56,7 @@ pub struct Boundary {
 }
 
 impl Boundary {
-    fn of(slot: &Slot) -> Self {
+    pub(super) fn of(slot: &Slot) -> Self {
         let actual = slot.sources.iter().map(|s| s.actual).min().unwrap_or(slot.at);
         Self { at: slot.at, actual }
     }

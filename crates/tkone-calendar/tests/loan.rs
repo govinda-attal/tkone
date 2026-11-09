@@ -8,7 +8,7 @@
 //! The calendar is written out in full with [`Calendar::fixed`], so the
 //! expected dates do not change when the built-in holiday data does.
 
-use chrono::{DateTime, NaiveDate, TimeZone, Weekday};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Weekday};
 use chrono_tz::Europe::London;
 use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
@@ -151,4 +151,60 @@ fn a_closure_at_short_notice() {
     // interest from the next period into this one, on a higher balance.
     assert_eq!(amortise(&before, Accrual::Unadjusted), amortise(&after, Accrual::Unadjusted));
     assert!(amortise(&after, Accrual::Adjusted).0 > amortise(&before, Accrual::Adjusted).0);
+}
+
+/// A second calendar, for the rate: weekends and 1 May each year.
+fn rate_calendar() -> Calendar {
+    let days_off = (2026..=2036).map(|y| date(y, 5, 1));
+    Calendar::fixed("RATE", date(2026, 1, 1)..=date(2036, 12, 31), &[Weekday::Sat, Weekday::Sun], days_off).unwrap()
+}
+
+#[test]
+fn a_floating_rate_over_ten_years() {
+    use tkone_schedule::schedule::Timeline;
+    // The rate for each period is fixed two of the rate calendar's business
+    // days before the period starts, on its own calendar.
+    let fixings = Schedule::builder(midnight(2026, 1, 1), rate_calendar())
+        .rule("YY-MM-15~2PT00:00:00")
+        .until(midnight(2035, 12, 31))
+        .build()
+        .unwrap();
+    // The drawdown starts the schedule; it is not a repayment.
+    let repayments = Schedule::builder(midnight(2026, 1, 15), calendar())
+        .rule("YY-MM-15~MFT00:00:00")
+        .exclude_date(date(2026, 1, 15))
+        .until(midnight(2036, 1, 15))
+        .build()
+        .unwrap();
+    let timeline = Timeline::new().add("fixing", fixings).add("repayment", repayments);
+    let moments: Vec<_> = timeline.between(midnight(2026, 1, 1)..=midnight(2036, 1, 31)).unwrap().collect().unwrap();
+
+    // Every period's rate is fixed before it starts: the first period's
+    // and the second's before the first repayment, then one between each
+    // pair of repayments, and none after the last.
+    let keys: Vec<&str> = moments.iter().flat_map(|m| m.entries.iter().map(|e| e.key)).collect();
+    let mut want = vec!["fixing"];
+    want.extend(std::iter::repeat_n(["fixing", "repayment"], 119).flatten());
+    want.push("repayment");
+    assert_eq!(keys, want);
+
+    // Step through. The first fixing is the first period's rate; each later
+    // one is the next period's, and takes over when a repayment closes the
+    // current period.
+    let rate_for = |fixed: DateTime<Tz>| 400 + i64::from(fixed.month() % 3) * 50; // bp, made up
+    let (mut rate, mut next_rate) = (None, None);
+    let (mut balance, mut interest) = (PRINCIPAL, 0i64);
+    for entry in moments.iter().flat_map(|m| &m.entries) {
+        if entry.key == "fixing" {
+            let fixed = Some(rate_for(entry.slot.at));
+            if rate.is_none() { rate = fixed } else { next_rate = fixed }
+            continue;
+        }
+        let days = days(entry.since.actual, entry.slot.sources[0].actual);
+        interest += balance * rate.expect("a rate for the period") * days / (10_000 * 365);
+        balance -= PRINCIPAL / 120;
+        rate = next_rate.take().or(rate);
+    }
+    assert_eq!(balance, 0);
+    assert!(interest > 0);
 }

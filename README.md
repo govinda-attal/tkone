@@ -36,7 +36,8 @@ that combine crates. A new example goes in the crate it demonstrates, or in
 ## Documentation
 
 - [Scheduling in Rust](docs/scheduling-in-rust.md) — patterns and design rationale
-- [Schedule documents](docs/schedule-document.md) — rule strings inside YAML/JSON schedules; definitions and instances (proposed)
+- [Schedule documents](docs/schedule-document.md) — rule strings inside YAML/JSON schedules; definitions and instances (tempo's side is proposed)
+- [Timelines](docs/timeline.md) — several schedules read as one, moment by moment: loans, accounts, cross-border payments
 - [Outbox / Inbox crate design](docs/outbox-inbox-design.md) — `tkone-outbox` and `tkone-inbox` design (in-progress)
 - [Date spec](crates/tkone-schedule/src/date/date-spec.md) · [Time spec](crates/tkone-schedule/src/time/time-spec.md) · [Datetime spec](crates/tkone-schedule/src/datetime/date-time-spec.md) — mini-language references
 - [Tempo architecture](crates/tkone-tempo/docs/components.md) · [ERD](crates/tkone-tempo/docs/erd.md) · [Sequences](crates/tkone-tempo/docs/sequences.md)

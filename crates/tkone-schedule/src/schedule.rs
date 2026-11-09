@@ -32,9 +32,11 @@
 pub mod document;
 pub mod period;
 pub mod selector;
+pub mod timeline;
 
 pub use period::{Boundary, Period, Periods};
 pub use selector::{Next, Selector, SelectorBuilder};
+pub use timeline::{Entry, Moment, Moments, Timeline};
 
 use std::collections::{BTreeSet, VecDeque};
 use std::ops::RangeInclusive;

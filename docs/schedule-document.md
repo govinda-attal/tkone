@@ -3,6 +3,8 @@
 Status: **in progress**. `Schedule`, `Selector` and `ScheduleDoc` (the
 `serde` feature of tkone-schedule) are built, users are moved over, and the
 grammar is rule-only. Tempo is next. See [Migration](#migration).
+Periods, bounded slots and [timelines](timeline.md) (several schedules read
+as one) are built on `Schedule`.
 
 ## Motivation
 

@@ -409,6 +409,74 @@ fn slots_moved_before_the_start_are_reported() {
 }
 
 // ---------------------------------------------------------------------------
+// Timelines
+// ---------------------------------------------------------------------------
+
+fn monthly(start: DateTime<Tz>, rule: &str) -> Schedule<WeekendSkipper> {
+    Schedule::builder(start, WeekendSkipper::new()).rule(rule).build().unwrap()
+}
+
+#[test]
+fn a_timeline_is_its_schedules_merged() {
+    use crate::schedule::Timeline;
+    let a = monthly(at(2026, 1, 1, 0, 0), "YY-MM-DD~SBT09:00:00");
+    let b = monthly(at(2026, 1, 15, 0, 0), "YY-MM-L~PBT09:00:00");
+    let (from, to) = (at(2026, 1, 20, 0, 0), at(2026, 4, 1, 0, 0));
+    let timeline = Timeline::new().add('a', a.clone()).add('b', b.clone());
+    let moments: Vec<_> = timeline.between(from..=to).unwrap().collect().unwrap();
+    // Every slot of each, once, in time order.
+    for (key, schedule) in [('a', &a), ('b', &b)] {
+        let want: Vec<Slot> = schedule.slots_between(from..=to).unwrap().collect().unwrap();
+        let got: Vec<Slot> =
+            moments.iter().flat_map(|m| m.entries.iter().filter(|e| e.key == key).map(|e| e.slot.clone())).collect();
+        assert_eq!(got, want, "{key}");
+    }
+    assert!(moments.windows(2).all(|w| w[0].at < w[1].at));
+    // At month ends both, in the order added.
+    let both: Vec<String> = moments.iter().filter(|m| m.entries.len() == 2).map(|m| m.at.format("%d %b").to_string()).collect();
+    assert_eq!(both, ["30 Jan", "27 Feb", "31 Mar"]);
+    assert!(moments.iter().filter(|m| m.entries.len() == 2).all(|m| m.entries.iter().map(|e| e.key).collect::<String>() == "ab"));
+    // `since` is the period's start, as `periods` gives it.
+    let periods: Vec<_> = b.periods_between(from..=to).unwrap().map(|p| Ok(p.start)).collect().unwrap();
+    let since: Vec<_> = moments.iter().flat_map(|m| m.entries.iter().filter(|e| e.key == 'b').map(|e| e.since)).collect();
+    assert_eq!(since, periods);
+    assert_eq!(since[0].at, at(2026, 1, 15, 0, 0), "the first is the schedule's start");
+}
+
+#[test]
+fn a_timeline_orders_instants_across_zones() {
+    use crate::schedule::Timeline;
+    let new_york = |y, m, d, h| chrono_tz::America::New_York.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap();
+    let london = monthly(at(2026, 7, 1, 0, 0), "YY-MM-DD~SBT16:00:00");
+    let ny = monthly(new_york(2026, 7, 1, 0), "YY-MM-DD~SBT11:00:00");
+    let moments: Vec<_> = Timeline::new()
+        .add("ny", ny)
+        .add("london", london)
+        .between(at(2026, 7, 1, 0, 0)..=at(2026, 7, 1, 23, 0))
+        .unwrap()
+        .map(|m| Ok((m.at.to_rfc3339(), m.entries.iter().map(|e| e.key).collect::<Vec<_>>())))
+        .collect()
+        .unwrap();
+    // 16:00 in London is 11:00 in New York: one moment, in New York's zone.
+    assert_eq!(moments, [("2026-07-01T11:00:00-04:00".to_string(), vec!["ny", "london"])]);
+}
+
+#[test]
+fn timeline_edges() {
+    use crate::schedule::Timeline;
+    let a = || monthly(at(2026, 3, 1, 0, 0), "YY-MM-01T00:00:00");
+    let error = |t: Timeline<&str, WeekendSkipper>| t.between(at(2026, 1, 1, 0, 0)..=at(2027, 1, 1, 0, 0)).unwrap_err().to_string();
+    assert!(error(Timeline::new()).contains("at least one"));
+    assert!(error(Timeline::new().add("a", a()).add("a", a())).contains("used twice"));
+    // A range before a schedule starts has nothing from it.
+    let early = Timeline::new().add("a", a()).between(at(2026, 1, 1, 0, 0)..=at(2026, 2, 1, 0, 0)).unwrap();
+    assert_eq!(early.count().unwrap(), 0);
+    // A slot at the schedule's start: `since` is the start itself.
+    let first = Timeline::new().add("a", a()).between(at(2026, 3, 1, 0, 0)..=at(2026, 3, 1, 0, 0)).unwrap().next().unwrap().unwrap();
+    assert_eq!((first.entries[0].since.at, first.at), (at(2026, 3, 1, 0, 0), at(2026, 3, 1, 0, 0)));
+}
+
+// ---------------------------------------------------------------------------
 // Invalid schedules
 // ---------------------------------------------------------------------------
 

@@ -162,6 +162,7 @@ The moments, January to April (times in London):
 
 ```mermaid
 gantt
+    todayMarker off
     title Floating-rate loan, January to April 2026 (London time)
     dateFormat YYYY-MM-DD HH:mm
     axisFormat %d %b
@@ -266,6 +267,7 @@ settles                  1       0       1       1       1       1       ·     
 
 ```mermaid
 gantt
+    todayMarker off
     title Cut-off in London, settlement in New York (New York time)
     dateFormat YYYY-MM-DD HH:mm
     axisFormat %a %d

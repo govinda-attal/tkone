@@ -27,6 +27,10 @@ serde_yaml_ng  = { workspace = true, optional = true }
 thiserror      = { workspace = true }
 tkone-schedule = { workspace = true, features = ["serde"] }
 
+[dev-dependencies]
+# docs/loan-lifecycle.md is YAML; its test reads it.
+serde_yaml_ng  = { workspace = true }
+
 [[bin]]
 name = "tkone-calendar-compile"
 path = "tools/compile.rs"

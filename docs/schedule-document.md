@@ -4,7 +4,8 @@ Status: **in progress**. `Schedule`, `Selector` and `ScheduleDoc` (the
 `serde` feature of tkone-schedule) are built, users are moved over, and the
 grammar is rule-only. Tempo is next. See [Migration](#migration).
 Periods, bounded slots and [timelines](timeline.md) (several schedules read
-as one) are built on `Schedule`.
+as one) are built on `Schedule`. [A loan's life](loan-lifecycle.md) puts it
+all together, from setup to closure.
 
 ## Motivation
 
@@ -624,11 +625,28 @@ A reference within one document keeps everything else as it is:
    the basis can differ from the real repayments. The application must use
    the same calendar, or tempo must check that the basis's calendar matches
    the definition it was copied from.
-2. **A start that bounds without being a slot.** A loan drawn on the 15th
-   with repayments on the 15th makes the drawdown a repayment slot (D1). It
-   is excluded today. A derived rule that needs the drawdown, such as the
-   first period's rate fixing two days before it, then has no basis slot to
-   derive from. A start-exclusive option would solve both.
+2. **The start as a boundary, not a run.** Settled without a new concept.
+   A loan drawn on the 15th with repayments on the 15th makes the drawdown a
+   slot (D1). Two places want opposite things:
+
+   | Place | Wants the start to be |
+   |---|---|
+   | repayments | not a slot: nothing is repaid at the drawdown |
+   | the first period's rate fixing, derived from the boundaries | a boundary to derive from |
+
+   - **"The start is not a run":** exclude its date, as the repayments do
+     in [the loan example](loan-lifecycle.md#3-collections-the-repayments).
+   - **"The start is a boundary":** a basis rule keeps it. A basis has no
+     slots of its own, so including the drawdown is harmless, and
+     `{boundary}~2P` derives the first fixing from it.
+   - **Both in one document:** a derived reminder whose basis includes the
+     drawdown excludes the drawdown's *date*, since a derived slot's actual
+     is its basis date (D3).
+
+   `Schedule::periods()` already treats a slot at the start this way: it
+   opens the first period instead of ending one. A start-exclusive option
+   was considered and rejected: it fixes the first place and breaks the
+   second.
 3. **Reach.** `slots_after(t)` on a derived rule reads the basis from far
    enough ahead or back, by the derived adjustment's reach (`~2P`: basis
    slots up to two business days after `t`). The existing reach logic,

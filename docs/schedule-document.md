@@ -409,6 +409,45 @@ Without the check, a missing calendar would fall back to `WeekendSkipper`,
 which silently treats every weekday as a business day; for operations that
 is a trap. Weekend-only is written `calendar: WEEKENDS`.
 
+### D11. Applications own domain dates; tempo owns timing
+
+Dates that belong to a domain object, such as a loan's repayments and its
+borrower's reminders, are the application's. The application knows the
+terms and the events that change them. Tempo knows when to run things, and
+how to retry, overlap and catch up.
+
+- **Set once.** When a loan is set up, the application registers its
+  instances with their rules. Tempo computes each next due lazily (D6) and
+  keeps going for the life of the loan.
+- **Lifetime events are new versions.** A payment holiday, early repayment
+  or restructure: the application recomputes the rules and sends a new
+  version of the instance document (D12). Tempo recomputes from it.
+- **Nothing crosses documents.** Tempo never derives one document's dates
+  from another's. A rule may refer only to rules in its own document
+  ([proposal](#proposed-rules-derived-from-other-rules)). Anything that
+  spans documents is application logic, computed with tkone-schedule
+  (`Schedule`, periods, a [timeline](timeline.md)) and registered as rules.
+
+### D12. A new version keeps the stored next due, unless it can't stand
+
+Tempo versions every document. Each instance stores only its next due (D6),
+so a new version changes what is computed *after* that due, from the same
+anchor (D9). The stored due itself is kept, and fires as computed by the
+version that computed it (recorded on the run), except when:
+
+| Case | Example | The stored due |
+|---|---|---|
+| The new version has ended before it | early repayment: `until` before the due | dropped |
+| The calendar closes its day | a holiday declared at short notice | recomputed |
+| The new version asks for it (`recompute_pending: true`) | a restructure: repay on the 20th, not the 15th | recomputed |
+
+A lifetime event usually needs the third case. A change that leaves the
+dates alone, such as a new rate, needs none.
+
+Calendar data is a version too: a holiday declared at short notice changes
+every document on that calendar. Tempo records the calendar data each due
+was computed with, which is how it detects the second case.
+
 ---
 
 ## Builder
@@ -455,33 +494,33 @@ Gaps in the earlier builders this closed:
 
 ## Proposed: rules derived from other rules
 
-Status: **proposed**, not built. To decide with tempo (Migration step 4),
-when a job first needs it.
+Status: **proposed**, not built. To decide with tempo (Migration step 4).
 
 ### The need
 
-A date is often defined by another date *after* its adjustment: a report
-two business days before the month-end payment, a rate fixed two TARGET
-days before a London repayment. A spec has one adjustment, and the nearest
-single spec gives the wrong day:
+A date is often defined by another date *after* its adjustment: a reminder
+two business days before a loan's repayment, a report two business days
+before the month-end close. A spec has one adjustment, and the nearest
+single spec can give the wrong day:
 
 | Month end | Payment `YY-MM-L~MF` | `YY-MM-L~2P` | 2 business days before the payment |
 |---|---|---|---|
 | Sun 31 May 2026 | Fri 29 May | Thu 28 May | **Wed 27 May** |
 
 `~2P` counts back from Sunday, not from Friday. On `GBLO` the two differ in
-five months of 2026. In Rust this is one line,
-`calendar.sub(&slot.at.naive_local(), 2)?`, and a [timeline](timeline.md)
-orders the results. A document has no code around it, so a tempo job written
-in YAML can't express it.
+five months of 2026.
+
+In Rust this is one line, `calendar.sub(&slot.at.naive_local(), 2)?`. But
+an application registers rules once and leaves tempo to compute every next
+due for the life of the loan (D11), so there is no code at run time: the
+rule itself has to say "two business days before the repayment".
 
 ### Rejected: chained adjustments
 
 `YY-MM-L~MF~2P`, applied left to right.
 
-- **One calendar.** A spec is read on one calendar, so the fixing case
-  (repayment on London, fixing on TARGET) can't be written. Only the smaller,
-  single-calendar case could be.
+- **One calendar.** A spec is read on one calendar; a dependent date on
+  another calendar can't be written.
 - **Duplicated rules.** The dependent rule repeats the payment's
   `YY-MM-L~MF`. Change one to `~MP` and not the other, and the dates drift
   apart silently.
@@ -492,100 +531,109 @@ in YAML can't express it.
 ### Rejected: explicit fields
 
 ```yaml
-- { id: fixing, from: payment, offset: -2BD, calendar: EUTA, time: "11:00:00" }
+- { id: reminder, from: repayment, offset: -2BD, time: "09:00:00" }
 ```
 
 This is a second, weaker language beside the spec. The offset is a
-`~nP` written differently, the time is a `T…` written differently, and the
-calendar is a per-rule calendar, which a document deliberately doesn't have
-(see [Deferred](#deferred)).
+`~nP` written differently, and the time is a `T…` written differently.
 
-### Proposal: a reference as the date part
+### Rejected: references across documents
 
-A spec is `date [~adjustment] T time`. The date part can name another
-rule's slots instead of a date pattern:
+`{loan.repayment}~2PT11:00:00`, one document's rule referring to another
+document's. Rules would no longer mean anything without the documents they
+name; loading, validation and versioning (D12) would have to follow a graph
+of documents, one edge per instance; and it would make tempo derive domain
+dates, which belong to the application (D11).
+
+### Proposal: a reference to a rule in the same document
+
+A spec is `date [~adjustment] T time`. The date part can name another rule
+of the same document instead of a date pattern:
 
 ```yaml
+# loan 123's reminder instance, registered once when the loan is set up
 rules:
-  - id: payment
-    rule: YY-MM-L~MFT12:00:00
-  - id: report
-    rule: "{payment}~2PT09:00:00"   # Sun 31 May → payment Fri 29 May → report Wed 27 May
+  - id: repayment
+    rule: YY-MM-15~MFT12:00:00
+    basis: true                          # referred to; no slots of its own
+  - id: reminder
+    rule: "{repayment}~2PT09:00:00"      # two business days before each repayment
 ```
 
-- `{payment}` gives each slot of `payment` at its adjusted date.
+- `{repayment}` gives each slot of `repayment` at its adjusted date.
 - `~2P` is the derived rule's one adjustment. "One adjustment per spec"
   still holds: the first adjustment is in the rule referred to.
 - `T09:00:00` is an ordinary time. `T_:_:_` keeps the referred slot's time,
   as `_` ("as is") keeps the start's today.
+- **`basis: true`** marks a rule that other rules refer to and that has no
+  slots of its own. An instance selects among one definition's slots, and
+  the repayments are another definition's (the collections). The reminder
+  instance therefore carries the repayment rule as its basis.
 
-**Another calendar is another document.** A document is one context: one
-zone, one calendar, one start. A rule that counts on TARGET belongs in a
-TARGET document and refers to the other document's rule as
-`{document.rule}`:
+The repayment rule is then written in two documents: the repayment instance
+and the reminder instance. Both are written by the application from one loan
+record, and replaced together on a lifetime event (D11, D12). The
+application owns keeping them the same, as it owns the loan.
 
-```yaml
-# loan
-id: loan
-time_zone: Europe/London
-calendar: GBLO+EUTA
-start: 2026-01-15T12:00:00
-rules:
-  - { id: repayment, rule: YY-MM-15~MFT12:00:00 }
----
-# fixings: two TARGET days before each repayment, 11:00 Brussels
-id: fixings
-time_zone: Europe/Brussels
-calendar: EUTA
-start: 2026-01-01
-rules:
-  - { id: fixing, rule: "{loan.repayment}~2PT11:00:00" }
+A reference within one document keeps everything else as it is:
+
+- The document is still one context: one zone, one calendar, one start.
+- It has one version, so a lifetime event changes the basis and the derived
+  rule together.
+- Validation stays local: references resolve within the document, and a
+  loop (`{a}` in `b`, `{b}` in `a`) is refused when it is loaded.
+
+### Semantics: two sieves
+
+```text
+1. The basis rule, from the document's start:      15 Feb   15 Mar   15 Apr  ...
+   adjusted (~MF):                                 16 Feb   16 Mar   15 Apr  ...
+2. The derived rule's own adjustment (~2P):        12 Feb   12 Mar   13 Apr  ...
+3. The document's exclusions, until and count apply to these slots, as to any.
 ```
 
-No new fields: the documents are those of today, plus a document `id`. This
-is the [timeline](timeline.md)'s model written down: one context per
-document, and references between them.
-
-### Semantics
-
-- **Actual and observed.** A derived slot's actual is the referred slot's
+- **The basis decides what exists.** It is read from the document's start
+  without `until` or count. A derived slot exists only for a basis slot.
+- **The document can only remove.** Its exclusions, `until` and count apply
+  to the derived slots. With no `until`, they last as long as the basis.
+- **Start.** A reference has no cadence, so for a derived rule the start
+  only bounds. A derived slot moved before the start is dropped (D1), and
+  `moved_before_start` reports it.
+- **Actual and observed.** A derived slot's actual is the basis slot's
   adjusted date, at the derived rule's time. Its observed is that after the
-  derived rule's adjustment. Exclusions match the actual by default (D3),
-  which here is the referred slot's date.
-- **Provenance.** A derived slot's source names the referred slot (rule id
-  and instant): "the fixing for the 16 February repayment" is an identity,
-  not a coincidence of dates.
-- **Adjustments after a reference.**
-  - `~nP` and `~nN` (offsets) are the main use.
-  - `~NB`, `~PB`, `~MF`, `~MP` and `~SB` handle a referred date that isn't a
-    business day on this calendar (a London date that is a TARGET holiday).
-  - The weekday forms (`~MON`) work as anywhere else.
-- **A reference is the whole date part.** `{payment}` can't be combined with
-  a date pattern or a week cycle.
-- **Grammar.** One alternative for the date part, `"{" id [ "." id ] "}"`,
-  in the ABNF and GRAMMAR.md. Nothing else changes.
+  derived rule's adjustment. Exclusions match the actual by default (D3).
+- **Provenance.** A derived slot's source names the basis slot (rule id and
+  instant): "the reminder for the 16 March repayment" is an identity, not a
+  coincidence of dates.
+- **Selection.** A derived slot's observed instant must still be a slot of
+  the definition (D5); `uncovered` checks this as for any rule.
+- **Adjustments after a reference.** `~nP` and `~nN` (offsets) are the main
+  use. `~NB`, `~PB`, `~MF`, `~MP` and `~SB` handle a basis date that isn't a
+  business day on the document's calendar. The weekday forms (`~MON`) work as
+  anywhere else.
+- **A reference is the whole date part.** `{repayment}` can't be combined
+  with a date pattern or a week cycle.
+- **Grammar.** One alternative for the date part, `"{" id "}"`, in the ABNF
+  and GRAMMAR.md. Nothing else changes.
 
 ### Open questions
 
-1. **Rules stop being context-free.** `"{loan.repayment}~2PT11:00:00"` means
-   nothing without the `loan` document. Loading and validation need the set
-   of documents, and a `Schedule` would need its referred schedules: a
-   derived `Schedule` built from a base `Schedule`, or derived lanes on a
-   timeline.
-2. **Cycles.** `{a}` in `b` and `{b}` in `a` must be refused when the
-   documents are loaded, across documents too.
-3. **Versions (D9).** When `loan` gets a new version, `fixings` changes
-   without being edited. Tempo would version references, or pin them to a
-   version, or treat a change to a referred document as a change to each
-   referrer.
-4. **Start and `until`.** The derived rule's slots come from the referred
-   rule's, so its own start and `until` only cut them. A fixing before its
-   own document's start would be dropped as usual (D1); `moved_before_start`
-   reports it.
-5. **Selectors.** An instance selects among a definition's slots (D5). Can a
-   selector's rule refer to another rule? Probably not in a first version.
-6. **Python.** The bindings read documents, so references would come with
-   multi-document loading there too.
+1. **The basis is read on the document's calendar.** In the reminder
+   instance, the repayment's `~MF` is evaluated on the reminder
+   definition's calendar. If the collections definition uses another one,
+   the basis can differ from the real repayments. The application must use
+   the same calendar, or tempo must check that the basis's calendar matches
+   the definition it was copied from.
+2. **A start that bounds without being a slot.** A loan drawn on the 15th
+   with repayments on the 15th makes the drawdown a repayment slot (D1). It
+   is excluded today. A derived rule that needs the drawdown, such as the
+   first period's rate fixing two days before it, then has no basis slot to
+   derive from. A start-exclusive option would solve both.
+3. **Reach.** `slots_after(t)` on a derived rule reads the basis from far
+   enough ahead or back, by the derived adjustment's reach (`~2P`: basis
+   slots up to two business days after `t`). The existing reach logic,
+   composed once.
+4. **Python.** The bindings read documents, so references come with them.
 
 ## Deferred
 
@@ -601,8 +649,8 @@ Specified here so the format can grow into them; not built in version 1.
   definition. The instance calendar would shape selection only; `uncovered`
   still guards it.
 - **Per-rule zone or calendar**: a second zone is a second definition.
-- **Rules derived from other rules** (`{payment}~2PT09:00:00`): see
-  [the proposal](#proposed-rules-derived-from-other-rules).
+- **Rules derived from other rules** (`{repayment}~2PT09:00:00`), within
+  one document: see [the proposal](#proposed-rules-derived-from-other-rules).
 - **Jitter**: execution, not schedule.
 
 ---

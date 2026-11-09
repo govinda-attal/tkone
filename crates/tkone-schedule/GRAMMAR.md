@@ -237,7 +237,11 @@ A date spec is evaluated in layers:
    is not that day of the week to the nearest one, at most 3 days away (7 is odd, so there is
    never a tie); `~NDAY` and `~PDAY` move it to the next or previous one. These three count
    calendar days and ignore the holiday calendar: `YY-05-24~PMON` is the Monday on or before
-   24 May. Only one adjustment applies per spec.
+   24 May. A spec has exactly one adjustment, by design. Chained adjustments (`~MF~2P`) are not
+   part of the grammar: most chains mean nothing (`~NB~PB`), and the one that matters, a date a
+   number of business days before another rule's *adjusted* date, usually counts on another
+   calendar than that rule's. It is a separate rule derived from the first, which the schedule
+   holding the rules, not the spec, expresses.
 
 The schedule always continues from actual dates, so an adjustment never shifts the dates that
 follow it. Every actual date produces at most one occurrence, even when several observed dates

@@ -453,6 +453,140 @@ Gaps in the earlier builders this closed:
 
 ---
 
+## Proposed: rules derived from other rules
+
+Status: **proposed**, not built. To decide with tempo (Migration step 4),
+when a job first needs it.
+
+### The need
+
+A date is often defined by another date *after* its adjustment: a report
+two business days before the month-end payment, a rate fixed two TARGET
+days before a London repayment. A spec has one adjustment, and the nearest
+single spec gives the wrong day:
+
+| Month end | Payment `YY-MM-L~MF` | `YY-MM-L~2P` | 2 business days before the payment |
+|---|---|---|---|
+| Sun 31 May 2026 | Fri 29 May | Thu 28 May | **Wed 27 May** |
+
+`~2P` counts back from Sunday, not from Friday. On `GBLO` the two differ in
+five months of 2026. In Rust this is one line,
+`calendar.sub(&slot.at.naive_local(), 2)?`, and a [timeline](timeline.md)
+orders the results. A document has no code around it, so a tempo job written
+in YAML can't express it.
+
+### Rejected: chained adjustments
+
+`YY-MM-L~MF~2P`, applied left to right.
+
+- **One calendar.** A spec is read on one calendar, so the fixing case
+  (repayment on London, fixing on TARGET) can't be written. Only the smaller,
+  single-calendar case could be.
+- **Duplicated rules.** The dependent rule repeats the payment's
+  `YY-MM-L~MF`. Change one to `~MP` and not the other, and the dates drift
+  apart silently.
+- **Mostly meaningless.** `~NB~PB`, `~SB~2P` and `~MON~MF` would all parse,
+  and each would need defined behaviour, tests and documentation. The grammar
+  was just made smaller by moving context out of it (bounds, `!`, `|`).
+
+### Rejected: explicit fields
+
+```yaml
+- { id: fixing, from: payment, offset: -2BD, calendar: EUTA, time: "11:00:00" }
+```
+
+This is a second, weaker language beside the spec. The offset is a
+`~nP` written differently, the time is a `T…` written differently, and the
+calendar is a per-rule calendar, which a document deliberately doesn't have
+(see [Deferred](#deferred)).
+
+### Proposal: a reference as the date part
+
+A spec is `date [~adjustment] T time`. The date part can name another
+rule's slots instead of a date pattern:
+
+```yaml
+rules:
+  - id: payment
+    rule: YY-MM-L~MFT12:00:00
+  - id: report
+    rule: "{payment}~2PT09:00:00"   # Sun 31 May → payment Fri 29 May → report Wed 27 May
+```
+
+- `{payment}` gives each slot of `payment` at its adjusted date.
+- `~2P` is the derived rule's one adjustment. "One adjustment per spec"
+  still holds: the first adjustment is in the rule referred to.
+- `T09:00:00` is an ordinary time. `T_:_:_` keeps the referred slot's time,
+  as `_` ("as is") keeps the start's today.
+
+**Another calendar is another document.** A document is one context: one
+zone, one calendar, one start. A rule that counts on TARGET belongs in a
+TARGET document and refers to the other document's rule as
+`{document.rule}`:
+
+```yaml
+# loan
+id: loan
+time_zone: Europe/London
+calendar: GBLO+EUTA
+start: 2026-01-15T12:00:00
+rules:
+  - { id: repayment, rule: YY-MM-15~MFT12:00:00 }
+---
+# fixings: two TARGET days before each repayment, 11:00 Brussels
+id: fixings
+time_zone: Europe/Brussels
+calendar: EUTA
+start: 2026-01-01
+rules:
+  - { id: fixing, rule: "{loan.repayment}~2PT11:00:00" }
+```
+
+No new fields: the documents are those of today, plus a document `id`. This
+is the [timeline](timeline.md)'s model written down: one context per
+document, and references between them.
+
+### Semantics
+
+- **Actual and observed.** A derived slot's actual is the referred slot's
+  adjusted date, at the derived rule's time. Its observed is that after the
+  derived rule's adjustment. Exclusions match the actual by default (D3),
+  which here is the referred slot's date.
+- **Provenance.** A derived slot's source names the referred slot (rule id
+  and instant): "the fixing for the 16 February repayment" is an identity,
+  not a coincidence of dates.
+- **Adjustments after a reference.**
+  - `~nP` and `~nN` (offsets) are the main use.
+  - `~NB`, `~PB`, `~MF`, `~MP` and `~SB` handle a referred date that isn't a
+    business day on this calendar (a London date that is a TARGET holiday).
+  - The weekday forms (`~MON`) work as anywhere else.
+- **A reference is the whole date part.** `{payment}` can't be combined with
+  a date pattern or a week cycle.
+- **Grammar.** One alternative for the date part, `"{" id [ "." id ] "}"`,
+  in the ABNF and GRAMMAR.md. Nothing else changes.
+
+### Open questions
+
+1. **Rules stop being context-free.** `"{loan.repayment}~2PT11:00:00"` means
+   nothing without the `loan` document. Loading and validation need the set
+   of documents, and a `Schedule` would need its referred schedules: a
+   derived `Schedule` built from a base `Schedule`, or derived lanes on a
+   timeline.
+2. **Cycles.** `{a}` in `b` and `{b}` in `a` must be refused when the
+   documents are loaded, across documents too.
+3. **Versions (D9).** When `loan` gets a new version, `fixings` changes
+   without being edited. Tempo would version references, or pin them to a
+   version, or treat a change to a referred document as a change to each
+   referrer.
+4. **Start and `until`.** The derived rule's slots come from the referred
+   rule's, so its own start and `until` only cut them. A fixing before its
+   own document's start would be dropped as usual (D1); `moved_before_start`
+   reports it.
+5. **Selectors.** An instance selects among a definition's slots (D5). Can a
+   selector's rule refer to another rule? Probably not in a first version.
+6. **Python.** The bindings read documents, so references would come with
+   multi-document loading there too.
+
 ## Deferred
 
 Specified here so the format can grow into them; not built in version 1.
@@ -467,6 +601,8 @@ Specified here so the format can grow into them; not built in version 1.
   definition. The instance calendar would shape selection only; `uncovered`
   still guards it.
 - **Per-rule zone or calendar**: a second zone is a second definition.
+- **Rules derived from other rules** (`{payment}~2PT09:00:00`): see
+  [the proposal](#proposed-rules-derived-from-other-rules).
 - **Jitter**: execution, not schedule.
 
 ---

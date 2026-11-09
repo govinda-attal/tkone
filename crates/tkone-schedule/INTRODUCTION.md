@@ -394,10 +394,18 @@ The format is deliberately small. Some things it leaves out:
   (periods with stubs, dates generated backwards from maturity, fixings a number of business
   days before an adjusted date, day counts) are trade economics, defined by FpML, ISDA CDM and
   libraries such as QuantLib. tkone schedules the operations around them: when payments run,
-  reports are due and jobs fire. A spec has one adjustment, so "two business days before the
-  adjusted date" is computed in code, not written in one spec.
+  reports are due and jobs fire.
+- **A spec has one adjustment.** "Two business days before the month-end payment, after
+  Modified Following" would need two (`YY-MM-L~MF~2P`), which doesn't parse. The single spec
+  `YY-MM-L~2P` counts back from the month end itself, not from the moved payment: for Sunday
+  31 May 2026 the payment moves to Friday 29 May, and `~2P` gives Thursday 28 May, while two
+  London business days before the payment is Wednesday 27 May. In 2026 the two differ in five
+  months. Generate the payments with one spec and step back from each in code, with the
+  calendar: `london.sub(&payment.at.naive_local(), 2)?`.
 - **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; an
-  occurrence has no length.
+  occurrence has no length. The time *between* occurrences is what `Schedule::periods()`
+  gives: each period from one slot to the next, with its adjusted and unadjusted boundaries,
+  for accrual and the like.
 - **One start for every rule.** All rules of a schedule count from the same start; a rule
   can't be offset by a week or a day.
 - **Weeks run Monday to Sunday.** There is no setting for another first day of the week, and no

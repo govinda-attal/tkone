@@ -25,7 +25,7 @@ fn main() {
         .next()
         .unwrap()
         .unwrap()
-        .observed();
+        .actual();
 
     // Step 2: iterate from that start date (inclusive).
     let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PB", bdp, start).build().unwrap();

@@ -41,16 +41,17 @@ corresponding recurrence iterator:
 ### 1 — Find the first matching date, then iterate from it
 
 The most common pattern is to derive a concrete *start datetime* from the spec
-itself — i.e. "what is the very next occurrence?" — and then hand that datetime
-back to the iterator so it becomes the first item of the series.
+itself — i.e. "what is the very next occurrence?" — and then hand its actual
+date back to the iterator, so the series starts with that occurrence.
 
 ```rust
 // Step 1: find the first occurrence strictly after now
 let start = SpecIteratorBuilder::new_after("YY-1M-L", bdp.clone(), now)
     .build().unwrap().next().unwrap().unwrap()
-    .observed().clone();
+    .actual().clone();
 
-// Step 2: iterate from that start date (inclusive)
+// Step 2: iterate from that start date (inclusive). Its actual date, not
+// its observed one: an adjustment can move a date either way.
 let iter = SpecIteratorBuilder::new_with_start("YY-1M-L", bdp, start)
     .build().unwrap();
 

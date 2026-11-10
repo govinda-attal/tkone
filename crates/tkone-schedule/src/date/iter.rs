@@ -37,7 +37,7 @@ pub struct NotSealed;
 /// |-------------|-------------|-----------|
 /// | `new(spec, bdp, tz)` | Next occurrence after `Utc::now()` | open-ended schedule from now |
 /// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` | schedule from a known cursor |
-/// | `new_with_start(spec, bdp, start)` | `start` itself is the first item | anchor to a fixed start date |
+/// | `new_with_start(spec, bdp, start)` | The occurrences from `start` (which anchors cadences) | anchor to a fixed start date |
 ///
 /// # Examples
 ///
@@ -99,8 +99,8 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> SpecIteratorBuilder<Tz, 
         self
     }
 
-    /// Stop after `n` results, counted from the start (a `new_with_start`
-    /// start is the first). Excluded dates are not counted.
+    /// Stop after `n` results, counted from the start. Excluded dates are
+    /// not counted.
     ///
     /// A counted schedule is resumed with `resume_with_start`, which replays
     /// it from its start to keep the count; `resume_after` returns
@@ -122,7 +122,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     /// Create an iterator that produces occurrences strictly **after `dtm`**.
     ///
     /// `dtm` itself is excluded. Use [`new_with_start`](SpecIteratorBuilder::new_with_start)
-    /// if you want `dtm` to be the first yielded item.
+    /// to include an occurrence at `dtm`, and count cadences from it.
     pub fn new_after(
         spec: &str,
         bdp: BDP,
@@ -226,8 +226,8 @@ fn actual_instant<Tz: TimeZone>(occurrence: &Occurrence<DateTime<Tz>>) -> DateTi
 
 /// Build the iterator for every builder.
 ///
-/// - The start is the builder's (`new_with_start`, yielded as-is first;
-///   `resume_with_start`), else none (cadences count from the cursor).
+/// - The start is the builder's (`new_with_start`, `resume_with_start`): it
+///   anchors the rule; else none (cadences count from the cursor).
 /// - The end is the builder's (`with_end`, `with_end_spec`), if any.
 /// - With `with_count`, a resumed schedule is replayed from its start.
 #[allow(clippy::too_many_arguments)]
@@ -254,7 +254,7 @@ fn assemble<Tz: TimeZone, BDP: BizDayProcessor>(
     let end = match end {
         BuilderEnd::At(end) => Some(end.with_timezone(&tz).naive_local()),
         BuilderEnd::Spec(end_spec) => {
-            // A start-inclusive iterator would yield the start itself.
+            // The first occurrence of `end_spec` strictly after the start.
             let end = NaiveSpecIterator::new_after(&end_spec, bdp.clone(), dtm.naive_local())?
                 .next()?
                 .ok_or(Error::InvalidEndSpec)?;
@@ -273,15 +273,15 @@ fn assemble<Tz: TimeZone, BDP: BizDayProcessor>(
 
     if given_start {
         let start = dtm.naive_local();
-        return Ok(wrap(excluding(NaiveSpecIterator::new(spec, bdp, start, start, Some(start), end)?)?, None));
+        return Ok(wrap(excluding(NaiveSpecIterator::anchored(spec, bdp, start, end)?)?, None));
     }
     if let Some(start) = anchor {
         // `resume_with_start`: positioned as if iterating from `start`.
         if limits.count.is_some() {
-            let continuous = NaiveSpecIterator::new(spec, bdp, start, start, Some(start), end)?;
+            let continuous = NaiveSpecIterator::anchored(spec, bdp, start, end)?;
             return skip_through(wrap(excluding(continuous)?, None), &dtm, actual_instant);
         }
-        let resumed = NaiveSpecIterator::resumed(spec, bdp, start, cursor, end, true)?;
+        let resumed = NaiveSpecIterator::resumed(spec, bdp, start, cursor, end)?;
         return Ok(wrap(excluding(resumed)?, Some(dtm)));
     }
     if local.is_some() && needs_start(spec)? {
@@ -347,15 +347,17 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateT
 }
 
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
-    /// Create an iterator that includes `start` as its **first yielded item**.
+    /// Create an iterator of the occurrences from `start`.
     ///
-    /// This is the right choice when you have already resolved a concrete start
-    /// date (e.g. by calling `new_after(...).build()?.next()?`) and want the
-    /// series to begin exactly there.
+    /// `start` anchors the rule: cadences (`3M`, `2W`) count from it, time
+    /// steps take their phase from it, and it is the earliest a result's
+    /// *actual* date can be. It is a result only if the rule gives it,
+    /// adjusted like any other: `YY-MM-DD~NB` from a Saturday gives the
+    /// Saturday moved to Monday, and `YY-MM-15` from the 3rd gives the 15th.
     ///
-    /// The iterator alignment (for `NextNth` cycles) is anchored to `start`,
-    /// so "every 3 months from `start`" always lands on the same day-of-month
-    /// as `start`.
+    /// To continue from an occurrence found with `new_after`, pass its
+    /// `actual()` date: the series then starts with that same occurrence,
+    /// whichever way its adjustment moved it.
     ///
     /// # Example — derive start from spec, then iterate
     ///
@@ -376,7 +378,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateT
     ///     .next()
     ///     .unwrap()           // Result<Option<…>>
     ///     .unwrap()           // Option<…>
-    ///     .observed()         // settlement date (post biz-day adjustment)
+    ///     .actual()           // the rule's own date, before adjustment
     ///     .clone();
     ///
     /// // 2. Build the recurring series anchored to that start date
@@ -558,7 +560,7 @@ impl<Tz: TimeZone, BDM: BizDayProcessor> FallibleIterator for SpecIterator<Tz, B
 /// | Method | First result |
 /// |--------|-------------|
 /// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` |
-/// | `new_with_start(spec, bdp, start)` | `start` itself is the first item |
+/// | `new_with_start(spec, bdp, start)` | The occurrences from `start`, which anchors cadences |
 /// | `new_with_end(spec, bdp, start, end)` | As above, up to and including `end` |
 /// | `new_with_end_spec(spec, bdp, start, end_spec)` | As above; `end` is the first occurrence of `end_spec` after `start` |
 ///
@@ -642,59 +644,39 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
     }
 
     /// Occurrences strictly after `last`, positioned as if iterating from
-    /// `start` (which is yielded first if it is after `last`) up to `end`.
-    ///
-    /// With `passthrough` (a builder start) `start` itself is yielded first,
-    /// as-is; without it (an anchoring start, as a schedule's) results are
-    /// the occurrences at or after `start`.
+    /// `start`, up to `end`: `start` anchors the rule, and results are its
+    /// occurrences at or after it.
     pub(crate) fn resumed(
         spec: &str,
         bdp: BDP,
         start: NaiveDateTime,
         last: NaiveDateTime,
         end: Option<NaiveDateTime>,
-        passthrough: bool,
     ) -> Result<Self> {
         let mut iter = Self::new(spec, bdp, start, start, Some(start), end)?;
-        if !passthrough {
-            if !matches!(iter.spec.days, DayCycle::NextNth(..)) {
-                // Calendar rules: the first date after the day before the
-                // start (or after `last`), at the start's time of day.
-                let from = last.max(start - Duration::nanoseconds(1));
-                let day = if from.time() < start.time() {
-                    from.date().pred_opt().unwrap_or(from.date())
-                } else {
-                    from.date()
-                };
+        if !matches!(iter.spec.days, DayCycle::NextNth(..)) {
+            // Calendar rules: the first date after the day before the start
+            // (or after `last`), at the start's time of day.
+            let from = last.max(start - Duration::nanoseconds(1));
+            let day =
+                if from.time() < start.time() { from.date().pred_opt().unwrap_or(from.date()) } else { from.date() };
+            iter.index = 1;
+            iter.dtm = day.and_time(start.time());
+            return Ok(iter);
+        }
+        // Step rules begin on the start (or the first valid day after it).
+        match engine::first_step(&iter.spec, start, &iter.context)? {
+            Some(first) => {
+                iter.start = Some(first);
+                iter.dtm = first;
+                iter.adjust_start = true;
+            }
+            None => {
+                iter.start = None;
                 iter.index = 1;
-                iter.dtm = day.and_time(start.time());
-                return Ok(iter);
-            }
-            // Step rules begin on the start (or the first valid day after it).
-            match engine::first_step(&iter.spec, start, &iter.context)? {
-                Some(first) => {
-                    iter.start = Some(first);
-                    iter.dtm = first;
-                    iter.adjust_start = true;
-                }
-                None => {
-                    iter.start = None;
-                    iter.index = 1;
-                }
-            }
-            if last < start {
-                return Ok(iter);
             }
         }
         if last < start {
-            // The start itself is still ahead (a datetime resumed on its
-            // start's date): yield it first, as a continuous iterator would.
-            return Ok(iter);
-        }
-        if !matches!(iter.spec.days, DayCycle::NextNth(..)) {
-            // Calendar rules depend only on the position and the anchor.
-            iter.index = 1;
-            iter.dtm = last;
             return Ok(iter);
         }
         // Step rules advance from the previous occurrence: replay from the
@@ -725,21 +707,29 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         Self::new(spec, bdp, dtm, anchor, None, None)
     }
 
-    /// Yield `start` first (unchanged, as `Exact`), then iterate forward.
+    /// The occurrences from `start` on: `start` anchors cadences (`2W`,
+    /// `3M`) and is the earliest a result can be. It is a result only if the
+    /// rule produces it, adjusted as any other.
     pub fn new_with_start(spec: &str, bdp: BDP, start: NaiveDateTime) -> Result<Self> {
-        Self::new(spec, bdp, start, start, Some(start), None)
+        Self::anchored(spec, bdp, start, None)
     }
 
     /// Like [`new_with_start`](Self::new_with_start), up to and including `end`.
     pub fn new_with_end(spec: &str, bdp: BDP, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
-        Self::new(spec, bdp, start, start, Some(start), Some(end))
+        Self::anchored(spec, bdp, start, Some(end))
+    }
+
+    /// The occurrences whose actual date is at or after `start`, with
+    /// cadences counted from it.
+    fn anchored(spec: &str, bdp: BDP, start: NaiveDateTime, end: Option<NaiveDateTime>) -> Result<Self> {
+        Self::resumed(spec, bdp, start, start - Duration::nanoseconds(1), end)
     }
 
     /// Like [`new_with_end`](Self::new_with_end), with `end` set to the first
     /// occurrence of `end_spec` strictly after `start` (its observed date).
     pub fn new_with_end_spec(spec: &str, bdp: BDP, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
-        // A start-inclusive iterator would yield `start` itself and leave an
-        // empty range.
+        // The end is after the start: the first occurrence of `end_spec`
+        // strictly after it.
         let end = Self::new_after(end_spec, bdp.clone(), start)?.next()?.ok_or(Error::InvalidEndSpec)?;
         Self::new_with_end(spec, bdp, start, *end.observed())
     }

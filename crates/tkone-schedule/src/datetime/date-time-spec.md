@@ -167,8 +167,9 @@ Same three variants as the date iterator, now carrying `NaiveDateTime` or `DateT
 
 ## Examples
 
-All examples use `new_with_start` unless stated otherwise.
-The start datetime is always returned as the first result (passthrough).
+All examples use `new_with_start` unless stated otherwise. The start anchors the rule: it sets
+the phase of time steps (with the default `TimeAnchor::Start`) and is the earliest a result's
+actual time can be. It is a result only if the rule gives it; in these examples it does.
 
 ---
 
@@ -308,10 +309,10 @@ One tick every three months.  Useful for quarterly reporting reminders.
 **Start:** 2025-01-01 06:00:00
 
 The 6-hour grid passes through 06:00, so every date gets 00:00, 06:00, 12:00 and 18:00.
-The start date only has the ticks from 06:00 (passthrough) onwards.
+The start date only has the ticks from 06:00, the start, onwards.
 
 ```text
- 1. 2025-01-01 06:00:00  ← start (passthrough)
+ 1. 2025-01-01 06:00:00  ← the start
  2. 2025-01-01 12:00:00
  3. 2025-01-01 18:00:00
  4. 2025-01-02 00:00:00  ← first tick of the new day
@@ -338,10 +339,10 @@ All subsequent days produce 4 ticks (00:00, 06:00, 12:00, 18:00).
 **Start:** 2025-01-06 09:00:00 (Monday)
 
 The date spec visits only Mondays.  The time spec fills the day with 24 hourly ticks
-starting at midnight — except the initial Monday, which starts at the passthrough time.
+starting at midnight — except the initial Monday, which starts at the start's time.
 
 ```text
- 1. 2025-01-06 09:00:00  ← Mon, passthrough
+ 1. 2025-01-06 09:00:00  ← Mon, the start
  2. 2025-01-06 10:00:00
  3. 2025-01-06 11:00:00
  4. 2025-01-06 12:00:00
@@ -369,7 +370,7 @@ The 4-hour grid passes through 08:00, so it includes midnight. The start date on
 ticks from 08:00 onwards.
 
 ```text
- 1. 2025-01-15 08:00:00  ← passthrough
+ 1. 2025-01-15 08:00:00  ← the start
  2. 2025-01-15 12:00:00
  3. 2025-01-15 16:00:00
  4. 2025-01-15 20:00:00
@@ -404,7 +405,7 @@ The initial date (Jan 31) starts at 08:00, so it emits 32 ticks (08:00–23:30).
 Business-day adjustment: **every** tick of an adjusted date is `AdjustedLater`.
 
 ```text
- 1. 2025-01-31 08:00:00  ← passthrough (Fri)
+ 1. 2025-01-31 08:00:00  ← the start (Fri)
  2. 2025-01-31 08:30:00
  3. 2025-01-31 09:00:00
  4. 2025-01-31 09:30:00
@@ -434,7 +435,7 @@ Business-day adjustment: **every** tick of an adjusted date is `AdjustedLater`.
 through 09:00, so every date gets 01:00, 05:00, 09:00, 13:00, 17:00, 21:00.
 
 ```text
- 1. 2025-01-01 09:00:00  ← Wed, passthrough
+ 1. 2025-01-01 09:00:00  ← Wed, the start
  2. 2025-01-01 13:00:00
  3. 2025-01-01 17:00:00
  4. 2025-01-01 21:00:00
@@ -455,8 +456,8 @@ through 09:00, so every date gets 01:00, 05:00, 09:00, 13:00, 17:00, 21:00.
 ```
 
 With `.with_time_anchor(TimeAnchor::Midnight)` every date — including Jan 1 — uses the
-midnight-aligned grid instead: Jan 1 gives 09:00 (passthrough), 12:00, 16:00, 20:00, and later
-dates 00:00, 04:00, … 20:00.
+midnight-aligned grid instead. The start, 09:00, is not on that grid, so Jan 1 gives 12:00,
+16:00 and 20:00, and later dates 00:00, 04:00, … 20:00.
 
 ---
 
@@ -570,14 +571,15 @@ after 09:30 is 10:00. Subsequent results are 11:00, 12:00 … (exact 1 h gaps).
 start's 14:30 on every date:
 
 ```text
- 1. 2025-01-31 14:30:00  ← passthrough
+ 1. 2025-01-31 14:30:00  ← the start
  2. 2025-02-28 14:30:00
  3. 2025-03-31 14:30:00
  4. 2025-04-30 14:30:00
  ...
 ```
 
-With `TimeAnchor::Midnight` every later date gets 00:00:00 instead.
+With `TimeAnchor::Midnight` every date gets 00:00:00 instead. The start, 14:30, is then not an
+occurrence, and its date's 00:00 is before it, so the first result is 2025-02-28 00:00:00.
 
 ---
 
@@ -589,7 +591,7 @@ With `TimeAnchor::Midnight` every later date gets 00:00:00 instead.
 `TimeAnchor::Start` every date runs at `hh:22:45`:
 
 ```text
- 1. 2025-01-15 09:22:45  ← passthrough
+ 1. 2025-01-15 09:22:45  ← the start
  2. 2025-01-15 10:22:45
  ...
 15. 2025-01-15 23:22:45
@@ -598,8 +600,9 @@ With `TimeAnchor::Midnight` every later date gets 00:00:00 instead.
     ...
 ```
 
-With `TimeAnchor::Midnight` every date — including Jan 15 after the passthrough — runs at
-`hh:00:00`: 09:22:45 (passthrough), 10:00:00, 11:00:00, …, then Feb 15 00:00:00, 01:00:00, …
+With `TimeAnchor::Midnight` every date, Jan 15 included, runs at `hh:00:00`. The start,
+09:22:45, is not on that grid: the results are 10:00:00, 11:00:00, …, then Feb 15 00:00:00,
+01:00:00, …
 
 ---
 
@@ -807,7 +810,8 @@ every date, giving one tick per date.
 Using an all-`At` spec as the **time iterator** in isolation (no date spec) yields that time at
 most once, on the current day, then terminates.
 
-- `new_with_start` from `11:00:00` → yields `11:00:00` (passthrough) then terminates.
+- `new_with_start` from `11:00:00` → yields `11:00:00`, the start, then terminates.
+- `new_with_start` from `10:00:00` → yields `11:00:00`: the start is not one of the spec's times.
 - `new_after` from `11:00:00` → yields nothing (guard fires on first tick).
 - `new_after` from `10:00:00` → yields `11:00:00` once, then terminates.
 

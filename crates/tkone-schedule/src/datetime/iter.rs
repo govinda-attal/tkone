@@ -30,7 +30,7 @@ pub struct NotSealed;
 /// |-------------|-------------|-----------|
 /// | `new(spec, bdp, tz)` | First occurrence after `Utc::now()` | open-ended schedule from now |
 /// | `new_after(spec, bdp, dtm)` | First occurrence **after** `dtm` | schedule from a known cursor |
-/// | `new_with_start(spec, bdp, start)` | `start` itself is the first item | anchor to a fixed start datetime |
+/// | `new_with_start(spec, bdp, start)` | The occurrences from `start` (which anchors cadences and time steps) | anchor to a fixed start datetime |
 ///
 /// Any builder may be bounded with `.with_end(end)`; after `new_with_start`
 /// also with `.with_end_spec(end_spec)` (both inclusive). Any builder also takes
@@ -82,10 +82,6 @@ struct Options {
     dst_policy: DstPolicy,
     interval_mode: IntervalMode,
     time_anchor: TimeAnchor,
-    /// The start anchors the rule (a [`crate::schedule::Schedule`]'s):
-    /// results are the occurrences at or after it, not the start itself
-    /// as-is.
-    text_start: bool,
     /// The cursor is just before an anchoring start, not a stored occurrence.
     fresh_start: bool,
 }
@@ -129,8 +125,8 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> SpecIteratorBuilder<Tz, 
         self
     }
 
-    /// Stop after `n` results, counted from the start (a `new_with_start`
-    /// start is the first). Excluded occurrences are not counted.
+    /// Stop after `n` results, counted from the start. Excluded occurrences
+    /// are not counted.
     ///
     /// A counted schedule is resumed with `resume_with_start`, which replays
     /// it from its start to keep the count; `resume_after` returns
@@ -145,6 +141,9 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> SpecIteratorBuilder<Tz, 
     /// is replayed from its stored start instead.
     fn finish(self, include_start: bool, end: Option<DateTime<Tz>>) -> Result<SpecIterator<Tz, BDP>> {
         let bdp = self.bd_processor;
+        // A start anchors the rule: results are its occurrences at or after
+        // the start, not the start itself as-is.
+        let options = self.options;
         let count = self.limits.count;
         let body = self.spec.as_str();
         // Cadences in exclusions count from the start, else the cursor.
@@ -159,13 +158,27 @@ impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> SpecIteratorBuilder<Tz, 
             iter.exclusions = exclusions.clone();
             iter
         };
+        let from_start = |start: DateTime<Tz>, bdp: BDP| {
+            let options = Options { fresh_start: true, ..options };
+            SpecIterator::new(
+                body,
+                bdp,
+                just_before(&start),
+                None,
+                Some(start.naive_local()),
+                false,
+                end.clone(),
+                options,
+            )
+        };
         if let Some(start) = self.limits.replay_from(self.local)? {
-            let start = start.with_timezone(&self.dtm.timezone());
-            let continuous = SpecIterator::new(body, bdp, start, None, None, true, end, self.options)?;
+            let continuous = from_start(start.with_timezone(&self.dtm.timezone()), bdp)?;
             return skip_through(finished(continuous), &self.dtm, actual);
         }
-        let iter =
-            SpecIterator::new(body, bdp, self.dtm.clone(), self.local, self.anchor, include_start, end, self.options)?;
+        if include_start {
+            return Ok(finished(from_start(self.dtm.clone(), bdp)?));
+        }
+        let iter = SpecIterator::new(body, bdp, self.dtm.clone(), self.local, self.anchor, false, end, options)?;
         Ok(finished(iter))
     }
 
@@ -273,11 +286,17 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, E
 
 // --- with-start, no-end ---
 impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
-    /// Create an iterator where `start` is the **first yielded item**.
+    /// Create an iterator of the occurrences from `start`.
     ///
-    /// `start` is yielded as-is, as [`Occurrence::Exact`], even when it does
-    /// not match the spec or would be adjusted by it. This lets you feed back
-    /// an already-adjusted (observed) date:
+    /// `start` anchors the rule: cadences (`3M`, `2W`) count from it, time
+    /// steps take their phase from it, and it is the earliest a result's
+    /// *actual* date can be. It is a result only if the rule gives it,
+    /// adjusted like any other: `YY-MM-DD~NB` from a Saturday gives the
+    /// Saturday moved to Monday, and `YY-MM-15` from the 3rd gives the 15th.
+    ///
+    /// To continue from an occurrence found with `new_after`, pass its
+    /// `actual()` date: the series then starts with that same occurrence,
+    /// whichever way its adjustment moved it.:
     ///
     /// ```rust
     /// use tkone_schedule::biz_day::WeekendSkipper;
@@ -289,18 +308,18 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateT
     /// let bdp = WeekendSkipper::new();
     /// let now = Utc::now();
     ///
-    /// // Step 1: resolve start datetime from the spec
-    /// let start = SpecIteratorBuilder::new_after("YY-1M-L~WT11:00:00", bdp.clone(), now)
+    /// // Step 1: the next occurrence after now
+    /// let first = SpecIteratorBuilder::new_after("YY-1M-L~WT11:00:00", bdp.clone(), now)
     ///     .build().unwrap()
-    ///     .next().unwrap().unwrap()
-    ///     .observed().clone();
+    ///     .next().unwrap().unwrap();
     ///
-    /// // Step 2: anchor the recurrence to that start datetime
-    /// let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, start)
+    /// // Step 2: the series from its actual date starts with that occurrence,
+    /// // whether `~W` moved it earlier (Saturday) or later (Sunday).
+    /// let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~WT11:00:00", bdp, *first.actual())
     ///     .build().unwrap();
     ///
     /// let results: Vec<_> = iter.take(3).collect().unwrap();
-    /// assert_eq!(results[0].observed(), &start);
+    /// assert_eq!(results[0], first);
     /// ```
     pub fn new_with_start(spec: &str, bdp: BDP, start: DateTime<Tz>) -> Self {
         SpecIteratorBuilder {
@@ -439,7 +458,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
     ) -> Result<Self> {
         let (dst_policy, interval_mode, time_anchor) = options;
         let fresh = after < start;
-        let options = Options { dst_policy, interval_mode, time_anchor, text_start: true, fresh_start: fresh };
+        let options = Options { dst_policy, interval_mode, time_anchor, fresh_start: fresh };
         let cursor = if fresh { just_before(start) } else { after.clone() };
         Self::new(rule, bdp, cursor, None, Some(start.naive_local()), false, None, options)
     }
@@ -483,9 +502,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
         });
         let dates = match anchor {
             // Dates from the stored start's cadence, from the cursor's date on.
-            Some(start) => {
-                DateNaiveSpecIterator::resumed(&spec.date_spec, bdp, start, dates_after, None, !options.text_start)?
-            }
+            Some(start) => DateNaiveSpecIterator::resumed(&spec.date_spec, bdp, start, dates_after, None)?,
             None => DateNaiveSpecIterator::new_after_anchored(&spec.date_spec, bdp, dates_after, local)?,
         };
         Ok(Self {

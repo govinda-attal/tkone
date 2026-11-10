@@ -884,7 +884,9 @@ iterator it yields those times **on the current day only**, then terminates:
 `[09,12,17]:00:00` from 10:00 yields 12:00 and 17:00. To repeat them every day,
 build with `.repeat_daily()` (`tkone-trigger` always does).
 
-- `new_with_start` from `09:30:00` → yields `09:30:00` (passthrough) then terminates.
+- `new_with_start` from `09:30:00` → yields `09:30:00`, the start, then terminates.
+- `new_with_start` from `08:00:00` → yields `09:30:00` once: the start is not one of the spec's
+  times, so it is not a result.
 - `new_after` from `09:30:00` → yields nothing (09:30 today is not after the cursor).
 - `new_after` from `09:00:00` → yields `09:30:00` once, then terminates.
 
@@ -897,9 +899,9 @@ as the time part of a combined datetime spec, where they apply to every date.
 ### `_:_:_` (all AsIs) used as a pure time iterator
 
 **Behaviour:** `AsIs` keeps every field at the start's value, so the spec names the start's own
-time of day — which is never after it. The iterator terminates immediately after any passthrough.
+time of day. With `new_with_start` that is the start itself, a result; nothing follows it.
 
-- `new_with_start` from any time → yields start once then terminates.
+- `new_with_start` from any time → yields the start once, then terminates.
 - `new_after` from any time → yields nothing.
 
 **Preferred use:** `AsIs` components are meaningful only within **combined datetime specs**

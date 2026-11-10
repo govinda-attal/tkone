@@ -26,7 +26,7 @@ pub struct NotSealed;
 /// |-------------|-------------|
 /// | `new(spec, tz)` | First occurrence after `Utc::now()` |
 /// | `new_after(spec, dtm)` | First occurrence strictly **after** `dtm` |
-/// | `new_with_start(spec, start)` | `start` itself is the first item |
+/// | `new_with_start(spec, start)` | The times from `start`, which sets the grid's phase |
 ///
 /// Any builder may be bounded with `.with_end(end)` (inclusive). After
 /// `new_with_start` you may instead call `.with_end_spec(end_spec)` to bound
@@ -116,8 +116,8 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
         self
     }
 
-    /// Stop after `n` results, counted from the start (a `new_with_start`
-    /// start is the first). Excluded times are not counted.
+    /// Stop after `n` results, counted from the start. Excluded times are
+    /// not counted.
     ///
     /// A counted schedule is resumed with `resume_with_start`, which replays
     /// it from its start to keep the count; `resume_after` returns
@@ -130,8 +130,8 @@ impl<Tz: TimeZone, START, END, S> SpecIteratorBuilder<Tz, START, END, S> {
     /// Build the iterator for every builder, from `dtm` (the start when
     /// `given_start`).
     ///
-    /// - The start is the builder's (`new_with_start`, yielded as-is first;
-    ///   `resume_with_start`, the grid's anchor), else none.
+    /// - The start is the builder's (`new_with_start`, a result if it is one
+    ///   of the spec's times; `resume_with_start`, the grid's anchor), else none.
     /// - The end is the builder's (`with_end`, `with_end_spec`), if any.
     /// - With `with_count`, a resumed schedule is replayed from its start.
     fn assemble(&self, given_start: bool, end: BuilderEnd<Tz>) -> Result<SpecIterator<Tz>> {
@@ -298,7 +298,12 @@ fn resumed<Tz: TimeZone>(
 }
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
-    /// Create an iterator where `start` is the **first yielded item**.
+    /// Create an iterator of the times from `start`.
+    ///
+    /// `start` sets the phase of steps (with the default `TimeAnchor::Start`:
+    /// `HH:15M:00` from 09:07 gives 09:07, 09:22, …). It is a result only if
+    /// it is one of the spec's times: `09-16:30M:00` from 08:00 gives 09:00,
+    /// 09:30, … and `09:30:00` from 08:00 gives 09:30.
     pub fn new_with_start(
         spec: &str,
         start: DateTime<Tz>,
@@ -493,6 +498,17 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
         self
     }
 
+    /// Whether `t` is one of the spec's times, on the grid the iterator uses.
+    fn on_grid(&self, t: &DateTime<Tz>) -> bool {
+        let local = t.naive_local();
+        let before = local - Duration::nanoseconds(1);
+        let anchor = match self.time_anchor {
+            TimeAnchor::Start => self.anchor.unwrap_or(self.local),
+            TimeAnchor::Midnight => local.date().and_time(NaiveTime::MIN),
+        };
+        engine::next_after(&self.spec, anchor, before) == Some(local)
+    }
+
     /// The next wall-clock time after `self.local`. With `TimeAnchor::Midnight`
     /// each day's times come from a grid that starts at that day's midnight.
     fn next_local(&self) -> Option<NaiveDateTime> {
@@ -547,7 +563,11 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
                 self.done = true;
                 return Ok(None);
             }
-            return Ok(Some(start));
+            // The start sets the grid's phase; it is a result only if it is
+            // on the grid: 08:00 is not on `09-16:30M:00`.
+            if self.on_grid(&start) {
+                return Ok(Some(start));
+            }
         }
 
         loop {

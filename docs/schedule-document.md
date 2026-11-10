@@ -303,12 +303,20 @@ exclusion that removes an account's month end.
 
 ### D1. `start` is an anchor, not an occurrence
 
-RFC 5545 always makes `DTSTART` the first instance, and so does tkone's
-`new_with_start` today. In a document, `start: 2026-01-01` (a holiday) would
-then fire on a holiday. A document's `start` anchors cadences (`2W`, `3M`
-count from it) and bounds the stream; it is a slot only if a rule
+RFC 5545 always makes `DTSTART` the first instance, and tkone's
+`new_with_start` used to as well. In a document, `start: 2026-01-01` (a
+holiday) would then fire on a holiday. A document's `start` anchors cadences
+(`2W`, `3M` count from it) and bounds the stream; it is a slot only if a rule
 produces it. A start written in the spec (`@…`) did this before the grammar
 became rule-only; schedules now do it without the string.
+
+The iterators' `new_with_start` follows the same rule: the start anchors the
+rule and is a result only if the rule gives it, adjusted as any other. The
+one difference is the bound: an iterator reports a rule's occurrences, so its
+start bounds their *actual* dates, as `new_after` and `resume_after` do; a
+schedule's slots are when things happen, so its start bounds the *observed*
+instant. Continuing from an occurrence found with `new_after` therefore
+passes its `actual()` date, which works whichever way it was adjusted.
 
 A slot is never before the start, so a rule date on or after the start
 that an adjustment moves before it is dropped. For a schedule that starts
@@ -488,7 +496,7 @@ Gaps in the earlier builders this closed:
 |---|---|
 | `with_exclusions` appended `! spec` to the string | Exclusions held as data, not spliced into the spec |
 | Unions only as `A \| B`; `Merge` was crate-private | Several rules with ids, merged by observed instant (D4) |
-| `new_with_start` emits the start (the iterators still do) | An anchored start, as a written `@…` gave (D1) |
+| `new_with_start` emitted the start as-is | An anchored start, in schedules and iterators alike (D1) |
 | Calendar checked against `[cal=]` in the string | The document resolves the calendar, so there is nothing to mismatch. The calendar zone check stays. |
 
 ---

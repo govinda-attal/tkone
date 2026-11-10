@@ -346,9 +346,9 @@ fn test_periodic_month_cadences() {
         TestCase {
             spec: "2025-3M-L",
             take: 5,
+            // The start (in 2024) is not an occurrence of a 2025 rule.
             start: tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                Occurrence::Exact(tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap()),
                 Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 0, 0, 0).unwrap()),
                 Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 30, 0, 0, 0).unwrap()),
                 Occurrence::Exact(tz.with_ymd_and_hms(2025, 9, 30, 0, 0, 0).unwrap()),
@@ -369,10 +369,10 @@ fn test_weekday_specs() {
         // Every Monday (start on a Wednesday – first result is start itself)
         TestCase {
             spec: "YY-MM-MON",
-            take: 10,
+            take: 9,
+            // Wednesday 1 Jan is not a Monday.
             start: tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
                 Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 6, 0, 0, 0).unwrap()),
                 Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 13, 0, 0, 0).unwrap()),
                 Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 20, 0, 0, 0).unwrap()),
@@ -897,9 +897,14 @@ fn test_biz_day_adjustments() {
         TestCase {
             spec: "YY-1M-15~3P",
             take: 10,
+            // The start's own occurrence, adjusted as any: 15 Jan is
+            // observed on Fri 10 Jan.
             start: tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap()), // start: no adj
+                Occurrence::AdjustedEarlier(
+                    tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap(),
+                    tz.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap(),
+                ),
                 Occurrence::AdjustedEarlier(
                     tz.with_ymd_and_hms(2025, 2, 15, 0, 0, 0).unwrap(), // Sat
                     tz.with_ymd_and_hms(2025, 2, 12, 0, 0, 0).unwrap(), // Wed (−3BD from Fri 14)
@@ -945,7 +950,11 @@ fn test_biz_day_adjustments() {
             take: 10,
             start: tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap(),
             expected: Ok(vec![
-                Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap()), // start: no adj
+                // The start is adjusted as any date: `~2N` always moves.
+                Occurrence::AdjustedLater(
+                    tz.with_ymd_and_hms(2025, 1, 31, 0, 0, 0).unwrap(),
+                    tz.with_ymd_and_hms(2025, 2, 4, 0, 0, 0).unwrap(),
+                ),
                 Occurrence::AdjustedLater(
                     tz.with_ymd_and_hms(2025, 2, 28, 0, 0, 0).unwrap(), // Fri
                     tz.with_ymd_and_hms(2025, 3, 4, 0, 0, 0).unwrap(),  // Tue (+2BD)
@@ -1519,11 +1528,14 @@ fn test_week_cycles() {
     assert_eq!(got[9], "2025-01-17");
     assert_eq!(got[10], "2025-02-03");
     // The week cycle counts across month boundaries and from a mid-week start.
-    assert_eq!(dates_from("YY-MM-FRI/2W", (2025, 1, 29), 3), ["2025-01-29", "2025-01-31", "2025-02-14"]);
+    // Wednesday 29 Jan, the start, is not a Friday.
+    assert_eq!(dates_from("YY-MM-FRI/2W", (2025, 1, 29), 3), ["2025-01-31", "2025-02-14", "2025-02-28"]);
     // Week 2 of every 2: the weeks not containing the start.
-    assert_eq!(dates_from("YY-MM-MON/2W[2]", (2025, 1, 6), 3), ["2025-01-06", "2025-01-13", "2025-01-27"]);
-    // Adjustments apply as usual.
-    assert_eq!(dates_from("YY-MM-SAT/2W~NB", (2025, 1, 4), 3), ["2025-01-04", "2025-01-20", "2025-02-03"]);
+    // The start, Monday 6 Jan, is in week 1: not a result.
+    assert_eq!(dates_from("YY-MM-MON/2W[2]", (2025, 1, 6), 3), ["2025-01-13", "2025-01-27", "2025-02-10"]);
+    // Adjustments apply as usual, to the start's date too: Sat 4 Jan is
+    // observed on Mon 6 Jan.
+    assert_eq!(dates_from("YY-MM-SAT/2W~NB", (2025, 1, 4), 3), ["2025-01-06", "2025-01-20", "2025-02-03"]);
 }
 
 #[test]
@@ -1892,4 +1904,46 @@ fn test_to_weekday_parsing() {
         "YY-01-29~MON".parse::<Spec>().unwrap().describe(),
         "on the 29th of January, moved to the nearest Monday"
     );
+}
+
+#[test]
+fn test_a_start_is_an_occurrence_only_if_the_rule_gives_it() {
+    let tz = chrono_tz::Europe::London;
+    let sat = tz.with_ymd_and_hms(2026, 1, 3, 0, 0, 0).unwrap();
+    let first = |spec: &str| {
+        let iter = SpecIteratorBuilder::new_with_start(spec, WeekendSkipper::new(), sat).build().unwrap();
+        iter.take(1).collect::<Vec<_>>().unwrap().remove(0)
+    };
+    let day = |d| tz.with_ymd_and_hms(2026, 1, d, 0, 0, 0).unwrap();
+    // Saturday is adjusted like any date, skipped by `~SB`, and not a
+    // result of a rule that doesn't give it.
+    assert_eq!(first("YY-MM-DD~NB"), Occurrence::AdjustedLater(day(3), day(5)));
+    assert_eq!(first("YY-MM-DD~SB"), Occurrence::Exact(day(5)));
+    assert_eq!(first("YY-MM-15"), Occurrence::Exact(day(15)));
+    assert_eq!(first("YY-MM-MON"), Occurrence::Exact(day(5)));
+}
+
+#[test]
+fn test_find_the_first_then_start_from_its_actual_date() {
+    // The two-step pattern: the first occurrence after now, then a series
+    // started from its actual date gives the same occurrences, whichever way
+    // the adjustment moves.
+    let tz = chrono_tz::Europe::London;
+    let now = tz.with_ymd_and_hms(2026, 1, 20, 0, 0, 0).unwrap();
+    for spec in ["YY-1M-L~NB", "YY-1M-L~PB", "YY-1M-L~MF", "YY-1M-L~2N", "YY-1M-L~3P", "YY-MM-SAT~NB"] {
+        let after: Vec<_> = SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), now)
+            .build()
+            .unwrap()
+            .take(6)
+            .collect()
+            .unwrap();
+        let start = *after[0].actual();
+        let from: Vec<_> = SpecIteratorBuilder::new_with_start(spec, WeekendSkipper::new(), start)
+            .build()
+            .unwrap()
+            .take(6)
+            .collect()
+            .unwrap();
+        assert_eq!(from, after, "{spec}");
+    }
 }

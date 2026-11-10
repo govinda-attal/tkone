@@ -23,7 +23,7 @@ fn main() {
         .next()
         .unwrap()
         .unwrap()
-        .observed();
+        .actual();
 
     // Step 2: iterate from that start datetime (inclusive).
     let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PBT11:00:00", bdp, start).build().unwrap();

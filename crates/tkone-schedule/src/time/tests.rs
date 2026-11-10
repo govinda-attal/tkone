@@ -507,12 +507,15 @@ fn test_asis_parsing() {
     assert_eq!(spec.seconds, Cycle::ForEach);
     assert_eq!(spec.to_string(), "HH:_:SS");
 
-    // The new_with_start start passthrough always returns start itself,
-    // so take(1) on any spec (including all-AsIs) produces exactly the start.
+    // The start is a result only if it is one of the spec's times. From
+    // 09:22:45, `_:00:00` is 09:00:00, before the start: nothing that day;
+    // `_:_:_` is the start itself.
     let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start("_:00:00", start).build().unwrap();
-    let results: Vec<DateTime<_>> = iter.take(1).collect().unwrap();
-    assert_eq!(results, vec![start]);
+    let take = |spec: &str| -> Vec<DateTime<Utc>> {
+        SpecIteratorBuilder::new_with_start(spec, start).build().unwrap().take(1).collect().unwrap()
+    };
+    assert!(take("_:00:00").is_empty());
+    assert_eq!(take("_:_:_"), vec![start]);
 }
 
 // ---------------------------------------------------------------------------
@@ -523,7 +526,8 @@ fn test_asis_parsing() {
 fn test_no_progress_terminates() {
     let tz = Utc;
 
-    // All-At spec via new_with_start: passthrough returns start once, then the
+    // All-At spec via new_with_start: the start is one of its times, so it is
+    // returned once, then the
     // next computed value equals dtm → no-progress guard fires → terminates.
     {
         let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 30, 0).unwrap();
@@ -541,7 +545,7 @@ fn test_no_progress_terminates() {
         assert!(results.is_empty(), "all-At new_after (at spec time): yields nothing");
     }
 
-    // All-AsIs spec via new_with_start: passthrough returns start once, then
+    // All-AsIs spec via new_with_start: the start is its time, returned once, then
     // AsIs produces next == dtm → no-progress guard fires → terminates.
     {
         let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();

@@ -149,7 +149,7 @@ fn test_first_monday_monthly_fixed_time() {
 
 /// Spec 6: `YY-MM-DDT6H:00:00` — every calendar day, every 6 hours
 ///
-/// Initial date starts at the passthrough time (06:00).
+/// The initial date starts at the start's time (06:00).
 /// All subsequent dates start at midnight (spec_delta = 6 h steps back to 18:00 → +6 h → 00:00).
 #[test]
 fn test_daily_every_6h() {
@@ -162,7 +162,7 @@ fn test_daily_every_6h() {
         .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
-    // Jan 1: 06:00 (passthrough), 12:00, 18:00 — 3 ticks (start was mid-cycle)
+    // Jan 1: 06:00 (the start), 12:00, 18:00 — 3 ticks (start was mid-cycle)
     let jan1: Vec<_> = results.iter().filter(|r| r.observed().day() == 1).collect();
     assert_eq!(jan1.len(), 3, "Jan 1 should have 3 ticks");
     assert_eq!(jan1[0].observed().hour(), 6);
@@ -180,7 +180,7 @@ fn test_daily_every_6h() {
 
 /// Spec 7: `YY-MM-[MON]T1H:00:00` — every Monday, hourly
 ///
-/// Initial Monday (Jan 6) starts at 09:00 (passthrough) → 15 ticks (09:00–23:00).
+/// Initial Monday (Jan 6) starts at 09:00 (the start) → 15 ticks (09:00–23:00).
 /// Next Monday (Jan 13) starts at 00:00 (midnight) → 24 ticks.
 #[test]
 fn test_weekly_monday_every_hour() {
@@ -198,7 +198,7 @@ fn test_weekly_monday_every_hour() {
         assert_eq!(r.observed().date_naive().weekday(), Weekday::Mon, "all ticks must be on Monday");
     }
 
-    // Jan 6: 09:00 (passthrough) through 23:00 — 15 ticks
+    // Jan 6: 09:00 (the start) through 23:00 — 15 ticks
     let jan6: Vec<_> = results.iter().filter(|r| r.observed().day() == 6).collect();
     assert_eq!(jan6.len(), 15, "Jan 6 should have 15 hourly ticks (09:00–23:00)");
     assert_eq!(jan6[0].observed().hour(), 9);
@@ -213,7 +213,7 @@ fn test_weekly_monday_every_hour() {
 
 /// Spec 8: `YY-1M-15T4H:00:00` — 15th of each month, every 4 hours
 ///
-/// Jan 15 starts at 08:00 (passthrough) → 4 ticks (08:00, 12:00, 16:00, 20:00).
+/// Jan 15 starts at 08:00 (the start) → 4 ticks (08:00, 12:00, 16:00, 20:00).
 /// Feb 15 starts at 00:00 (midnight included) → 6 ticks.
 #[test]
 fn test_monthly_15th_every_4h() {
@@ -464,7 +464,8 @@ fn test_new_after_past_time_skips_to_next_day() {
 /// Spec 15: `YY-1M-31LT_:_:_` — AsIs time on a monthly date spec
 ///
 /// With the default `TimeAnchor::Start`, every date keeps the start's 14:30.
-/// With `TimeAnchor::Midnight`, later dates get 00:00.
+/// With `TimeAnchor::Midnight`, every date gets 00:00, so the start (14:30)
+/// is not an occurrence, and its date's 00:00 is before it.
 #[test]
 fn test_asis_time_on_date_gaps() {
     let tz = Utc;
@@ -477,17 +478,17 @@ fn test_asis_time_on_date_gaps() {
             .take(3)
             .collect()
             .unwrap();
-        assert_eq!(results[0], Occurrence::Exact(start));
         results.iter().map(|r| r.observed().naive_utc().to_string()).collect::<Vec<_>>()
     };
     assert_eq!(times(TimeAnchor::Start), ["2025-01-31 14:30:00", "2025-02-28 14:30:00", "2025-03-31 14:30:00"]);
-    assert_eq!(times(TimeAnchor::Midnight), ["2025-01-31 14:30:00", "2025-02-28 00:00:00", "2025-03-31 00:00:00"]);
+    assert_eq!(times(TimeAnchor::Midnight), ["2025-02-28 00:00:00", "2025-03-31 00:00:00", "2025-04-30 00:00:00"]);
 }
 
 /// Spec 16: `YY-1M-15T1H:MM:SS` — hourly with minute/second carry
 ///
 /// `TimeAnchor::Start` keeps `:22:45` on every date; `TimeAnchor::Midnight`
-/// aligns every date (including the start date) to `:00:00`.
+/// aligns every date (including the start date) to `:00:00`, so the start
+/// (09:22:45) is not an occurrence.
 #[test]
 fn test_hourly_carry_on_date_gaps() {
     let tz = Utc;
@@ -511,11 +512,10 @@ fn test_hourly_carry_on_date_gaps() {
     assert_eq!(feb15.iter().map(|r| r.observed().hour()).collect::<Vec<_>>(), [0, 1]);
 
     let midnight = run(TimeAnchor::Midnight);
-    assert_eq!(midnight[0], Occurrence::Exact(start), "start passthrough");
-    for r in &midnight[1..] {
+    for r in &midnight {
         assert_eq!((r.observed().minute(), r.observed().second()), (0, 0), "{r:?}");
     }
-    assert_eq!(midnight[1].observed().hour(), 10, "start date restarts from midnight");
+    assert_eq!(midnight[0].observed().hour(), 10, "the first whole hour after the start");
     let feb15: Vec<_> = midnight.iter().filter(|r| r.observed().month() == 2).collect();
     assert_eq!(feb15.iter().map(|r| r.observed().hour()).collect::<Vec<_>>(), [0, 1, 2]);
 }
@@ -539,7 +539,7 @@ fn test_every_hour_includes_midnight_on_new_days() {
     let jan1: Vec<_> = results.iter().filter(|r| r.observed().day() == 1).collect();
     let jan2: Vec<_> = results.iter().filter(|r| r.observed().day() == 2).collect();
 
-    // Jan 1: passthrough at 09:00 → last tick at 23:00 = 15 ticks
+    // Jan 1: from the start at 09:00 to 23:00 = 15 ticks
     assert_eq!(jan1.len(), 15, "Jan 1: 15 hourly ticks from 09:00");
     assert_eq!(jan1[0].observed().hour(), 9);
 
@@ -561,7 +561,7 @@ fn test_every_30min_includes_midnight_on_new_days() {
         .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
-    // 23:00 (passthrough), 23:30, 00:00 (midnight — spec_delta fix), 00:30
+    // 23:00 (the start), 23:30, 00:00 (midnight — spec_delta fix), 00:30
     assert_eq!(results.len(), 4);
     assert_eq!(results[0].observed().hour(), 23);
     assert_eq!(results[0].observed().minute(), 0);

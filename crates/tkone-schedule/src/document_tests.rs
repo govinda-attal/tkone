@@ -305,3 +305,36 @@ rules:
     let err = schedule.slots().unwrap().next().unwrap_err();
     assert!(err.to_string().contains("America/New_York"), "{err}");
 }
+
+#[test]
+fn an_instance_document_derives_as_the_builder_does() {
+    let definition = build(
+        "version: 1\ntime_zone: Europe/London\ncalendar: GBLO\nstart: 2026-01-01\nrules: [{ rule: 'YY-MM-DD~SBT09:00:00' }]\n",
+    )
+    .unwrap();
+    let instance = yaml(
+        "
+version: 1
+start: 2026-01-01
+rules:
+  - { id: repayment, rule: 'YY-MM-L~MFT12:00:00', basis: true }
+  - { id: reminder, rule: '{repayment}~2PT09:00:00' }
+",
+    );
+    let from_doc = instance.selector(&definition).unwrap();
+    let from_builder = definition
+        .selector(london(2026, 1, 1, 0, 0))
+        .basis_rule("repayment", "YY-MM-L~MFT12:00:00")
+        .named_rule("reminder", "{repayment}~2PT09:00:00")
+        .build()
+        .unwrap();
+    let window = london(2026, 1, 1, 0, 0)..=london(2026, 12, 31, 0, 0);
+    let slots = |s: &crate::schedule::Selector<BusinessDays<Place>>| -> Vec<crate::schedule::Slot> {
+        s.schedule().slots_between(window.clone()).unwrap().collect().unwrap()
+    };
+    assert_eq!(slots(&from_doc), slots(&from_builder));
+    assert_eq!(slots(&from_doc).len(), 12);
+    // Sun 31 May 2026: repaid Fri 29 May, reminded Wed 27 May.
+    assert!(slots(&from_doc).iter().any(|s| s.at == london(2026, 5, 27, 9, 0)));
+    assert!(from_doc.uncovered(&definition, window.clone()).unwrap().is_empty());
+}

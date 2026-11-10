@@ -91,6 +91,36 @@ impl<B: BizDayProcessor> SelectorBuilder<B> {
         Self(self.0.named_rule(id, spec))
     }
 
+    /// See [`ScheduleBuilder::basis_rule`]: a rule the selector's derived
+    /// rules refer to, with no slots of its own. An account's reminders,
+    /// two business days before each of its repayments, select from a
+    /// notices definition that has no repayments:
+    ///
+    /// ```rust
+    /// use chrono::TimeZone;
+    /// use chrono_tz::Europe::London;
+    /// use tkone_schedule::biz_day::WeekendSkipper;
+    /// use tkone_schedule::schedule::{Next, Schedule};
+    ///
+    /// let start = London.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap();
+    /// let notices = Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DD~SBT09:00:00").build()?;
+    /// let reminders = notices
+    ///     .selector(start)
+    ///     .basis_rule("repayment", "YY-MM-L~MFT12:00:00")
+    ///     .named_rule("reminder", "{repayment}~2PT09:00:00")
+    ///     .build()?;
+    ///
+    /// // 31 May 2026 is a Sunday: repaid Friday 29 May, reminded Wednesday 27 May.
+    /// let horizon = London.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap();
+    /// let Next::Due(slot) = reminders.next_after(&notices, &start, &horizon, |_| {})? else { panic!() };
+    /// assert_eq!(slot.at, London.with_ymd_and_hms(2026, 5, 27, 9, 0, 0).unwrap());
+    /// assert_eq!(slot.sources[0].basis, Some(London.with_ymd_and_hms(2026, 5, 29, 12, 0, 0).unwrap()));
+    /// # Ok::<(), tkone_schedule::Error>(())
+    /// ```
+    pub fn basis_rule(self, id: impl Into<String>, spec: impl Into<String>) -> Self {
+        Self(self.0.basis_rule(id, spec))
+    }
+
     /// The end of the window: the last instant a slot can be at (inclusive).
     pub fn until(self, until: DateTime<Tz>) -> Self {
         Self(self.0.until(until))

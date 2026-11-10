@@ -777,6 +777,58 @@ fn the_end_of_the_window_is_done() {
     assert_eq!(found, Next::Done);
 }
 
+/// Reminders two business days before each repayment (the 15th, moved to
+/// the next business day), in a batch definition that has no repayments.
+fn reminders(definition: &Schedule<Holidays>, time: &str) -> crate::schedule::SelectorBuilder<Holidays> {
+    definition
+        .selector(at(2026, 1, 1, 0, 0))
+        .basis_rule("repayment", "YY-MM-15~NBT12:00:00")
+        .named_rule("reminder", format!("{{repayment}}~2PT{time}"))
+}
+
+#[test]
+fn a_selector_derives_from_a_basis_of_its_own() {
+    let definition = batches();
+    let selector = reminders(&definition, "09:00:00").build().unwrap();
+    // Thu 15 Jan → Tue 13 Jan; Sun 15 Feb is repaid Mon 16 Feb → Thu 12 Feb.
+    let (first, missed) = next(&selector, &definition, at(2026, 1, 1, 0, 0), at(2026, 3, 1, 0, 0));
+    assert!(missed.is_empty());
+    let Next::Due(slot) = first else { panic!("{first:?}") };
+    assert_eq!(fmt(&slot), "Tue 13 Jan 09:00 reminder");
+    assert_eq!(slot.sources[0].basis, Some(at(2026, 1, 15, 12, 0)));
+    let (second, _) = next(&selector, &definition, slot.at, at(2026, 3, 1, 0, 0));
+    assert_eq!(due(second), "Thu 12 Feb 09:00 reminder");
+    // The basis has no slots: every slot the selector wants is a reminder,
+    // and every one is the definition's.
+    let window = at(2026, 1, 1, 0, 0)..=at(2026, 12, 31, 0, 0);
+    assert!(selector.uncovered(&definition, window.clone()).unwrap().is_empty());
+    let wanted: Vec<Slot> = selector.schedule().slots_between(window).unwrap().collect().unwrap();
+    assert_eq!(wanted.len(), 12);
+    assert!(wanted.iter().all(|s| s.sources[0].rule_id.as_deref() == Some("reminder")));
+}
+
+#[test]
+fn a_derived_selector_counts_and_misses_as_any() {
+    let definition = batches();
+    // A count counts the derived slots: the third reminder is 12 March's.
+    let three = reminders(&definition, "09:00:00").count(3).build().unwrap();
+    assert_eq!(three.until(), Some(&at(2026, 3, 12, 9, 0)));
+    // A derived time the definition lacks (10:00) is missed, not invented.
+    let late = reminders(&definition, "10:00:00").build().unwrap();
+    let window = at(2026, 1, 1, 0, 0)..=at(2026, 2, 28, 0, 0);
+    let uncovered: Vec<String> = late.uncovered(&definition, window).unwrap().iter().map(fmt).collect();
+    assert_eq!(uncovered, ["Tue 13 Jan 10:00 reminder", "Thu 12 Feb 10:00 reminder"]);
+    // A selector needs a rule with slots, and a basis something to derive.
+    let only_basis = definition.selector(at(2026, 1, 1, 0, 0)).basis_rule("repayment", "YY-MM-15T12:00:00").build();
+    assert!(only_basis.unwrap_err().to_string().contains("not a basis"));
+    let unreferred = definition
+        .selector(at(2026, 1, 1, 0, 0))
+        .basis_rule("repayment", "YY-MM-15T12:00:00")
+        .rule("YY-MM-01T09:00:00")
+        .build();
+    assert!(unreferred.unwrap_err().to_string().contains("no rule refers to it"));
+}
+
 #[test]
 fn a_count_becomes_until() {
     let definition = batches();

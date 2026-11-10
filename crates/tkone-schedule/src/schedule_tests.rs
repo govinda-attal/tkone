@@ -119,10 +119,8 @@ fn rules_on_the_same_instant_are_one_slot() {
 #[test]
 fn dates_moved_to_one_day_are_one_slot() {
     // Saturday's and Sunday's 09:00 move to Monday, where Monday has its own.
-    let schedule = Schedule::builder(at(2026, 5, 29, 0, 0), WeekendSkipper::new())
-        .rule("YY-MM-DD~NBT09:00:00")
-        .build()
-        .unwrap();
+    let schedule =
+        Schedule::builder(at(2026, 5, 29, 0, 0), WeekendSkipper::new()).rule("YY-MM-DD~NBT09:00:00").build().unwrap();
     let slots: Vec<Slot> = schedule.slots().unwrap().take(3).collect().unwrap();
     assert_eq!(slots[0].at, at(2026, 5, 29, 9, 0));
     assert_eq!(slots[1].at, at(2026, 6, 1, 9, 0));
@@ -159,7 +157,8 @@ fn start_anchors_but_is_not_a_slot() {
         ["Tue 07 Jan 18:00 -", "Thu 09 Jan 18:00 -", "Tue 21 Jan 18:00 -", "Thu 23 Jan 18:00 -"]
     );
     // The same phase from any point.
-    let later: Vec<_> = schedule.slots_after(&at(2025, 1, 15, 0, 0)).unwrap().take(1).map(|s| Ok(fmt(&s))).collect().unwrap();
+    let later: Vec<_> =
+        schedule.slots_after(&at(2025, 1, 15, 0, 0)).unwrap().take(1).map(|s| Ok(fmt(&s))).collect().unwrap();
     assert_eq!(later, ["Tue 21 Jan 18:00 -"]);
 }
 
@@ -167,10 +166,8 @@ fn start_anchors_but_is_not_a_slot() {
 fn nothing_before_the_start() {
     // From Saturday 30 May: Saturday's and Sunday's dates move back to
     // Friday 29th, before the start.
-    let schedule = Schedule::builder(at(2026, 5, 30, 0, 0), WeekendSkipper::new())
-        .rule("YY-MM-DD~PBT09:00:00")
-        .build()
-        .unwrap();
+    let schedule =
+        Schedule::builder(at(2026, 5, 30, 0, 0), WeekendSkipper::new()).rule("YY-MM-DD~PBT09:00:00").build().unwrap();
     assert_eq!(first(&schedule, 1), ["Mon 01 Jun 09:00 -"]);
 }
 
@@ -193,7 +190,10 @@ fn count_is_after_exclusions_and_replayed() {
         .count(4)
         .build()
         .unwrap();
-    assert_eq!(first(&schedule, 9), ["Mon 22 Dec 09:00 -", "Tue 23 Dec 09:00 -", "Mon 29 Dec 09:00 -", "Tue 30 Dec 09:00 -"]);
+    assert_eq!(
+        first(&schedule, 9),
+        ["Mon 22 Dec 09:00 -", "Tue 23 Dec 09:00 -", "Mon 29 Dec 09:00 -", "Tue 30 Dec 09:00 -"]
+    );
     let rest: Vec<_> = schedule.slots_after(&at(2025, 12, 29, 12, 0)).unwrap().map(|s| Ok(fmt(&s))).collect().unwrap();
     assert_eq!(rest, ["Tue 30 Dec 09:00 -"]);
 }
@@ -217,7 +217,8 @@ fn exclusions_match_actual_or_observed_dates() {
     assert_eq!(moved, [26, 27, 28, 29]);
     // Matching the observed date: the 25th is never observed, nothing goes.
     let by_observed = base().exclude_match(ExcludeMatch::Observed).build().unwrap();
-    let moved: Vec<_> = by_observed.slots().unwrap().collect::<Vec<_>>().unwrap()[1].sources.iter().map(|s| s.actual.day()).collect();
+    let moved: Vec<_> =
+        by_observed.slots().unwrap().collect::<Vec<_>>().unwrap()[1].sources.iter().map(|s| s.actual.day()).collect();
     assert_eq!(moved, [25, 26, 27, 28, 29]);
     // Excluding the 29th by observed date drops the whole slot.
     let monday = Schedule::builder(at(2025, 12, 24, 0, 0), Holidays::london())
@@ -277,7 +278,8 @@ fn slots_after_agrees_across_holidays() {
 fn slots_after_agrees_across_dst() {
     // Clocks go forward on 29 March 2026 and back on 25 October 2026.
     for start in [at(2026, 3, 25, 0, 0), at(2026, 10, 21, 0, 0)] {
-        let schedule = Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DDT[00,01,02,03]:30:00").build().unwrap();
+        let schedule =
+            Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DDT[00,01,02,03]:30:00").build().unwrap();
         agrees(&schedule, 8);
         // Elapsed steps: each day's times count from its first, not from
         // wherever iteration starts.
@@ -306,13 +308,19 @@ fn slots_between_are_the_slots_there() {
         .build()
         .unwrap();
     let all: Vec<Slot> = schedule.slots().unwrap().take(200).collect().unwrap();
-    for (from, to) in [(at(2025, 12, 24, 9, 0), at(2026, 1, 2, 9, 0)), (at(2025, 12, 31, 18, 0), at(2025, 12, 31, 18, 0))] {
+    for (from, to) in
+        [(at(2025, 12, 24, 9, 0), at(2026, 1, 2, 9, 0)), (at(2025, 12, 31, 18, 0), at(2025, 12, 31, 18, 0))]
+    {
         let want: Vec<&Slot> = all.iter().filter(|s| (from..=to).contains(&s.at)).collect();
         let got: Vec<Slot> = schedule.slots_between(from..=to).unwrap().collect().unwrap();
         assert_eq!(got.iter().collect::<Vec<_>>(), want, "{from}..={to}");
     }
     // An `until` inside the range still ends it; a count is still kept.
-    let counted = Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new()).rule("YY-MM-01T00:00:00").count(3).build().unwrap();
+    let counted = Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new())
+        .rule("YY-MM-01T00:00:00")
+        .count(3)
+        .build()
+        .unwrap();
     assert_eq!(counted.slots_between(at(2026, 2, 1, 0, 0)..=at(2027, 1, 1, 0, 0)).unwrap().count().unwrap(), 2);
 }
 
@@ -325,7 +333,11 @@ fn slots_between_end_when_every_date_is_excluded() {
             .exclude_rule("YY-MM-DD")
             .build()
             .unwrap();
-        assert_eq!(schedule.slots_between(at(2026, 1, 1, 0, 0)..=at(2036, 1, 1, 0, 0)).unwrap().count().unwrap(), 0, "{rule}");
+        assert_eq!(
+            schedule.slots_between(at(2026, 1, 1, 0, 0)..=at(2036, 1, 1, 0, 0)).unwrap().count().unwrap(),
+            0,
+            "{rule}"
+        );
     }
 }
 
@@ -376,7 +388,10 @@ fn a_slot_at_the_start_opens_the_first_period() {
         .build()
         .unwrap();
     assert_eq!(first(&schedule, 5).len(), 3);
-    assert_eq!(periods(schedule.periods().unwrap()), ["15 Jan(15 Jan)-15 Feb(15 Feb)", "15 Feb(15 Feb)-15 Mar(15 Mar)"]);
+    assert_eq!(
+        periods(schedule.periods().unwrap()),
+        ["15 Jan(15 Jan)-15 Feb(15 Feb)", "15 Feb(15 Feb)-15 Mar(15 Mar)"]
+    );
 }
 
 #[test]
@@ -404,7 +419,11 @@ fn slots_moved_before_the_start_are_reported() {
     // Excluded where it landed: dropped anyway, so not reported.
     assert!(lost(sat, "YY-MM-L~PBT00:00:00", true).is_empty());
     // Ends, even when every date is excluded.
-    let none = Schedule::builder(sat, WeekendSkipper::new()).rule("YY-MM-DD~3PT00:00:00").exclude_rule("YY-MM-DD").build().unwrap();
+    let none = Schedule::builder(sat, WeekendSkipper::new())
+        .rule("YY-MM-DD~3PT00:00:00")
+        .exclude_rule("YY-MM-DD")
+        .build()
+        .unwrap();
     assert!(none.moved_before_start().unwrap().is_empty());
 }
 
@@ -433,12 +452,19 @@ fn a_timeline_is_its_schedules_merged() {
     }
     assert!(moments.windows(2).all(|w| w[0].at < w[1].at));
     // At month ends both, in the order added.
-    let both: Vec<String> = moments.iter().filter(|m| m.entries.len() == 2).map(|m| m.at.format("%d %b").to_string()).collect();
+    let both: Vec<String> =
+        moments.iter().filter(|m| m.entries.len() == 2).map(|m| m.at.format("%d %b").to_string()).collect();
     assert_eq!(both, ["30 Jan", "27 Feb", "31 Mar"]);
-    assert!(moments.iter().filter(|m| m.entries.len() == 2).all(|m| m.entries.iter().map(|e| e.key).collect::<String>() == "ab"));
+    assert!(moments.iter().filter(|m| m.entries.len() == 2).all(|m| m
+        .entries
+        .iter()
+        .map(|e| e.key)
+        .collect::<String>()
+        == "ab"));
     // `since` is the period's start, as `periods` gives it.
     let periods: Vec<_> = b.periods_between(from..=to).unwrap().map(|p| Ok(p.start)).collect().unwrap();
-    let since: Vec<_> = moments.iter().flat_map(|m| m.entries.iter().filter(|e| e.key == 'b').map(|e| e.since)).collect();
+    let since: Vec<_> =
+        moments.iter().flat_map(|m| m.entries.iter().filter(|e| e.key == 'b').map(|e| e.since)).collect();
     assert_eq!(since, periods);
     assert_eq!(since[0].at, at(2026, 1, 15, 0, 0), "the first is the schedule's start");
 }
@@ -465,14 +491,22 @@ fn a_timeline_orders_instants_across_zones() {
 fn timeline_edges() {
     use crate::schedule::Timeline;
     let a = || monthly(at(2026, 3, 1, 0, 0), "YY-MM-01T00:00:00");
-    let error = |t: Timeline<&str, WeekendSkipper>| t.between(at(2026, 1, 1, 0, 0)..=at(2027, 1, 1, 0, 0)).unwrap_err().to_string();
+    let error = |t: Timeline<&str, WeekendSkipper>| {
+        t.between(at(2026, 1, 1, 0, 0)..=at(2027, 1, 1, 0, 0)).unwrap_err().to_string()
+    };
     assert!(error(Timeline::new()).contains("at least one"));
     assert!(error(Timeline::new().add("a", a()).add("a", a())).contains("used twice"));
     // A range before a schedule starts has nothing from it.
     let early = Timeline::new().add("a", a()).between(at(2026, 1, 1, 0, 0)..=at(2026, 2, 1, 0, 0)).unwrap();
     assert_eq!(early.count().unwrap(), 0);
     // A slot at the schedule's start: `since` is the start itself.
-    let first = Timeline::new().add("a", a()).between(at(2026, 3, 1, 0, 0)..=at(2026, 3, 1, 0, 0)).unwrap().next().unwrap().unwrap();
+    let first = Timeline::new()
+        .add("a", a())
+        .between(at(2026, 3, 1, 0, 0)..=at(2026, 3, 1, 0, 0))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap();
     assert_eq!((first.entries[0].since.at, first.at), (at(2026, 3, 1, 0, 0), at(2026, 3, 1, 0, 0)));
 }
 
@@ -491,7 +525,8 @@ fn derived_rules_count_from_the_adjusted_date() {
     let schedule = derived(at(2025, 11, 1, 0, 0), "YY-MM-L~MFT12:00:00", "{basis}~2PT09:00:00");
     let got: Vec<Slot> = schedule.slots().unwrap().take(14).collect().unwrap();
     let holidays = Holidays::london();
-    let payments = Schedule::builder(at(2025, 11, 1, 0, 0), Holidays::london()).rule("YY-MM-L~MFT12:00:00").build().unwrap();
+    let payments =
+        Schedule::builder(at(2025, 11, 1, 0, 0), Holidays::london()).rule("YY-MM-L~MFT12:00:00").build().unwrap();
     let payments: Vec<Slot> = payments.slots().unwrap().take(14).collect().unwrap();
     for (slot, payment) in got.iter().zip(&payments) {
         let want = holidays.sub(&payment.at.naive_local(), 2).unwrap().date();
@@ -515,7 +550,10 @@ fn a_basis_has_no_slots_of_its_own() {
         .named_rule("notice", "{payment}~1PT12:00:00")
         .build()
         .unwrap();
-    assert_eq!(first(&both, 4), ["Wed 14 Jan 12:00 notice", "Thu 15 Jan 12:00 payment", "Fri 13 Feb 12:00 notice", "Mon 16 Feb 12:00 payment"]);
+    assert_eq!(
+        first(&both, 4),
+        ["Wed 14 Jan 12:00 notice", "Thu 15 Jan 12:00 payment", "Fri 13 Feb 12:00 notice", "Mon 16 Feb 12:00 payment"]
+    );
 }
 
 #[test]
@@ -569,7 +607,10 @@ fn invalid_derived_rules() {
     let cases: &[Case] = &[
         (&[("a", "{b}~2PT09:00:00", false)], "which no rule is"),
         (&[("a", "{a}~2PT09:00:00", false)], "itself derived"),
-        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2PT09:00:00", false), ("b", "{a}~1PT09:00:00", false)], "itself derived"),
+        (
+            &[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2PT09:00:00", false), ("b", "{a}~1PT09:00:00", false)],
+            "itself derived",
+        ),
         (&[("p", "YY-MM-15T12:00:00", true)], "not a basis"),
         (&[("p", "YY-MM-15T12:00:00", true), ("q", "YY-MM-01T12:00:00", false)], "no rule refers to it"),
         (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}/2WT09:00:00", false)], "only an adjustment"),
@@ -610,7 +651,8 @@ fn invalid_schedules() {
     ] {
         assert!(error(b().rule(rule)).starts_with(&format!("rule 1 (`{rule}`): invalid")), "{rule}");
     }
-    assert!(error(b().named_rule("a", "YY-MM-DDT09:00:00").named_rule("a", "YY-MM-LT09:00:00")).contains("`a` is used twice"));
+    assert!(error(b().named_rule("a", "YY-MM-DDT09:00:00").named_rule("a", "YY-MM-LT09:00:00"))
+        .contains("`a` is used twice"));
     assert!(error(b().named_rule("open", "YY-MM-DD")).starts_with("rule `open` (`YY-MM-DD`)"));
     assert!(error(b().rule("YY-MM-DDT09:00:00").exclude_rule("YY-13-01")).starts_with("exclusion `YY-13-01`"));
     assert!(error(b().rule("YY-MM-DDT09:00:00").until(at(2025, 12, 31, 0, 0))).contains("before the start"));
@@ -627,7 +669,12 @@ fn batches() -> Schedule<Holidays> {
 }
 
 /// `next_after`, with the slots it reports missed.
-fn next(selector: &Selector<Holidays>, definition: &Schedule<Holidays>, after: DateTime<Tz>, horizon: DateTime<Tz>) -> (Next, Vec<String>) {
+fn next(
+    selector: &Selector<Holidays>,
+    definition: &Schedule<Holidays>,
+    after: DateTime<Tz>,
+    horizon: DateTime<Tz>,
+) -> (Next, Vec<String>) {
     let mut missed = Vec::new();
     let next = selector.next_after(definition, &after, &horizon, |slot| missed.push(fmt(&slot))).unwrap();
     (next, missed)
@@ -643,7 +690,8 @@ fn due(next: Next) -> String {
 #[test]
 fn selects_the_month_end_batch() {
     let definition = batches();
-    let account = definition.selector(at(2026, 3, 15, 0, 0)).named_rule("month-end", "YY-MM-L~PBT18:00:00").build().unwrap();
+    let account =
+        definition.selector(at(2026, 3, 15, 0, 0)).named_rule("month-end", "YY-MM-L~PBT18:00:00").build().unwrap();
     // 31 May 2026 is a Sunday.
     let (found, missed) = next(&account, &definition, at(2026, 5, 1, 0, 0), at(2026, 7, 1, 0, 0));
     let Next::Due(slot) = found else { panic!("{found:?}") };
@@ -684,7 +732,12 @@ fn instants_the_definition_lacks_are_missed() {
 #[test]
 fn the_end_of_the_window_is_done() {
     let definition = batches();
-    let closes = definition.selector(at(2026, 1, 1, 0, 0)).rule("YY-MM-L~PBT18:00:00").until(at(2026, 2, 28, 0, 0)).build().unwrap();
+    let closes = definition
+        .selector(at(2026, 1, 1, 0, 0))
+        .rule("YY-MM-L~PBT18:00:00")
+        .until(at(2026, 2, 28, 0, 0))
+        .build()
+        .unwrap();
     let (found, _) = next(&closes, &definition, at(2026, 1, 1, 0, 0), at(2027, 1, 1, 0, 0));
     assert_eq!(due(found), "Fri 30 Jan 18:00 -");
     let (found, _) = next(&closes, &definition, at(2026, 1, 30, 18, 0), at(2027, 1, 1, 0, 0));
@@ -735,7 +788,8 @@ fn uncovered_lists_what_the_definition_lacks() {
     assert_eq!(gaps, ["Tue 30 Jun 18:00 -"]);
     let evening = definition.selector(at(2026, 1, 1, 0, 0)).rule("YY-MM-DD~SBT18:00:00").build().unwrap();
     assert_eq!(evening.uncovered(&definition, year.clone()).unwrap().len(), 22, "June's business days");
-    let morning_and_evening = definition.selector(at(2026, 1, 1, 0, 0)).rule("YY-MM-[MON-FRI]T[09,18]:00:00").build().unwrap();
+    let morning_and_evening =
+        definition.selector(at(2026, 1, 1, 0, 0)).rule("YY-MM-[MON-FRI]T[09,18]:00:00").build().unwrap();
     // June's 22 business days, and New Year's Day, twice each.
     assert_eq!(morning_and_evening.uncovered(&definition, year).unwrap().len(), 46);
 }
@@ -746,10 +800,24 @@ fn uncovered_lists_what_the_definition_lacks() {
 fn lazy_selection_is_the_intersection() {
     let definition = batches();
     let horizon = at(2026, 3, 1, 0, 0);
-    for rule in ["YY-MM-DDT[09,13]:00:00", "YY-MM-DD~NBT13:00:00", "YY-MM-[MON,FRI]T18:00:00", "YY-MM-L~PBT18:00:00", "YY-MM-DD~2NT09:00:00"] {
+    for rule in [
+        "YY-MM-DDT[09,13]:00:00",
+        "YY-MM-DD~NBT13:00:00",
+        "YY-MM-[MON,FRI]T18:00:00",
+        "YY-MM-L~PBT18:00:00",
+        "YY-MM-DD~2NT09:00:00",
+    ] {
         let selector = definition.selector(at(2025, 12, 20, 0, 0)).rule(rule).build().unwrap();
-        let produced: BTreeSet<_> = definition.slots().unwrap().take_while(|s| Ok(s.at <= horizon)).map(|s| Ok(s.at)).collect().unwrap();
-        let wanted: Vec<_> = selector.schedule().slots().unwrap().take_while(|s| Ok(s.at <= horizon)).map(|s| Ok(s.at)).collect().unwrap();
+        let produced: BTreeSet<_> =
+            definition.slots().unwrap().take_while(|s| Ok(s.at <= horizon)).map(|s| Ok(s.at)).collect().unwrap();
+        let wanted: Vec<_> = selector
+            .schedule()
+            .slots()
+            .unwrap()
+            .take_while(|s| Ok(s.at <= horizon))
+            .map(|s| Ok(s.at))
+            .collect()
+            .unwrap();
         let (mut dues, mut misses) = (Vec::new(), Vec::new());
         let mut after = at(2025, 12, 1, 0, 0);
         loop {
@@ -765,7 +833,16 @@ fn lazy_selection_is_the_intersection() {
         let (expect_dues, expect_misses): (Vec<_>, Vec<_>) = wanted.iter().partition(|at| produced.contains(at));
         assert_eq!(dues, expect_dues, "{rule}");
         assert_eq!(misses, expect_misses, "{rule}");
-        assert_eq!(selector.uncovered(&definition, at(2025, 12, 1, 0, 0)..=horizon).unwrap().iter().map(|s| s.at).collect::<Vec<_>>(), expect_misses, "{rule}");
+        assert_eq!(
+            selector
+                .uncovered(&definition, at(2025, 12, 1, 0, 0)..=horizon)
+                .unwrap()
+                .iter()
+                .map(|s| s.at)
+                .collect::<Vec<_>>(),
+            expect_misses,
+            "{rule}"
+        );
     }
 }
 
@@ -773,10 +850,13 @@ fn lazy_selection_is_the_intersection() {
 fn a_selector_needs_its_definition() {
     let definition = batches();
     let account = definition.selector(at(2026, 1, 1, 0, 0)).rule("YY-MM-L~PBT18:00:00").build().unwrap();
-    let elsewhere = Schedule::builder(chrono_tz::America::New_York.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(), Holidays::london())
-        .rule("YY-MM-DD~SBT18:00:00")
-        .build()
-        .unwrap();
+    let elsewhere = Schedule::builder(
+        chrono_tz::America::New_York.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        Holidays::london(),
+    )
+    .rule("YY-MM-DD~SBT18:00:00")
+    .build()
+    .unwrap();
     let err = account.next_after(&elsewhere, &at(2026, 1, 1, 0, 0), &at(2026, 3, 1, 0, 0), |_| {}).unwrap_err();
     assert!(matches!(err, Error::InvalidSchedule(why) if why.contains("another time zone")));
 }

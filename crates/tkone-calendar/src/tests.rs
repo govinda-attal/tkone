@@ -69,7 +69,8 @@ fn test_substitute_policies() {
     // 2022: Christmas on Sunday, Boxing Day on Monday.
     let run = |policy| {
         let cal = Calendar::from_file(&file(policy, XMAS)).unwrap();
-        [2021, 2022].map(|y| cal.holidays(y).map(|h| h.observed.format("%d %a").to_string()).collect::<Vec<_>>().join(", "))
+        [2021, 2022]
+            .map(|y| cal.holidays(y).map(|h| h.observed.format("%d %a").to_string()).collect::<Vec<_>>().join(", "))
     };
     assert_eq!(run("next-free-weekday"), ["27 Mon, 28 Tue", "26 Mon, 27 Tue"]);
     assert_eq!(run("next-weekday"), ["27 Mon, 27 Mon", "26 Mon, 26 Mon"]);
@@ -92,10 +93,7 @@ fn test_rules_dates_and_exceptions() {
     );
     let cal = Calendar::from_file(&f).unwrap();
     assert_eq!(days_off(&cal, 2020), ["05-08 Fri May Day", "05-18 Mon Victoria Day"]);
-    assert_eq!(
-        days_off(&cal, 2022),
-        ["05-02 Mon May Day", "05-23 Mon Victoria Day", "06-20 Mon Juneteenth"]
-    );
+    assert_eq!(days_off(&cal, 2022), ["05-02 Mon May Day", "05-23 Mon Victoria Day", "06-20 Mon Juneteenth"]);
     assert_eq!(cal.holidays(2024).count(), 2);
 }
 
@@ -114,14 +112,19 @@ fn test_checks() {
     assert!(one(r#"{"name": "A", "rule": "YY-01-01 | YY-12-31"}"#).contains("invalid date spec"));
     assert!(one(r#"{"name": "A", "rule": "YY-MM-DD"}"#).contains("more than"));
     assert!(one(r#"{"name": "A", "rule": "YY-02-30"}"#).contains("YY-02-30"));
-    assert!(one(r#"{"name": "A", "rule": "YY-01-01", "except": ["2021-01-02"], "source": "s"}"#).contains("not a date the rule gives"));
+    assert!(one(r#"{"name": "A", "rule": "YY-01-01", "except": ["2021-01-02"], "source": "s"}"#)
+        .contains("not a date the rule gives"));
     assert!(one(r#"{"name": "A", "rule": "YY-01-01", "except": ["2021-01-01"]}"#).contains("needs a `source`"));
     assert!(one(r#"{"name": "A", "rule": "YY-01-01", "from": 2040}"#).contains("no year"));
     assert!(one(r#"{"name": "A", "dates": ["2021-01-01"]}"#).contains("needs a `source`"));
     assert!(one(r#"{"name": "A", "dates": ["2021-01-02"], "source": "s"}"#).contains("weekend"));
     assert!(one(r#"{"name": "A", "dates": ["2041-01-01"], "source": "s"}"#).contains("outside"));
-    assert!(check(r#"{"name": "A", "dates": ["2021-01-01", "2021-01-01"], "source": "s"}"#).iter().any(|p| p.contains("listed twice")));
-    assert!(one(r#"{"name": "A", "dates": {"2021": "2021-01-01", "2023": "2023-01-02"}, "source": "s"}"#).contains("skip"));
+    assert!(check(r#"{"name": "A", "dates": ["2021-01-01", "2021-01-01"], "source": "s"}"#)
+        .iter()
+        .any(|p| p.contains("listed twice")));
+    assert!(
+        one(r#"{"name": "A", "dates": {"2021": "2021-01-01", "2023": "2023-01-02"}, "source": "s"}"#).contains("skip")
+    );
     assert!(one(r#"{"name": "A", "dates": {"2021": "2022-01-03"}, "source": "s"}"#).contains("listed under 2021"));
     // The Mauritius mistake: a date both cancelled and listed.
     assert!(check(
@@ -151,7 +154,12 @@ fn test_range_and_status() {
     let cal = Calendar::from_file(&file("none", XMAS)).unwrap();
     assert_eq!(
         cal.is_business_day(ymd(2031, 1, 2)),
-        Err(Error::OutOfRange { code: "TEST".into(), date: ymd(2031, 1, 2), from: ymd(2020, 1, 1), until: ymd(2030, 12, 31) })
+        Err(Error::OutOfRange {
+            code: "TEST".into(),
+            date: ymd(2031, 1, 2),
+            from: ymd(2020, 1, 1),
+            until: ymd(2030, 12, 31)
+        })
     );
     assert_eq!(cal.status(ymd(2025, 12, 31)), Ok(Status::Confirmed));
     assert_eq!(cal.status(ymd(2026, 1, 1)), Ok(Status::Projected));
@@ -193,13 +201,14 @@ fn test_schedules_on_a_calendar() {
     assert_eq!(run("YY-MM-BD#3", "GBLO", 2), ["04-03", "05-06"]);
     // Every 3rd business day across Easter, from Monday 14 April.
     let london = Calendars::builtin().get("GBLO").unwrap();
-    let steps: Vec<_> = SpecIteratorBuilder::new_with_start("YY-MM-3BD", london, Utc.with_ymd_and_hms(2025, 4, 14, 0, 0, 0).unwrap())
-        .build()
-        .unwrap()
-        .take(3)
-        .map(|o| Ok(o.observed().format("%m-%d").to_string()))
-        .collect()
-        .unwrap();
+    let steps: Vec<_> =
+        SpecIteratorBuilder::new_with_start("YY-MM-3BD", london, Utc.with_ymd_and_hms(2025, 4, 14, 0, 0, 0).unwrap())
+            .build()
+            .unwrap()
+            .take(3)
+            .map(|o| Ok(o.observed().format("%m-%d").to_string()))
+            .collect()
+            .unwrap();
     assert_eq!(steps, ["04-14", "04-17", "04-24"]);
     // Modified following on the 5th of May: a London holiday, not a TARGET one.
     assert_eq!(run("YY-05-05~MF", "GBLO", 1), ["05-06"]);
@@ -216,8 +225,8 @@ fn test_joint() {
     // TARGET2 starts in 1999.
     assert_eq!(joint.valid_from(), ymd(1999, 1, 1));
     for (date, business) in [
-        (ymd(2025, 5, 1), false),  // Labour Day (TARGET2)
-        (ymd(2025, 5, 5), false),  // Early May bank holiday (London)
+        (ymd(2025, 5, 1), false), // Labour Day (TARGET2)
+        (ymd(2025, 5, 5), false), // Early May bank holiday (London)
         (ymd(2025, 5, 6), true),
         (ymd(2025, 12, 26), false), // both
     ] {
@@ -254,7 +263,10 @@ fn test_datetime_dates_checked_in_the_calendars_zone() {
     use chrono::TimeZone;
     use tkone_schedule::schedule::Schedule;
     let cals = Calendars::builtin();
-    let run = |rule: &str, start: chrono::DateTime<chrono_tz::Tz>, until: chrono::DateTime<chrono_tz::Tz>| -> tkone_schedule::Result<Vec<String>> {
+    let run = |rule: &str,
+               start: chrono::DateTime<chrono_tz::Tz>,
+               until: chrono::DateTime<chrono_tz::Tz>|
+     -> tkone_schedule::Result<Vec<String>> {
         Schedule::builder(start, cals.get("XNYS").unwrap())
             .rule(rule)
             .until(until)
@@ -267,7 +279,10 @@ fn test_datetime_dates_checked_in_the_calendars_zone() {
     let utc = |d, h| chrono_tz::UTC.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap();
     let new_york = |d, h| chrono_tz::America::New_York.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap();
     // 21:30 in London is 16:30 the same day in New York: fine.
-    assert_eq!(run("YY-MM-DD~SBT21:30:00", london(25, 0), london(27, 23)).unwrap(), ["Wed 11-25 21:30", "Fri 11-27 21:30"]);
+    assert_eq!(
+        run("YY-MM-DD~SBT21:30:00", london(25, 0), london(27, 23)).unwrap(),
+        ["Wed 11-25 21:30", "Fri 11-27 21:30"]
+    );
     // 02:00 UTC is the evening before in New York: refused, not run on the
     // wrong day. (Without the check, Fri 27 Nov 02:00 UTC would pass as a
     // trading day though it is Thanksgiving evening in New York.)
@@ -281,13 +296,17 @@ fn test_datetime_dates_checked_in_the_calendars_zone() {
     // A joint calendar across zones has no single zone, so no check.
     assert_eq!(cals.get("GBLO+USNY").unwrap().zone(), None);
     // Date schedules are dates: not checked.
-    let dates: Vec<_> = tkone_schedule::date::SpecIteratorBuilder::new_after("YY-MM-BD#1", cals.get("XNYS").unwrap(), chrono_tz::UTC.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
-        .build()
-        .unwrap()
-        .take(1)
-        .map(|o| Ok(o.observed().date_naive()))
-        .collect()
-        .unwrap();
+    let dates: Vec<_> = tkone_schedule::date::SpecIteratorBuilder::new_after(
+        "YY-MM-BD#1",
+        cals.get("XNYS").unwrap(),
+        chrono_tz::UTC.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+    )
+    .build()
+    .unwrap()
+    .take(1)
+    .map(|o| Ok(o.observed().date_naive()))
+    .collect()
+    .unwrap();
     assert_eq!(dates, [ymd(2026, 1, 2)]);
 }
 
@@ -322,12 +341,21 @@ fn slot_days(schedule: &tkone_schedule::schedule::Schedule<impl BizDayProcessor>
 #[test]
 fn test_document_calendars() {
     // Spring bank holiday, Monday 25 May 2026; 31 May is a Sunday.
-    assert_eq!(slot_days(&document("GBLO", "2026-05-22", "YY-MM-DD~SBT18:00:00"), 3), ["Fri 22 May", "Tue 26 May", "Wed 27 May"]);
+    assert_eq!(
+        slot_days(&document("GBLO", "2026-05-22", "YY-MM-DD~SBT18:00:00"), 3),
+        ["Fri 22 May", "Tue 26 May", "Wed 27 May"]
+    );
     assert_eq!(slot_days(&document("GBLO", "2026-05-01", "YY-MM-L~PBT18:00:00"), 2), ["Fri 29 May", "Tue 30 Jun"]);
     // Independence Day 2026 is a Saturday. The exchange closes the Friday
     // before; the Federal Reserve stays open, so dollar payments settle.
-    assert_eq!(slot_days(&document("GBLO+XNYS", "2026-07-01", "YY-MM-DD~SBT12:00:00"), 3), ["Wed 01 Jul", "Thu 02 Jul", "Mon 06 Jul"]);
-    assert_eq!(slot_days(&document("GBLO+USNY", "2026-07-01", "YY-MM-DD~SBT12:00:00"), 3), ["Wed 01 Jul", "Thu 02 Jul", "Fri 03 Jul"]);
+    assert_eq!(
+        slot_days(&document("GBLO+XNYS", "2026-07-01", "YY-MM-DD~SBT12:00:00"), 3),
+        ["Wed 01 Jul", "Thu 02 Jul", "Mon 06 Jul"]
+    );
+    assert_eq!(
+        slot_days(&document("GBLO+USNY", "2026-07-01", "YY-MM-DD~SBT12:00:00"), 3),
+        ["Wed 01 Jul", "Thu 02 Jul", "Fri 03 Jul"]
+    );
 }
 
 #[test]

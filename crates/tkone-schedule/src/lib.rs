@@ -482,16 +482,16 @@ mod limits;
 mod prelude;
 mod utils;
 
-#[cfg(test)]
-mod resume_tests;
-#[cfg(test)]
-mod limits_tests;
+#[cfg(all(test, feature = "serde"))]
+mod document_tests;
 #[cfg(test)]
 mod grammar_tests;
 #[cfg(test)]
+mod limits_tests;
+#[cfg(test)]
+mod resume_tests;
+#[cfg(test)]
 mod schedule_tests;
-#[cfg(all(test, feature = "serde"))]
-mod document_tests;
 
 pub use error::{Error, Result};
 
@@ -652,9 +652,7 @@ impl<T: Clone> Occurrence<T> {
     /// - `AdjustedLater(a, o)` → `a` (raw is earlier than settlement)
     pub fn earlier(&self) -> &T {
         match self {
-            Occurrence::Exact(t)
-            | Occurrence::AdjustedEarlier(_, t)
-            | Occurrence::AdjustedLater(t, _) => t,
+            Occurrence::Exact(t) | Occurrence::AdjustedEarlier(_, t) | Occurrence::AdjustedLater(t, _) => t,
         }
     }
 
@@ -665,9 +663,7 @@ impl<T: Clone> Occurrence<T> {
     /// - `AdjustedLater(a, o)` → `o` (settlement is later than raw)
     pub fn later(&self) -> &T {
         match self {
-            Occurrence::Exact(t)
-            | Occurrence::AdjustedEarlier(t, _)
-            | Occurrence::AdjustedLater(_, t) => t,
+            Occurrence::Exact(t) | Occurrence::AdjustedEarlier(t, _) | Occurrence::AdjustedLater(_, t) => t,
         }
     }
 
@@ -678,9 +674,7 @@ impl<T: Clone> Occurrence<T> {
     /// was made ([`Occurrence::Exact`]).
     pub fn observed(&self) -> &T {
         match self {
-            Occurrence::Exact(t)
-            | Occurrence::AdjustedEarlier(_, t)
-            | Occurrence::AdjustedLater(_, t) => t,
+            Occurrence::Exact(t) | Occurrence::AdjustedEarlier(_, t) | Occurrence::AdjustedLater(_, t) => t,
         }
     }
 
@@ -689,9 +683,7 @@ impl<T: Clone> Occurrence<T> {
     /// Equal to `observed()` when no adjustment was made ([`Occurrence::Exact`]).
     pub fn actual(&self) -> &T {
         match self {
-            Occurrence::Exact(t)
-            | Occurrence::AdjustedEarlier(t, _)
-            | Occurrence::AdjustedLater(t, _) => t,
+            Occurrence::Exact(t) | Occurrence::AdjustedEarlier(t, _) | Occurrence::AdjustedLater(t, _) => t,
         }
     }
 
@@ -701,8 +693,9 @@ impl<T: Clone> Occurrence<T> {
     pub fn as_tuple(&self) -> (&T, &T) {
         match self {
             Occurrence::Exact(t) => (t, t),
-            Occurrence::AdjustedEarlier(actual, adjusted)
-            | Occurrence::AdjustedLater(actual, adjusted) => (actual, adjusted),
+            Occurrence::AdjustedEarlier(actual, adjusted) | Occurrence::AdjustedLater(actual, adjusted) => {
+                (actual, adjusted)
+            }
         }
     }
 }

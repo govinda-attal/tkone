@@ -11,9 +11,7 @@ struct TestCase<Tz: TimeZone> {
 
 fn run_cases<Tz: TimeZone + Clone>(cases: Vec<TestCase<Tz>>) {
     for tc in cases {
-        let iter = SpecIteratorBuilder::new_with_start(tc.spec, tc.start)
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(tc.spec, tc.start).build().unwrap();
         let results: Vec<DateTime<_>> = iter.take(tc.take).collect().unwrap();
         assert_eq!(tc.expected, results, "spec: {}", tc.spec);
     }
@@ -440,10 +438,7 @@ fn test_with_end_spec() {
     // Iterator produces 09:00, 10:00, 11:00, 12:00, 13:00 then terminates.
     {
         let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start("1H:00:00", start)
-            .with_end_spec("13:00:00")
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_with_start("1H:00:00", start).with_end_spec("13:00:00").build().unwrap();
         let results: Vec<DateTime<_>> = iter.collect().unwrap();
         assert_eq!(
             results,
@@ -463,10 +458,7 @@ fn test_with_end_spec() {
     // Iterator produces 09:00, 09:30, …, 12:30 then terminates.
     {
         let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start("HH:30M:00", start)
-            .with_end_spec("3H:30M:SS")
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_with_start("HH:30M:00", start).with_end_spec("3H:30M:SS").build().unwrap();
         let results: Vec<DateTime<_>> = iter.collect().unwrap();
         assert_eq!(
             results,
@@ -518,9 +510,7 @@ fn test_asis_parsing() {
     // The new_with_start start passthrough always returns start itself,
     // so take(1) on any spec (including all-AsIs) produces exactly the start.
     let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start("_:00:00", start)
-        .build()
-        .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("_:00:00", start).build().unwrap();
     let results: Vec<DateTime<_>> = iter.take(1).collect().unwrap();
     assert_eq!(results, vec![start]);
 }
@@ -537,9 +527,7 @@ fn test_no_progress_terminates() {
     // next computed value equals dtm → no-progress guard fires → terminates.
     {
         let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 30, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start("09:30:00", start)
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_with_start("09:30:00", start).build().unwrap();
         let results: Vec<DateTime<_>> = iter.take(5).collect().unwrap();
         assert_eq!(results, vec![start], "all-At new_with_start: yields start once then terminates");
     }
@@ -548,9 +536,7 @@ fn test_no_progress_terminates() {
     // equals dtm → no-progress guard fires immediately → zero results.
     {
         let dtm = tz.with_ymd_and_hms(2025, 1, 1, 9, 30, 0).unwrap();
-        let iter = SpecIteratorBuilder::new_after("09:30:00", dtm)
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_after("09:30:00", dtm).build().unwrap();
         let results: Vec<DateTime<_>> = iter.take(5).collect().unwrap();
         assert!(results.is_empty(), "all-At new_after (at spec time): yields nothing");
     }
@@ -559,9 +545,7 @@ fn test_no_progress_terminates() {
     // AsIs produces next == dtm → no-progress guard fires → terminates.
     {
         let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 22, 45).unwrap();
-        let iter = SpecIteratorBuilder::new_with_start("_:_:_", start)
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_with_start("_:_:_", start).build().unwrap();
         let results: Vec<DateTime<_>> = iter.take(5).collect().unwrap();
         assert_eq!(results, vec![start], "all-AsIs new_with_start: yields start once then terminates");
     }
@@ -654,12 +638,7 @@ fn test_asis_recurrence() {
 // DST: wall-clock vs elapsed steps (America/New_York)
 // ---------------------------------------------------------------------------
 
-fn rfc3339(
-    spec: &str,
-    start: DateTime<chrono_tz::Tz>,
-    mode: crate::IntervalMode,
-    take: usize,
-) -> Vec<String> {
+fn rfc3339(spec: &str, start: DateTime<chrono_tz::Tz>, mode: crate::IntervalMode, take: usize) -> Vec<String> {
     SpecIteratorBuilder::new_with_start(spec, start)
         .with_interval_mode(mode)
         .build()
@@ -776,10 +755,7 @@ fn test_fixed_finer_field_does_not_skip_current_slot() {
 #[test]
 fn test_fixed_coarser_field_repeats_daily() {
     let eight = Utc.with_ymd_and_hms(2025, 1, 1, 8, 0, 0).unwrap();
-    assert_eq!(
-        after("09:30M:00", eight, 4),
-        ["01-01 09:00:00", "01-01 09:30:00", "01-02 09:00:00", "01-02 09:30:00"]
-    );
+    assert_eq!(after("09:30M:00", eight, 4), ["01-01 09:00:00", "01-01 09:30:00", "01-02 09:00:00", "01-02 09:30:00"]);
 }
 
 #[test]
@@ -791,10 +767,7 @@ fn test_end_is_inclusive_without_made_up_item() {
         .unwrap()
         .collect()
         .unwrap();
-    assert_eq!(
-        results,
-        vec![start, start + chrono::Duration::hours(1), start + chrono::Duration::hours(2)]
-    );
+    assert_eq!(results, vec![start, start + chrono::Duration::hours(1), start + chrono::Duration::hours(2)]);
 }
 
 /// An end spec whose time has passed today resolves to tomorrow.
@@ -814,11 +787,7 @@ fn test_end_spec_rolls_to_next_day() {
 #[test]
 fn test_time_list_iterates_the_current_day() {
     let after = Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
-    let got: Vec<_> = SpecIteratorBuilder::new_after("[09,12,17]:00:00", after)
-        .build()
-        .unwrap()
-        .collect()
-        .unwrap();
+    let got: Vec<_> = SpecIteratorBuilder::new_after("[09,12,17]:00:00", after).build().unwrap().collect().unwrap();
     let at = |h| Utc.with_ymd_and_hms(2025, 1, 1, h, 0, 0).unwrap();
     assert_eq!(got, vec![at(12), at(17)]);
 }
@@ -826,12 +795,8 @@ fn test_time_list_iterates_the_current_day() {
 #[test]
 fn test_hour_range_with_step() {
     let start = Utc.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
-    let got: Vec<_> = SpecIteratorBuilder::new_with_start("09-16:15M:00", start)
-        .build()
-        .unwrap()
-        .take(33)
-        .collect()
-        .unwrap();
+    let got: Vec<_> =
+        SpecIteratorBuilder::new_with_start("09-16:15M:00", start).build().unwrap().take(33).collect().unwrap();
     assert_eq!(got[31], Utc.with_ymd_and_hms(2025, 1, 1, 16, 45, 0).unwrap());
     assert_eq!(got[32], Utc.with_ymd_and_hms(2025, 1, 2, 9, 0, 0).unwrap());
     assert_eq!("09-16:15M:00".parse::<Spec>().unwrap().minutes, Cycle::Every(15));
@@ -842,13 +807,7 @@ fn test_midnight_anchor_aligns_steps_to_the_clock() {
     use crate::TimeAnchor;
     let at = |d, h, m, s| Utc.with_ymd_and_hms(2025, 1, d, h, m, s).unwrap();
     let take = |spec: &str, after, anchor, n| -> Vec<DateTime<Utc>> {
-        SpecIteratorBuilder::new_after(spec, after)
-            .with_time_anchor(anchor)
-            .build()
-            .unwrap()
-            .take(n)
-            .collect()
-            .unwrap()
+        SpecIteratorBuilder::new_after(spec, after).with_time_anchor(anchor).build().unwrap().take(n).collect().unwrap()
     };
     // Counted from the start by default; from midnight (the clock) on request.
     assert_eq!(take("HH:15M:00", at(1, 9, 7, 0), TimeAnchor::Start, 2), vec![at(1, 9, 22, 0), at(1, 9, 37, 0)]);
@@ -865,10 +824,7 @@ fn test_midnight_anchor_aligns_steps_to_the_clock() {
     );
     assert_eq!(take("5H:00:00", at(1, 18, 0, 0), TimeAnchor::Start, 2), vec![at(1, 23, 0, 0), at(2, 4, 0, 0)]);
     // Windows and lists work the same way.
-    assert_eq!(
-        take("09-16:20M:00", at(1, 16, 50, 0), TimeAnchor::Midnight, 2),
-        vec![at(2, 9, 0, 0), at(2, 9, 20, 0)]
-    );
+    assert_eq!(take("09-16:20M:00", at(1, 16, 50, 0), TimeAnchor::Midnight, 2), vec![at(2, 9, 0, 0), at(2, 9, 20, 0)]);
     // Fixed times are unaffected.
     assert_eq!(take("[09,17]:00:00", at(1, 10, 0, 0), TimeAnchor::Midnight, 5), vec![at(1, 17, 0, 0)]);
 }

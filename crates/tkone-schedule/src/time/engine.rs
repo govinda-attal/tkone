@@ -47,11 +47,7 @@ impl Unit {
 }
 
 pub(super) fn fields(spec: &Spec) -> [(Unit, &Cycle); 3] {
-    [
-        (Unit::Second, &spec.seconds),
-        (Unit::Minute, &spec.minutes),
-        (Unit::Hour, &spec.hours),
-    ]
+    [(Unit::Second, &spec.seconds), (Unit::Minute, &spec.minutes), (Unit::Hour, &spec.hours)]
 }
 
 /// The finest unit with an `Every`, or failing that the finest `ForEach`.
@@ -73,7 +69,11 @@ pub(super) fn step(spec: &Spec, driver: Unit) -> Duration {
             _ => None,
         })
         .fold(Duration::zero(), |acc, d| acc + d);
-    if every.is_zero() { driver.duration(1) } else { every }
+    if every.is_zero() {
+        driver.duration(1)
+    } else {
+        every
+    }
 }
 
 /// The earliest time strictly after `after` that `spec` produces, taking the
@@ -243,26 +243,17 @@ mod tests {
     #[test]
     fn test_hour_list_and_range_windows() {
         let day2 = |h, m| at(h, m, 0) + Duration::days(1);
-        assert_eq!(
-            run("[09,12,17]:00:00", at(10, 0, 0), 4),
-            vec![at(12, 0, 0), at(17, 0, 0), day2(9, 0), day2(12, 0)]
-        );
+        assert_eq!(run("[09,12,17]:00:00", at(10, 0, 0), 4), vec![at(12, 0, 0), at(17, 0, 0), day2(9, 0), day2(12, 0)]);
         let t = run("09-16:15M:00", at(8, 0, 0), 33);
         assert_eq!(t[0], at(9, 0, 0));
         assert_eq!(t[31], at(16, 45, 0));
         assert_eq!(t[32], day2(9, 0));
-        assert_eq!(
-            run("[09,14]:30M:00", at(9, 0, 0), 4),
-            vec![at(9, 30, 0), at(14, 0, 0), at(14, 30, 0), day2(9, 0)]
-        );
+        assert_eq!(run("[09,14]:30M:00", at(9, 0, 0), 4), vec![at(9, 30, 0), at(14, 0, 0), at(14, 30, 0), day2(9, 0)]);
     }
 
     #[test]
     fn test_finer_list_gives_one_grid_per_value() {
-        assert_eq!(
-            run("HH:[00,30]:00", at(9, 10, 0), 3),
-            vec![at(9, 30, 0), at(10, 0, 0), at(10, 30, 0)]
-        );
+        assert_eq!(run("HH:[00,30]:00", at(9, 10, 0), 3), vec![at(9, 30, 0), at(10, 0, 0), at(10, 30, 0)]);
         assert_eq!(
             run("09-10:[15,45]:00", at(0, 0, 0), 5),
             vec![at(9, 15, 0), at(9, 45, 0), at(10, 15, 0), at(10, 45, 0), at(9, 15, 0) + Duration::days(1)]

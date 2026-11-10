@@ -6,15 +6,24 @@ use chrono::Weekday;
 
 use super::easter::Easter;
 use super::spec::{
-    BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
-    WeekdayOption,
+    BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec, WeekdayOption,
 };
 use crate::biz_day::Direction;
 use crate::utils::join;
 
 const MONTHS: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 fn ordinal(n: u32) -> String {
@@ -29,7 +38,11 @@ fn ordinal(n: u32) -> String {
 }
 
 fn count(n: u32, unit: &str) -> String {
-    if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") }
+    if n == 1 {
+        format!("1 {unit}")
+    } else {
+        format!("{n} {unit}s")
+    }
 }
 
 /// Like [`join`], but three or more consecutive keys read as a range:
@@ -95,9 +108,7 @@ fn months(spec: &Spec) -> Months {
     match (&spec.years, &spec.months) {
         (Cycle::NextNth(ny), Cycle::NextNth(nm)) => Months::Stride(12 * ny + nm),
         (_, Cycle::NextNth(nm)) => Months::Stride(*nm),
-        (_, Cycle::Values(ms)) => {
-            Months::In(join_runs(ms.iter().map(|m| (*m, MONTHS[(*m - 1) as usize].to_string()))))
-        }
+        (_, Cycle::Values(ms)) => Months::In(join_runs(ms.iter().map(|m| (*m, MONTHS[(*m - 1) as usize].to_string())))),
         (_, Cycle::Positions { every, positions }) => {
             Months::In(format!("{}, counted from the start's month", cycle("month", *every, positions)))
         }
@@ -162,10 +173,9 @@ fn shortest(month: u32) -> u32 {
 fn calendar_days(days: &DayCycle, spec_months: Option<&std::collections::BTreeSet<u32>>) -> Days {
     match days {
         DayCycle::ForEach => Days::Every("every day".into()),
-        DayCycle::AsIs => Days::On(
-            "on the start's day of the month".into(),
-            Some("or the last day, in shorter months"),
-        ),
+        DayCycle::AsIs => {
+            Days::On("on the start's day of the month".into(), Some("or the last day, in shorter months"))
+        }
         DayCycle::OnDays { days, .. } if days.is_empty() => Days::On("on the last day".into(), None),
         DayCycle::OnDays { days, option } => {
             let note = match option {
@@ -185,9 +195,7 @@ fn calendar_days(days: &DayCycle, spec_months: Option<&std::collections::BTreeSe
             Days::On(format!("on the {}", join_runs(days.iter().map(|d| (*d, ordinal(*d))))), note)
         }
         DayCycle::OnWeekDays { weekdays, option } => {
-            let names = join_runs(
-                weekdays.iter().map(|w| (w.0.num_days_from_monday(), weekday(w.0).to_string())),
-            );
+            let names = join_runs(weekdays.iter().map(|w| (w.0.num_days_from_monday(), weekday(w.0).to_string())));
             match option {
                 WeekdayOption::NA => Days::Every(format!("every {names}")),
                 WeekdayOption::Starting(n) => {
@@ -418,7 +426,18 @@ mod tests {
 
     #[test]
     fn test_ordinal() {
-        for (n, s) in [(1, "1st"), (2, "2nd"), (3, "3rd"), (4, "4th"), (11, "11th"), (12, "12th"), (13, "13th"), (21, "21st"), (22, "22nd"), (31, "31st")] {
+        for (n, s) in [
+            (1, "1st"),
+            (2, "2nd"),
+            (3, "3rd"),
+            (4, "4th"),
+            (11, "11th"),
+            (12, "12th"),
+            (13, "13th"),
+            (21, "21st"),
+            (22, "22nd"),
+            (31, "31st"),
+        ] {
             assert_eq!(ordinal(n), s);
         }
     }

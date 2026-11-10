@@ -308,9 +308,15 @@ mod tests {
             (fmt(&first), fmt(&second), store.load("daily").unwrap().unwrap().to_rfc3339())
         };
         // The latest missed run once, then the next; skipped ones are recorded.
-        assert_eq!(run(CatchUp::Latest), ("Mon 11-02 09:00".into(), "Tue 11-03 09:00".into(), "2026-10-30T09:00:00+00:00".into()));
+        assert_eq!(
+            run(CatchUp::Latest),
+            ("Mon 11-02 09:00".into(), "Tue 11-03 09:00".into(), "2026-10-30T09:00:00+00:00".into())
+        );
         // Every missed run, oldest first; nothing recorded until fired.
-        assert_eq!(run(CatchUp::All), ("Wed 10-28 09:00".into(), "Thu 10-29 09:00".into(), "2026-10-27T09:00:00+00:00".into()));
+        assert_eq!(
+            run(CatchUp::All),
+            ("Wed 10-28 09:00".into(), "Thu 10-29 09:00".into(), "2026-10-27T09:00:00+00:00".into())
+        );
         // None of them: straight to the next run.
         let mut store = MemoryStore::new();
         store.save("daily", last_tuesday()).unwrap();
@@ -384,7 +390,9 @@ mod tests {
         // Ends on 30 October, so every run is in the past and fires at once.
         let until = chrono_tz::Europe::London.with_ymd_and_hms(2026, 10, 30, 23, 59, 59).unwrap();
         let start = chrono_tz::Europe::London.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        let ended = || Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DD~SBT09:00:00").until(until).build().unwrap();
+        let ended = || {
+            Schedule::builder(start, WeekendSkipper::new()).rule("YY-MM-DD~SBT09:00:00").until(until).build().unwrap()
+        };
         let mut store = MemoryStore::new();
         store.save("daily", last_tuesday()).unwrap();
         let s = BusinessSchedule::new(ended(), store.clone(), "daily", CatchUp::All).unwrap();

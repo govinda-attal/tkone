@@ -28,9 +28,7 @@ fn main() {
         .observed();
 
     // Step 2: iterate from that start date (inclusive).
-    let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PB", bdp, start)
-        .build()
-        .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-L~PB", bdp, start).build().unwrap();
 
     println!("Next 6 last-business-days-of-month (New York):");
     for r in iter.take(6).collect::<Vec<_>>().unwrap() {

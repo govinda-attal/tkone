@@ -14,12 +14,16 @@ use chrono::{Duration, TimeZone, Utc};
 use tkone_calendar::Calendars;
 use tkone_schedule::biz_day::BizDayProcessor;
 use tkone_schedule::schedule::Schedule;
-use tkone_trigger::{BusinessSchedule, CatchUp, FileStore, FireContext, ScheduleIter, Scheduler, StateStore, TickContext};
+use tkone_trigger::{
+    BusinessSchedule, CatchUp, FileStore, FireContext, ScheduleIter, Scheduler, StateStore, TickContext,
+};
 
 /// 16:30 on NYSE trading days, read in New York.
 const RULE: &str = "YY-MM-DD~SBT16:30:00";
 
-fn schedule(path: &std::path::Path) -> Result<BusinessSchedule<impl BizDayProcessor, FileStore>, tkone_schedule::Error> {
+fn schedule(
+    path: &std::path::Path,
+) -> Result<BusinessSchedule<impl BizDayProcessor, FileStore>, tkone_schedule::Error> {
     let nyse = Calendars::builtin().get("XNYS").map_err(tkone_schedule::Error::from)?;
     let start = chrono_tz::America::New_York.with_ymd_and_hms(2026, 1, 2, 0, 0, 0).unwrap();
     let eod = Schedule::builder(start, nyse).rule(RULE).build()?;
@@ -41,7 +45,10 @@ async fn main() -> Result<(), tkone_schedule::Error> {
     });
     scheduler.add(|ctx: FireContext| async move {
         let run = ctx.occurrence();
-        println!("reconciling the run due {} (fired now: it was missed)", run.observed().with_timezone(&chrono_tz::America::New_York));
+        println!(
+            "reconciling the run due {} (fired now: it was missed)",
+            run.observed().with_timezone(&chrono_tz::America::New_York)
+        );
         Ok::<(), String>(())
     });
     let shutdown = scheduler.shutdown_token();

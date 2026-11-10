@@ -56,15 +56,18 @@ fn a_floating_rate_loan() {
     let from = London.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let to = London.with_ymd_and_hms(2026, 4, 30, 0, 0, 0).unwrap();
     let moments: Vec<_> = timeline.between(from..=to).unwrap().collect().unwrap();
-    assert_eq!(lines(&moments, London), [
-        "Tue 13 Jan 10:00 GMT fixing (from Thu 15 Jan)",
-        "Thu 12 Feb 10:00 GMT fixing (from Sun 15 Feb)",
-        "Mon 16 Feb 12:00 GMT repayment (from Sun 15 Feb)",
-        "Thu 12 Mar 10:00 GMT fixing (from Sun 15 Mar)",
-        "Mon 16 Mar 12:00 GMT repayment (from Sun 15 Mar)",
-        "Mon 13 Apr 10:00 BST fixing (from Wed 15 Apr)",
-        "Wed 15 Apr 12:00 BST repayment",
-    ]);
+    assert_eq!(
+        lines(&moments, London),
+        [
+            "Tue 13 Jan 10:00 GMT fixing (from Thu 15 Jan)",
+            "Thu 12 Feb 10:00 GMT fixing (from Sun 15 Feb)",
+            "Mon 16 Feb 12:00 GMT repayment (from Sun 15 Feb)",
+            "Thu 12 Mar 10:00 GMT fixing (from Sun 15 Mar)",
+            "Mon 16 Mar 12:00 GMT repayment (from Sun 15 Mar)",
+            "Mon 13 Apr 10:00 BST fixing (from Wed 15 Apr)",
+            "Wed 15 Apr 12:00 BST repayment",
+        ]
+    );
     // Each repayment ends the period since the one before; the first, since
     // the drawdown.
     let periods: Vec<String> = moments
@@ -89,17 +92,20 @@ fn a_savings_account() {
     let to = London.with_ymd_and_hms(2026, 6, 2, 23, 0, 0).unwrap();
     let moments: Vec<_> = timeline.between(from..=to).unwrap().collect().unwrap();
     // Monday 25 May is the Spring bank holiday; 31 May is a Sunday.
-    assert_eq!(lines(&moments, London), [
-        "Thu 21 May 18:00 BST accrue",
-        "Fri 22 May 18:00 BST accrue",
-        "Tue 26 May 18:00 BST accrue",
-        "Wed 27 May 18:00 BST accrue",
-        "Thu 28 May 18:00 BST accrue",
-        "Fri 29 May 18:00 BST accrue + capitalise (from Sun 31 May)",
-        "Mon 01 Jun 09:00 BST statement",
-        "Mon 01 Jun 18:00 BST accrue",
-        "Tue 02 Jun 18:00 BST accrue",
-    ]);
+    assert_eq!(
+        lines(&moments, London),
+        [
+            "Thu 21 May 18:00 BST accrue",
+            "Fri 22 May 18:00 BST accrue",
+            "Tue 26 May 18:00 BST accrue",
+            "Wed 27 May 18:00 BST accrue",
+            "Thu 28 May 18:00 BST accrue",
+            "Fri 29 May 18:00 BST accrue + capitalise (from Sun 31 May)",
+            "Mon 01 Jun 09:00 BST statement",
+            "Mon 01 Jun 18:00 BST accrue",
+            "Tue 02 Jun 18:00 BST accrue",
+        ]
+    );
     // The day's accrual comes first: it was added first.
     let month_end = &moments[5];
     assert_eq!(month_end.entries.iter().map(|e| e.key).collect::<Vec<_>>(), ["accrue", "capitalise"]);
@@ -117,27 +123,36 @@ fn cross_border_payments() {
     // Instructions cut off at 16:00 London; dollars settle at 12:00 New
     // York. 31 August is a London holiday, 7 September a New York one.
     let timeline = Timeline::new()
-        .add("london cut-off", schedule(London.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap(), "GBLO", "YY-MM-DD~SBT16:00:00"))
-        .add("new york settlement", schedule(New_York.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap(), "USNY", "YY-MM-DD~SBT12:00:00"));
+        .add(
+            "london cut-off",
+            schedule(London.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap(), "GBLO", "YY-MM-DD~SBT16:00:00"),
+        )
+        .add(
+            "new york settlement",
+            schedule(New_York.with_ymd_and_hms(2026, 8, 1, 0, 0, 0).unwrap(), "USNY", "YY-MM-DD~SBT12:00:00"),
+        );
     let from = London.with_ymd_and_hms(2026, 8, 28, 0, 0, 0).unwrap();
     let to = London.with_ymd_and_hms(2026, 9, 8, 23, 0, 0).unwrap();
     let moments: Vec<_> = timeline.between(from..=to).unwrap().collect().unwrap();
-    assert_eq!(lines(&moments, New_York), [
-        "Fri 28 Aug 11:00 EDT london cut-off",
-        "Fri 28 Aug 12:00 EDT new york settlement",
-        "Mon 31 Aug 12:00 EDT new york settlement",
-        "Tue 01 Sep 11:00 EDT london cut-off",
-        "Tue 01 Sep 12:00 EDT new york settlement",
-        "Wed 02 Sep 11:00 EDT london cut-off",
-        "Wed 02 Sep 12:00 EDT new york settlement",
-        "Thu 03 Sep 11:00 EDT london cut-off",
-        "Thu 03 Sep 12:00 EDT new york settlement",
-        "Fri 04 Sep 11:00 EDT london cut-off",
-        "Fri 04 Sep 12:00 EDT new york settlement",
-        "Mon 07 Sep 11:00 EDT london cut-off",
-        "Tue 08 Sep 11:00 EDT london cut-off",
-        "Tue 08 Sep 12:00 EDT new york settlement",
-    ]);
+    assert_eq!(
+        lines(&moments, New_York),
+        [
+            "Fri 28 Aug 11:00 EDT london cut-off",
+            "Fri 28 Aug 12:00 EDT new york settlement",
+            "Mon 31 Aug 12:00 EDT new york settlement",
+            "Tue 01 Sep 11:00 EDT london cut-off",
+            "Tue 01 Sep 12:00 EDT new york settlement",
+            "Wed 02 Sep 11:00 EDT london cut-off",
+            "Wed 02 Sep 12:00 EDT new york settlement",
+            "Thu 03 Sep 11:00 EDT london cut-off",
+            "Thu 03 Sep 12:00 EDT new york settlement",
+            "Fri 04 Sep 11:00 EDT london cut-off",
+            "Fri 04 Sep 12:00 EDT new york settlement",
+            "Mon 07 Sep 11:00 EDT london cut-off",
+            "Tue 08 Sep 11:00 EDT london cut-off",
+            "Tue 08 Sep 12:00 EDT new york settlement",
+        ]
+    );
     // Each settlement takes the instructions cut off since the last one:
     // Monday 31 August's has none (London was closed); Tuesday 8
     // September's has two (New York was closed on the 7th).

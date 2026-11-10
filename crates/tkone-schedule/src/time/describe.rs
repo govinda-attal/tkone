@@ -96,8 +96,7 @@ fn fixed_times(spec: &Spec) -> String {
 /// `", only during 09:00–16:59"`, `", only during minute 30 of each hour"`.
 fn window(hours: Option<Vec<u8>>, minutes: Option<Vec<u8>>) -> String {
     let hour_spans = |hs: &[u8]| {
-        let spans: Vec<String> =
-            runs(hs).into_iter().map(|(lo, hi)| format!("{lo:02}:00–{hi:02}:59")).collect();
+        let spans: Vec<String> = runs(hs).into_iter().map(|(lo, hi)| format!("{lo:02}:00–{hi:02}:59")).collect();
         join(&spans)
     };
     match (hours.as_deref(), minutes.as_deref()) {
@@ -167,7 +166,10 @@ mod tests {
             ("09:30M:00", "every 30 minutes, at second 00, counted from the start, only during 09:00–09:59"),
             ("09:MM:00", "every minute, at second 00, only during 09:00–09:59"),
             ("09-16:15M:00", "every 15 minutes, at second 00, counted from the start, only during 09:00–16:59"),
-            ("[09-11,14]:30M:00", "every 30 minutes, at second 00, counted from the start, only during 09:00–11:59 and 14:00–14:59"),
+            (
+                "[09-11,14]:30M:00",
+                "every 30 minutes, at second 00, counted from the start, only during 09:00–11:59 and 14:00–14:59",
+            ),
             ("HH:[00,30]:00", "every hour, at minutes 00 and 30, second 00"),
             ("HH:00-14:SS", "every second, only during minutes 00 to 14 of each hour"),
             ("[09,10]:[00,30]:SS", "every second, only during 09:00–10:59, in minutes 00 and 30 of each hour"),

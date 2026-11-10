@@ -21,12 +21,8 @@ fn stored(t: &DateTime<Tz>) -> DateTime<FixedOffset> {
 
 fn check_date(spec: &str, start: DateTime<Tz>) {
     let bdp = WeekendSkipper::new();
-    let continuous: Vec<_> = date::SpecIteratorBuilder::new_with_start(spec, bdp.clone(), start)
-        .build()
-        .unwrap()
-        .take(N)
-        .collect()
-        .unwrap();
+    let continuous: Vec<_> =
+        date::SpecIteratorBuilder::new_with_start(spec, bdp.clone(), start).build().unwrap().take(N).collect().unwrap();
     let mut resumed = vec![continuous[0].clone()];
     while resumed.len() < continuous.len() {
         let cursor = stored(resumed.last().unwrap().actual());
@@ -155,7 +151,7 @@ fn test_resume_datetime_specs() {
         ("YY-MM-[TUE,THU]/2WT18:00:00", ny(2025, 1, 7, 18, 0), WallClock, Start),
         ("YY-MM-DDT09-16:30M:00", ny(2025, 1, 15, 9, 0), WallClock, Midnight),
         ("YY-MM-DDT[01,02,03]:30:00", ny(2025, 3, 8, 1, 30), WallClock, Start), // spring-forward
-        ("YY-MM-DDTHH:[00,30]:00", ny(2025, 11, 2, 0, 0), WallClock, Start), // fall-back
+        ("YY-MM-DDTHH:[00,30]:00", ny(2025, 11, 2, 0, 0), WallClock, Start),    // fall-back
     ] {
         check_datetime(spec, start, mode, anchor);
     }
@@ -192,12 +188,8 @@ fn test_resume_time_specs_with_midnight_anchor() {
         ("09-16:20M:00", ny(2025, 1, 1, 16, 50)),
     ] {
         let build = |b: time::SpecIteratorBuilder<Tz, _, _, _>| b.with_time_anchor(TimeAnchor::Midnight);
-        let continuous: Vec<DateTime<Tz>> = build(time::SpecIteratorBuilder::new_after(spec, start))
-            .build()
-            .unwrap()
-            .take(N)
-            .collect()
-            .unwrap();
+        let continuous: Vec<DateTime<Tz>> =
+            build(time::SpecIteratorBuilder::new_after(spec, start)).build().unwrap().take(N).collect().unwrap();
         let mut resumed = vec![continuous[0]];
         while resumed.len() < continuous.len() {
             let last = stored(resumed.last().unwrap());
@@ -246,13 +238,12 @@ fn test_resume_with_end() {
 
     // datetime
     let (spec, start, end) = ("YY-MM-DDT6H:00:00", ny(2025, 3, 8, 6, 0), ny(2025, 3, 10, 12, 0));
-    let continuous: Vec<_> =
-        datetime::SpecIteratorBuilder::new_with_start(spec, bdp.clone(), start)
-            .with_end(end)
-            .build()
-            .unwrap()
-            .collect()
-            .unwrap();
+    let continuous: Vec<_> = datetime::SpecIteratorBuilder::new_with_start(spec, bdp.clone(), start)
+        .with_end(end)
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
     let mut resumed = vec![continuous[0].clone()];
     while let Some(next) = datetime::SpecIteratorBuilder::resume_after(
         spec,
@@ -273,12 +264,8 @@ fn test_resume_with_end() {
 
     // time
     let (spec, start, end) = ("HH:30M:00", ny(2025, 3, 9, 0, 0), ny(2025, 3, 9, 5, 0));
-    let continuous: Vec<_> = time::SpecIteratorBuilder::new_with_start(spec, start)
-        .with_end(end)
-        .build()
-        .unwrap()
-        .collect()
-        .unwrap();
+    let continuous: Vec<_> =
+        time::SpecIteratorBuilder::new_with_start(spec, start).with_end(end).build().unwrap().collect().unwrap();
     let mut resumed = vec![continuous[0]];
     while let Some(next) =
         time::SpecIteratorBuilder::resume_after(spec, start.timezone(), stored(resumed.last().unwrap()))

@@ -176,10 +176,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
     }
 
     /// Create an iterator that produces occurrences strictly **after `dtm`**.
-    pub fn new_after(
-        spec: &str,
-        dtm: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
+    pub fn new_after(spec: &str, dtm: DateTime<Tz>) -> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
         Self {
             timezone: dtm.timezone(),
             dtm,
@@ -240,10 +237,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, NoStart, NoEnd, NotSealed> {
     ///
     /// Useful with [`resume_after`](Self::resume_after) for a stored schedule
     /// that has an end.
-    pub fn with_end(
-        self,
-        end: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, NoStart, EndDateTime<Tz>, Sealed> {
+    pub fn with_end(self, end: DateTime<Tz>) -> SpecIteratorBuilder<Tz, NoStart, EndDateTime<Tz>, Sealed> {
         SpecIteratorBuilder {
             timezone: self.timezone,
             dtm: self.dtm,
@@ -331,10 +325,7 @@ impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> 
 
 impl<Tz: TimeZone> SpecIteratorBuilder<Tz, StartDateTime<Tz>, NoEnd, NotSealed> {
     /// Bound the iterator by an explicit end datetime.
-    pub fn with_end(
-        self,
-        end: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
+    pub fn with_end(self, end: DateTime<Tz>) -> SpecIteratorBuilder<Tz, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
         SpecIteratorBuilder {
             timezone: self.timezone,
             dtm: self.dtm,
@@ -489,9 +480,7 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
     fn is_excluded(&self, t: &DateTime<Tz>) -> bool {
         let local = t.naive_local();
         let before = local - Duration::nanoseconds(1);
-        self.exclusions
-            .iter()
-            .any(|spec| engine::next_after(spec, self.exclusion_anchor, before) == Some(local))
+        self.exclusions.iter().any(|spec| engine::next_after(spec, self.exclusion_anchor, before) == Some(local))
     }
 
     fn with_interval_mode(mut self, mode: IntervalMode) -> Self {
@@ -581,9 +570,7 @@ impl<Tz: TimeZone> SpecIterator<Tz> {
                     // `next` was computed in the previous occurrence's
                     // offset, so the step measures real elapsed time.
                     let offset = self.cursor.offset().fix().local_minus_utc();
-                    let instant = self
-                        .tz
-                        .from_utc_datetime(&(next - Duration::seconds(i64::from(offset))));
+                    let instant = self.tz.from_utc_datetime(&(next - Duration::seconds(i64::from(offset))));
                     self.local = instant.naive_local();
                     instant
                 }
@@ -691,7 +678,8 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 3, 11, 23, 0, 0).unwrap();
         dbg!(&dtm);
 
-        let spec_iter = SpecIteratorBuilder::new_with_start("3H:00:00", dtm).with_end_spec("15H:00:00").build().unwrap();
+        let spec_iter =
+            SpecIteratorBuilder::new_with_start("3H:00:00", dtm).with_end_spec("15H:00:00").build().unwrap();
 
         let tmp = spec_iter.collect::<Vec<DateTime<_>>>().unwrap();
         dbg!(tmp);

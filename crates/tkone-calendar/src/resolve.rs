@@ -222,10 +222,7 @@ pub(crate) fn build(file: &CalendarFile) -> Result<Calendar> {
         return Err(invalid(problems));
     }
 
-    let holidays = substitute(drafts, &weekend)
-        .into_iter()
-        .filter(|h| (from..=until).contains(&h.observed))
-        .collect();
+    let holidays = substitute(drafts, &weekend).into_iter().filter(|h| (from..=until).contains(&h.observed)).collect();
     Ok(Calendar::new(
         file.code.clone(),
         file.name.clone(),
@@ -244,7 +241,8 @@ fn expand(rule: &str, first: i32, last: i32) -> std::result::Result<Vec<(NaiveDa
         .ok_or_else(|| format!("year {first} is out of range"))?
         .and_hms_opt(0, 0, 0)
         .unwrap();
-    let mut iter = NaiveSpecIterator::new_after(rule, WeekendSkipper::new(), start).map_err(|e| format!("rule `{rule}`: {e}"))?;
+    let mut iter =
+        NaiveSpecIterator::new_after(rule, WeekendSkipper::new(), start).map_err(|e| format!("rule `{rule}`: {e}"))?;
     let mut out: Vec<(NaiveDate, NaiveDate)> = Vec::new();
     loop {
         match iter.next() {
@@ -271,7 +269,13 @@ fn substitute(mut drafts: Vec<Draft>, weekend: &Weekend) -> Vec<Holiday> {
     drafts.sort_by_key(|d| d.actual);
     let mut taken: HashSet<NaiveDate> =
         drafts.iter().map(|d| d.observed).filter(|d| !weekend.contains(d.weekday())).collect();
-    let step = |d: NaiveDate, forward: bool| if forward { d.checked_add_days(Days::new(1)) } else { d.checked_sub_days(Days::new(1)) };
+    let step = |d: NaiveDate, forward: bool| {
+        if forward {
+            d.checked_add_days(Days::new(1))
+        } else {
+            d.checked_sub_days(Days::new(1))
+        }
+    };
     drafts
         .into_iter()
         .map(|d| {

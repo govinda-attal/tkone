@@ -168,9 +168,7 @@ impl WeekendSkipper {
         let mut current_date = *dtm;
         let step = Duration::days(1);
         if dtm.day() == 1 {
-            while current_date.weekday() == chrono::Weekday::Sat
-                || current_date.weekday() == chrono::Weekday::Sun
-            {
+            while current_date.weekday() == chrono::Weekday::Sat || current_date.weekday() == chrono::Weekday::Sun {
                 current_date += step;
             }
             return Ok(current_date);
@@ -178,9 +176,7 @@ impl WeekendSkipper {
 
         let last_day_month = dtm.to_last_day_of_month();
         if dtm.day() == last_day_month.day() {
-            while current_date.weekday() == chrono::Weekday::Sat
-                || current_date.weekday() == chrono::Weekday::Sun
-            {
+            while current_date.weekday() == chrono::Weekday::Sat || current_date.weekday() == chrono::Weekday::Sun {
                 current_date -= step;
             }
             return Ok(current_date);

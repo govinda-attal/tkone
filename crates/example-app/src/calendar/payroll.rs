@@ -49,7 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for p in paydays.iter().filter(|p| p.sources[0].actual != p.at) {
             let friday = p.sources[0].actual.date_naive();
             let names: Vec<_> = cal.holidays_between(friday, friday).map(|h| h.name.as_str()).collect();
-            println!("  Fri {} is {} → paid {}", friday.format("%Y-%m-%d"), names.join(", "), p.at.format("%a %Y-%m-%d"));
+            println!(
+                "  Fri {} is {} → paid {}",
+                friday.format("%Y-%m-%d"),
+                names.join(", "),
+                p.at.format("%a %Y-%m-%d")
+            );
         }
     }
     Ok(())

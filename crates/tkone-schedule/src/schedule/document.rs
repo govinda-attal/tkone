@@ -248,7 +248,6 @@ pub enum BusinessDays<B> {
     NoCalendar(WeekendSkipper),
 }
 
-
 impl<B: BizDayProcessor> BizDayProcessor for BusinessDays<B> {
     fn is_biz_day(&self, dtm: &NaiveDateTime) -> Result<bool> {
         match self {
@@ -390,7 +389,10 @@ impl ScheduleDoc {
             builder = match (&rule.id, rule.basis) {
                 (Some(id), true) => builder.basis_rule(id, &rule.rule),
                 (None, true) => {
-                    return Err(Error::InvalidSchedule(format!("the basis rule `{}` needs an `id` to be referred to", rule.rule)))
+                    return Err(Error::InvalidSchedule(format!(
+                        "the basis rule `{}` needs an `id` to be referred to",
+                        rule.rule
+                    )))
                 }
                 (Some(id), false) => builder.named_rule(id, &rule.rule),
                 (None, false) => builder.rule(&rule.rule),

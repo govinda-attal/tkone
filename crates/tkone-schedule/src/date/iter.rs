@@ -1,4 +1,7 @@
-use super::{engine, spec::{DayCycle, Spec}};
+use super::{
+    engine,
+    spec::{DayCycle, Spec},
+};
 use crate::limits::{skip_through, Limits};
 use crate::utils::next_result_to_tz;
 use crate::{biz_day::BizDayProcessor, prelude::*, DstPolicy, Occurrence};
@@ -76,9 +79,7 @@ pub struct SpecIteratorBuilder<Tz: TimeZone, BDP: BizDayProcessor, START, END, S
     marker_sealed: PhantomData<S>,
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S>
-    SpecIteratorBuilder<Tz, BDP, START, END, S>
-{
+impl<Tz: TimeZone, BDP: BizDayProcessor, START, END, S> SpecIteratorBuilder<Tz, BDP, START, END, S> {
     /// Override the DST resolution policy for this iterator.
     ///
     /// Defaults to [`DstPolicy::Adjust`]. Set to [`DstPolicy::Strict`] to
@@ -114,11 +115,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     /// Create an iterator that produces occurrences starting **from `Utc::now()`**
     /// in timezone `tz`. The current instant is excluded; the first result is the
     /// earliest occurrence strictly after now.
-    pub fn new(
-        spec: &str,
-        bdp: BDP,
-        tz: Tz,
-    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
+    pub fn new(spec: &str, bdp: BDP, tz: Tz) -> SpecIteratorBuilder<Tz, BDP, NoStart, NoEnd, NotSealed> {
         SpecIteratorBuilder::new_after(spec, bdp, Utc::now().with_timezone(&tz))
     }
 
@@ -189,7 +186,18 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
 
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         let (spec, bdp, end) = (&self.spec, self.bd_processor, BuilderEnd::None);
-        assemble(spec, bdp, self.dtm, self.local, false, self.anchor, end, &self.limits, &self.exclusions, self.dst_policy)
+        assemble(
+            spec,
+            bdp,
+            self.dtm,
+            self.local,
+            false,
+            self.anchor,
+            end,
+            &self.limits,
+            &self.exclusions,
+            self.dst_policy,
+        )
     }
 }
 
@@ -288,10 +296,7 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     ///
     /// Useful with [`resume_after`](Self::resume_after) for a stored schedule
     /// that has an end.
-    pub fn with_end(
-        self,
-        end: DateTime<Tz>,
-    ) -> SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed> {
+    pub fn with_end(self, end: DateTime<Tz>) -> SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed> {
         SpecIteratorBuilder {
             dtm: self.dtm,
             start: self.start,
@@ -309,36 +314,39 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, N
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed>
-{
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, NoStart, EndDateTime<Tz>, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         let (spec, bdp, end) = (&self.spec, self.bd_processor, BuilderEnd::At(self.end.0));
-        assemble(spec, bdp, self.dtm, self.local, false, self.anchor, end, &self.limits, &self.exclusions, self.dst_policy)
+        assemble(
+            spec,
+            bdp,
+            self.dtm,
+            self.local,
+            false,
+            self.anchor,
+            end,
+            &self.limits,
+            &self.exclusions,
+            self.dst_policy,
+        )
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed>
-{
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndDateTime<Tz>, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         let (spec, bdp, end) = (&self.spec, self.bd_processor, BuilderEnd::At(self.end.0));
         assemble(spec, bdp, self.dtm, None, true, None, end, &self.limits, &self.exclusions, self.dst_policy)
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed>
-{
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, EndSpec, Sealed> {
     pub fn build(self) -> Result<SpecIterator<Tz, BDP>> {
         let (spec, bdp, end) = (&self.spec, self.bd_processor, BuilderEnd::Spec(self.end.0));
         assemble(spec, bdp, self.dtm, None, true, None, end, &self.limits, &self.exclusions, self.dst_policy)
     }
 }
 
-impl<Tz: TimeZone, BDP: BizDayProcessor>
-    SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed>
-{
+impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIteratorBuilder<Tz, BDP, StartDateTime<Tz>, NoEnd, NotSealed> {
     /// Create an iterator that includes `start` as its **first yielded item**.
     ///
     /// This is the right choice when you have already resolved a concrete start
@@ -595,10 +603,7 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
         Ok(Self {
             spec: spec.parse()?,
             dtm,
-            context: engine::IterContext {
-                anchor,
-                bd_processor: bdp,
-            },
+            context: engine::IterContext { anchor, bd_processor: bdp },
             index: 0,
             start,
             end,
@@ -656,7 +661,11 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
                 // Calendar rules: the first date after the day before the
                 // start (or after `last`), at the start's time of day.
                 let from = last.max(start - Duration::nanoseconds(1));
-                let day = if from.time() < start.time() { from.date().pred_opt().unwrap_or(from.date()) } else { from.date() };
+                let day = if from.time() < start.time() {
+                    from.date().pred_opt().unwrap_or(from.date())
+                } else {
+                    from.date()
+                };
                 iter.index = 1;
                 iter.dtm = day.and_time(start.time());
                 return Ok(iter);
@@ -712,12 +721,7 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
 
     /// Like [`new_after`](Self::new_after), but aligns `nY` / `nM` cadences to
     /// `anchor` instead of `dtm`.
-    pub(crate) fn new_after_anchored(
-        spec: &str,
-        bdp: BDP,
-        dtm: NaiveDateTime,
-        anchor: NaiveDateTime,
-    ) -> Result<Self> {
+    pub(crate) fn new_after_anchored(spec: &str, bdp: BDP, dtm: NaiveDateTime, anchor: NaiveDateTime) -> Result<Self> {
         Self::new(spec, bdp, dtm, anchor, None, None)
     }
 
@@ -727,28 +731,16 @@ impl<BDP: BizDayProcessor> NaiveSpecIterator<BDP> {
     }
 
     /// Like [`new_with_start`](Self::new_with_start), up to and including `end`.
-    pub fn new_with_end(
-        spec: &str,
-        bdp: BDP,
-        start: NaiveDateTime,
-        end: NaiveDateTime,
-    ) -> Result<Self> {
+    pub fn new_with_end(spec: &str, bdp: BDP, start: NaiveDateTime, end: NaiveDateTime) -> Result<Self> {
         Self::new(spec, bdp, start, start, Some(start), Some(end))
     }
 
     /// Like [`new_with_end`](Self::new_with_end), with `end` set to the first
     /// occurrence of `end_spec` strictly after `start` (its observed date).
-    pub fn new_with_end_spec(
-        spec: &str,
-        bdp: BDP,
-        start: NaiveDateTime,
-        end_spec: &str,
-    ) -> Result<Self> {
+    pub fn new_with_end_spec(spec: &str, bdp: BDP, start: NaiveDateTime, end_spec: &str) -> Result<Self> {
         // A start-inclusive iterator would yield `start` itself and leave an
         // empty range.
-        let end = Self::new_after(end_spec, bdp.clone(), start)?
-            .next()?
-            .ok_or(Error::InvalidEndSpec)?;
+        let end = Self::new_after(end_spec, bdp.clone(), start)?.next()?.ok_or(Error::InvalidEndSpec)?;
         Self::new_with_end(spec, bdp, start, *end.observed())
     }
 }
@@ -855,13 +847,8 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 1, 11, 23, 0, 0).unwrap();
 
         dbg!(&dtm);
-        let spec_iter = SpecIteratorBuilder::new_with_start("YY-1M-DD", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
-        dbg!(spec_iter
-            .take(15)
-            .collect::<Vec<Occurrence<DateTime<_>>>>()
-            .unwrap());
+        let spec_iter = SpecIteratorBuilder::new_with_start("YY-1M-DD", WeekendSkipper::new(), dtm).build().unwrap();
+        dbg!(spec_iter.take(15).collect::<Vec<Occurrence<DateTime<_>>>>().unwrap());
     }
 
     #[test]
@@ -872,14 +859,8 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2023, 1, 31, 23, 0, 0).unwrap();
 
         dbg!(&dtm);
-        let spec_iter =
-            SpecIteratorBuilder::new_with_start("YY-1M-31N", WeekendSkipper::new(), dtm)
-                .build()
-                .unwrap();
-        dbg!(spec_iter
-            .take(15)
-            .collect::<Vec<Occurrence<DateTime<_>>>>()
-            .unwrap());
+        let spec_iter = SpecIteratorBuilder::new_with_start("YY-1M-31N", WeekendSkipper::new(), dtm).build().unwrap();
+        dbg!(spec_iter.take(15).collect::<Vec<Occurrence<DateTime<_>>>>().unwrap());
     }
 
     #[test]
@@ -891,13 +872,8 @@ mod tests {
 
         dbg!(&dtm);
         let spec_iter =
-            SpecIteratorBuilder::new_after("YY-[02]-[01,02,03]", WeekendSkipper::new(), dtm)
-                .build()
-                .unwrap();
-        dbg!(spec_iter
-            .take(15)
-            .collect::<Vec<Occurrence<DateTime<_>>>>()
-            .unwrap());
+            SpecIteratorBuilder::new_after("YY-[02]-[01,02,03]", WeekendSkipper::new(), dtm).build().unwrap();
+        dbg!(spec_iter.take(15).collect::<Vec<Occurrence<DateTime<_>>>>().unwrap());
     }
 
     #[test]
@@ -908,13 +884,8 @@ mod tests {
         let dtm = est.with_ymd_and_hms(2024, 12, 1, 23, 0, 0).unwrap();
 
         let spec_iter =
-            SpecIteratorBuilder::new_after("[2025,2026]-MM-01", WeekendSkipper::new(), dtm)
-                .build()
-                .unwrap();
-        let results = spec_iter
-            .take(3)
-            .collect::<Vec<Occurrence<DateTime<_>>>>()
-            .unwrap();
+            SpecIteratorBuilder::new_after("[2025,2026]-MM-01", WeekendSkipper::new(), dtm).build().unwrap();
+        let results = spec_iter.take(3).collect::<Vec<Occurrence<DateTime<_>>>>().unwrap();
 
         dbg!(&results);
 

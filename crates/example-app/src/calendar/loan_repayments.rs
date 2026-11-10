@@ -67,7 +67,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let last = payments.last().expect("a 25-year loan has payments").at.date_naive();
-    println!("\n  last payment {last}: {:?} (holiday data is confirmed until {})", both.status(last)?, both.confirmed_until());
+    println!(
+        "\n  last payment {last}: {:?} (holiday data is confirmed until {})",
+        both.status(last)?,
+        both.confirmed_until()
+    );
     debug_assert_eq!(both.status(last)?, Status::Projected);
 
     // Why name both calendars: on either one alone, a payment can fall on a
@@ -78,7 +82,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let alone: Vec<_> = alone.schedule(calendars)?.slots()?.take(24).collect()?;
         for (a, b) in alone.iter().zip(&payments) {
             if a.at != b.at {
-                println!("  {code} alone pays {}, but {} is needed for both", a.at.format("%a %Y-%m-%d"), b.at.format("%a %Y-%m-%d"));
+                println!(
+                    "  {code} alone pays {}, but {} is needed for both",
+                    a.at.format("%a %Y-%m-%d"),
+                    b.at.format("%a %Y-%m-%d")
+                );
             }
         }
     }

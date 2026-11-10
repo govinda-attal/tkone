@@ -52,12 +52,12 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
-use tkone_schedule::{Error, Occurrence};
-use tokio::task::JoinHandle;
-pub use tokio_util::sync::CancellationToken;
 pub use inventory;
+use tkone_schedule::{Error, Occurrence};
 #[doc(hidden)]
 pub use tokio as __tokio;
+use tokio::task::JoinHandle;
+pub use tokio_util::sync::CancellationToken;
 
 /// Wait for Ctrl-C or, on Unix, SIGTERM: the signals that should stop a
 /// service. Used by `#[schedule]`'s `run_until_signal`.
@@ -165,9 +165,9 @@ pub fn time_schedule(
     tz: Option<&str>,
 ) -> Result<tkone_schedule::time::SpecIterator<chrono_tz::Tz>, Error> {
     let zone = match tz {
-        Some(name) => name
-            .parse::<chrono_tz::Tz>()
-            .map_err(|_| Error::Custom(format!("`{name}` is not an IANA time zone")))?,
+        Some(name) => {
+            name.parse::<chrono_tz::Tz>().map_err(|_| Error::Custom(format!("`{name}` is not an IANA time zone")))?
+        }
         None => chrono_tz::UTC,
     };
     let after = match start_spec {
@@ -251,18 +251,11 @@ pub trait ScheduleErrorHandler<E: Send + 'static>: 'static {
 
 // ── Internal callback types ───────────────────────────────────────────────────
 
-type BoxedCallback<E> = Box<
-    dyn Fn(FireContext) -> Pin<Box<dyn Future<Output = Result<(), E>> + Send + 'static>>
-        + Send
-        + 'static,
->;
+type BoxedCallback<E> =
+    Box<dyn Fn(FireContext) -> Pin<Box<dyn Future<Output = Result<(), E>> + Send + 'static>> + Send + 'static>;
 
-type BoxedErrorHandler<E> = Arc<
-    dyn Fn(FireContext, E) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>
-        + Send
-        + Sync
-        + 'static,
->;
+type BoxedErrorHandler<E> =
+    Arc<dyn Fn(FireContext, E) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync + 'static>;
 
 // ── ScheduleIter ─────────────────────────────────────────────────────────────
 
@@ -353,8 +346,7 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
         Fut: Future<Output = Result<(), E>> + Send + 'static,
     {
         let token = CancellationToken::new();
-        self.callbacks
-            .push((token.clone(), Box::new(move |ctx| Box::pin(callback(ctx)))));
+        self.callbacks.push((token.clone(), Box::new(move |ctx| Box::pin(callback(ctx)))));
         token
     }
 
@@ -501,7 +493,7 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Timelike, TimeZone};
+    use chrono::{TimeZone, Timelike};
 
     #[test]
     fn test_resolve_start_spec() {

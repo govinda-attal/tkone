@@ -33,8 +33,7 @@ use chrono::{Datelike, Days, Months, NaiveDate, NaiveDateTime, NaiveTime};
 
 use crate::biz_day::{BizDayProcessor, Direction, WeekendSkipper};
 use crate::date::spec::{
-    BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
-    WeekdayOption,
+    BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec, WeekdayOption,
 };
 use crate::utils::WeekdayStartingMonday;
 use crate::{prelude::*, Occurrence};
@@ -98,12 +97,8 @@ pub(super) fn adjust<BDP: BizDayProcessor>(
     let adjusted = match adj {
         // `~SB` drops dates rather than moving them (see `skipped`).
         BizDayAdjustment::NA | BizDayAdjustment::SkipNonBizDay => return Ok(raw),
-        BizDayAdjustment::Prev(n) => {
-            return Ok(Occurrence::AdjustedEarlier(actual, bdp.sub(&observed, *n)?))
-        }
-        BizDayAdjustment::Next(n) => {
-            return Ok(Occurrence::AdjustedLater(actual, bdp.add(&observed, *n)?))
-        }
+        BizDayAdjustment::Prev(n) => return Ok(Occurrence::AdjustedEarlier(actual, bdp.sub(&observed, *n)?)),
+        BizDayAdjustment::Next(n) => return Ok(Occurrence::AdjustedLater(actual, bdp.add(&observed, *n)?)),
         // Weekday rules only look at Sat/Sun, so a holiday on a weekday stays put.
         BizDayAdjustment::Weekday(dir) => {
             let ws = WeekendSkipper::new();
@@ -113,7 +108,8 @@ pub(super) fn adjust<BDP: BizDayProcessor>(
             ws.find_biz_day(&observed, dir.clone())?
         }
         BizDayAdjustment::ToWeekday(day, dir) => {
-            let ahead = (i64::from(day.num_days_from_monday()) - i64::from(observed.weekday().num_days_from_monday())).rem_euclid(7);
+            let ahead = (i64::from(day.num_days_from_monday()) - i64::from(observed.weekday().num_days_from_monday()))
+                .rem_euclid(7);
             let days = match dir {
                 _ if ahead == 0 => return Ok(raw),
                 Direction::Next => ahead,
@@ -169,10 +165,7 @@ struct Period {
 
 impl Period {
     fn of(date: NaiveDate) -> Self {
-        Self {
-            year: date.year(),
-            month: date.month(),
-        }
+        Self { year: date.year(), month: date.month() }
     }
 
     /// Months since year 0; cadence arithmetic works on this index.
@@ -181,10 +174,7 @@ impl Period {
     }
 
     fn from_index(index: i64) -> Option<Self> {
-        Some(Self {
-            year: i32::try_from(index.div_euclid(12)).ok()?,
-            month: index.rem_euclid(12) as u32 + 1,
-        })
+        Some(Self { year: i32::try_from(index.div_euclid(12)).ok()?, month: index.rem_euclid(12) as u32 + 1 })
     }
 
     fn succ(self) -> Option<Self> {
@@ -234,21 +224,15 @@ fn year_matches(spec: &Spec, year: i32, anchor: Period) -> bool {
         Cycle::AsIs | Cycle::ForEach => true,
         Cycle::NextNth(_) if month_stride(spec).is_some() => true,
         Cycle::Values(years) => u32::try_from(year).is_ok_and(|y| years.contains(&y)),
-        Cycle::NextNth(n) => {
-            (i64::from(year) - i64::from(anchor.year)).rem_euclid(i64::from(*n)) == 0
-        }
-        Cycle::Positions { every, positions } => {
-            in_cycle(i64::from(year) - i64::from(anchor.year), *every, positions)
-        }
+        Cycle::NextNth(n) => (i64::from(year) - i64::from(anchor.year)).rem_euclid(i64::from(*n)) == 0,
+        Cycle::Positions { every, positions } => in_cycle(i64::from(year) - i64::from(anchor.year), *every, positions),
     }
 }
 
 /// True once `year` is beyond every year an explicit year list allows.
 fn past_last_year(years: &Cycle, year: i32) -> bool {
     match years {
-        Cycle::Values(years) => years
-            .last()
-            .is_none_or(|&last| i64::from(year) > i64::from(last)),
+        Cycle::Values(years) => years.last().is_none_or(|&last| i64::from(year) > i64::from(last)),
         _ => false,
     }
 }
@@ -301,10 +285,7 @@ fn next_period(spec: &Spec, from: Period, anchor: Period) -> Result<Option<Perio
         let Some(next_year) = year.checked_add(1) else {
             return Ok(None);
         };
-        p = Period {
-            year: next_year,
-            month: 1,
-        };
+        p = Period { year: next_year, month: 1 };
     }
     Err(Error::IteratorNotConverged)
 }
@@ -316,10 +297,7 @@ fn next_year(years: &Cycle, year: i32, anchor: Period) -> Option<i32> {
         Cycle::AsIs | Cycle::ForEach => Some(year),
         Cycle::Values(years) => {
             let from = u32::try_from(year).unwrap_or(0);
-            years
-                .range(from..)
-                .next()
-                .and_then(|&y| i32::try_from(y).ok())
+            years.range(from..).next().and_then(|&y| i32::try_from(y).ok())
         }
         Cycle::NextNth(n) => {
             let n = i64::from(*n);
@@ -381,13 +359,10 @@ fn calendar_days<BDP: BizDayProcessor>(
 
     Ok(match days {
         DayCycle::ForEach => month().map(Occurrence::Exact).collect(),
-        DayCycle::Positions { every, positions } => month()
-            .filter(|d| in_cycle((*d - anchor).num_days(), *every, positions))
-            .map(Occurrence::Exact)
-            .collect(),
-        DayCycle::AsIs => vec![Occurrence::Exact(
-            first.with_day(anchor.day()).unwrap_or(last),
-        )],
+        DayCycle::Positions { every, positions } => {
+            month().filter(|d| in_cycle((*d - anchor).num_days(), *every, positions)).map(Occurrence::Exact).collect()
+        }
+        DayCycle::AsIs => vec![Occurrence::Exact(first.with_day(anchor.day()).unwrap_or(last))],
         DayCycle::OnDays { days, option } if days.is_empty() => match option {
             LastDayOption::LastDay => vec![Occurrence::Exact(last)],
             _ => Vec::new(),
@@ -401,9 +376,9 @@ fn calendar_days<BDP: BizDayProcessor>(
                     match option {
                         LastDayOption::NA => None,
                         LastDayOption::LastDay => Some(Occurrence::Exact(last)),
-                        LastDayOption::NextMonthFirstDay => last
-                            .succ_opt()
-                            .map(|observed| Occurrence::AdjustedLater(last, observed)),
+                        LastDayOption::NextMonthFirstDay => {
+                            last.succ_opt().map(|observed| Occurrence::AdjustedLater(last, observed))
+                        }
                         LastDayOption::NextMonthOverflow => last
                             .checked_add_days(Days::new(u64::from(day - last.day())))
                             .map(|observed| Occurrence::AdjustedLater(last, observed)),
@@ -420,19 +395,16 @@ fn calendar_days<BDP: BizDayProcessor>(
         }
         DayCycle::OnWeekDays { weekdays, option } => {
             let mut dates: Vec<NaiveDate> = match option {
-                WeekdayOption::NA => month()
-                    .filter(|d| weekdays.contains(&WeekdayStartingMonday(d.weekday())))
-                    .collect(),
+                WeekdayOption::NA => {
+                    month().filter(|d| weekdays.contains(&WeekdayStartingMonday(d.weekday()))).collect()
+                }
                 WeekdayOption::Starting(n) => weekdays
                     .iter()
-                    .filter_map(|wd| {
-                        NaiveDate::from_weekday_of_month_opt(p.year, p.month, wd.0, n.unwrap_or(1))
-                    })
+                    .filter_map(|wd| NaiveDate::from_weekday_of_month_opt(p.year, p.month, wd.0, n.unwrap_or(1)))
                     .collect(),
-                WeekdayOption::Ending(n) => weekdays
-                    .iter()
-                    .filter_map(|wd| nth_last_weekday(first, last, wd.0, n.unwrap_or(1)))
-                    .collect(),
+                WeekdayOption::Ending(n) => {
+                    weekdays.iter().filter_map(|wd| nth_last_weekday(first, last, wd.0, n.unwrap_or(1))).collect()
+                }
             };
             dates.sort();
             dates.into_iter().map(Occurrence::Exact).collect()
@@ -472,7 +444,11 @@ fn calendar_days<BDP: BizDayProcessor>(
             .filter_map(|year| {
                 let sunday = easter.sunday(year)?;
                 let days = Days::new(u64::from(offset.unsigned_abs()));
-                if *offset < 0 { sunday.checked_sub_days(days) } else { sunday.checked_add_days(days) }
+                if *offset < 0 {
+                    sunday.checked_sub_days(days)
+                } else {
+                    sunday.checked_add_days(days)
+                }
             })
             .filter(|d| (first..=last).contains(d))
             .map(Occurrence::Exact)
@@ -482,12 +458,7 @@ fn calendar_days<BDP: BizDayProcessor>(
 }
 
 /// The `n`th-to-last `weekday` between `first` and `last` (`n = 1` is the last).
-fn nth_last_weekday(
-    first: NaiveDate,
-    last: NaiveDate,
-    weekday: chrono::Weekday,
-    n: u8,
-) -> Option<NaiveDate> {
+fn nth_last_weekday(first: NaiveDate, last: NaiveDate, weekday: chrono::Weekday, n: u8) -> Option<NaiveDate> {
     if n == 0 {
         return None;
     }
@@ -499,12 +470,8 @@ fn nth_last_weekday(
 fn at_time(occ: Occurrence<NaiveDate>, time: NaiveTime) -> Occurrence<NaiveDateTime> {
     match occ {
         Occurrence::Exact(d) => Occurrence::Exact(d.and_time(time)),
-        Occurrence::AdjustedLater(a, o) => {
-            Occurrence::AdjustedLater(a.and_time(time), o.and_time(time))
-        }
-        Occurrence::AdjustedEarlier(a, o) => {
-            Occurrence::AdjustedEarlier(a.and_time(time), o.and_time(time))
-        }
+        Occurrence::AdjustedLater(a, o) => Occurrence::AdjustedLater(a.and_time(time), o.and_time(time)),
+        Occurrence::AdjustedEarlier(a, o) => Occurrence::AdjustedEarlier(a.and_time(time), o.and_time(time)),
     }
 }
 

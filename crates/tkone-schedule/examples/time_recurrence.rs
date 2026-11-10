@@ -15,12 +15,8 @@ fn main() {
     let start = Utc.with_ymd_and_hms(2024, 6, 1, 9, 0, 0).unwrap();
 
     // Every 30 minutes starting at 09:00.
-    let times = SpecIteratorBuilder::new_with_start("HH:30M:00", start)
-        .build()
-        .unwrap()
-        .take(4)
-        .collect::<Vec<_>>()
-        .unwrap();
+    let times =
+        SpecIteratorBuilder::new_with_start("HH:30M:00", start).build().unwrap().take(4).collect::<Vec<_>>().unwrap();
 
     println!("Every 30 minutes (4 occurrences from 09:00):");
     for t in &times {

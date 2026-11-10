@@ -66,7 +66,11 @@ impl Loan {
         let name = label.rsplit("(definition: ").next().unwrap().trim_end_matches(')');
         let definition = &self.definitions[name];
         let yaml = match until {
-            Some(until) => yaml.lines().map(|l| if l.starts_with("until:") { format!("until: {until}") } else { l.to_string() }).collect::<Vec<_>>().join("\n"),
+            Some(until) => yaml
+                .lines()
+                .map(|l| if l.starts_with("until:") { format!("until: {until}") } else { l.to_string() })
+                .collect::<Vec<_>>()
+                .join("\n"),
             None => yaml.clone(),
         };
         let selector = doc(&yaml).selector(definition).unwrap();
@@ -84,7 +88,10 @@ impl Loan {
 }
 
 fn next(selector: &Selector<Bdp>, definition: &Schedule<Bdp>, after: DateTime<Tz>) -> Option<String> {
-    match selector.next_after(definition, &after, &(after + chrono::Duration::days(2000)), |m| panic!("missed {m:?}")).unwrap() {
+    match selector
+        .next_after(definition, &after, &(after + chrono::Duration::days(2000)), |m| panic!("missed {m:?}"))
+        .unwrap()
+    {
         Next::Due(slot) => Some(fmt(&slot.at)),
         Next::Done => None,
         Next::NotFound => panic!("not found"),

@@ -54,8 +54,8 @@ mod spec;
 #[cfg(test)]
 mod tests;
 
-pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 pub(crate) use iter::check_calendar_date;
+pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 pub use spec::Spec;
 
 /// Describes a datetime spec in plain English: [`Spec::describe`] on the

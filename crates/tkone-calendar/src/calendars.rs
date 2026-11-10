@@ -32,7 +32,10 @@ impl Calendars {
             match Calendar::from_file(file) {
                 Ok(cal) => {
                     if by_code.insert(file.code.clone(), cal).is_some() {
-                        return Err(Error::Invalid { code: file.code.clone(), problems: vec!["the code is used twice".into()] });
+                        return Err(Error::Invalid {
+                            code: file.code.clone(),
+                            problems: vec!["the code is used twice".into()],
+                        });
                     }
                 }
                 Err(e) => problems.push(e.to_string()),

@@ -94,7 +94,14 @@ fn reads_a_definition() {
     // `until` is a date: the whole of 1 June is in.
     assert_eq!(
         times(&schedule, 9),
-        ["Thu 28 May 09:00", "Thu 28 May 13:00", "Thu 28 May 18:00", "Mon 01 Jun 09:00", "Mon 01 Jun 13:00", "Mon 01 Jun 18:00"]
+        [
+            "Thu 28 May 09:00",
+            "Thu 28 May 13:00",
+            "Thu 28 May 18:00",
+            "Mon 01 Jun 09:00",
+            "Mon 01 Jun 13:00",
+            "Mon 01 Jun 18:00"
+        ]
     );
     let first = schedule.slots().unwrap().next().unwrap().unwrap();
     assert_eq!(first.sources[0].rule_id.as_deref(), Some("batch"));
@@ -125,7 +132,10 @@ exclude: { match: observed }
 options: { dst_policy: strict, interval_mode: elapsed, time_anchor: midnight }
 ",
     );
-    assert_eq!(doc.start, LocalTime::DateTime(chrono::NaiveDate::from_ymd_opt(2026, 3, 29).unwrap().and_hms_opt(0, 30, 0).unwrap()));
+    assert_eq!(
+        doc.start,
+        LocalTime::DateTime(chrono::NaiveDate::from_ymd_opt(2026, 3, 29).unwrap().and_hms_opt(0, 30, 0).unwrap())
+    );
     assert_eq!(doc.options.interval_mode, Some(crate::IntervalMode::Elapsed));
     assert_eq!(doc.exclude.by, crate::schedule::ExcludeMatch::Observed);
     assert!(doc.schedule(&Places).is_ok());
@@ -136,7 +146,8 @@ fn unknown_fields_and_offsets_are_refused() {
     let typo = "version: 1\ntime_zone: Europe/London\nstart: 2026-01-01\nuntill: 2026-12-31\nrules: [{ rule: YY-MM-DDT09:00:00 }]";
     let err = serde_yaml_ng::from_str::<ScheduleDoc>(typo).unwrap_err().to_string();
     assert!(err.contains("unknown field `untill`"), "{err}");
-    let offset = "version: 1\ntime_zone: Europe/London\nstart: 2026-01-01T09:00:00+01:00\nrules: [{ rule: YY-MM-DDT09:00:00 }]";
+    let offset =
+        "version: 1\ntime_zone: Europe/London\nstart: 2026-01-01T09:00:00+01:00\nrules: [{ rule: YY-MM-DDT09:00:00 }]";
     let err = serde_yaml_ng::from_str::<ScheduleDoc>(offset).unwrap_err().to_string();
     assert!(err.contains("has a UTC offset"), "{err}");
 }
@@ -144,16 +155,22 @@ fn unknown_fields_and_offsets_are_refused() {
 #[test]
 fn document_checks() {
     let base = |extra: &str| format!("version: 1\nstart: 2026-01-01\n{extra}");
-    assert!(invalid(&base("time_zone: Europe/London\nrules: [{ rule: YY-MM-DDT09:00:00 }]").replace("version: 1", "version: 2")).contains("version 2"));
+    assert!(invalid(
+        &base("time_zone: Europe/London\nrules: [{ rule: YY-MM-DDT09:00:00 }]").replace("version: 1", "version: 2")
+    )
+    .contains("version 2"));
     assert!(invalid(&base("rules: [{ rule: YY-MM-DDT09:00:00 }]")).contains("`time_zone` is required"));
-    assert!(invalid(&base("time_zone: Europe/Londres\nrules: [{ rule: YY-MM-DDT09:00:00 }]")).contains("not an IANA time zone"));
+    assert!(invalid(&base("time_zone: Europe/Londres\nrules: [{ rule: YY-MM-DDT09:00:00 }]"))
+        .contains("not an IANA time zone"));
     // The builder's checks come through.
     assert!(invalid(&base("time_zone: Europe/London\nrules: []")).contains("at least one rule"));
 }
 
 #[test]
 fn business_days_need_a_calendar() {
-    let doc = |rule: &str, extra: &str| format!("version: 1\ntime_zone: Europe/London\nstart: 2026-01-01\n{extra}rules: [{{ rule: '{rule}' }}]\n");
+    let doc = |rule: &str, extra: &str| {
+        format!("version: 1\ntime_zone: Europe/London\nstart: 2026-01-01\n{extra}rules: [{{ rule: '{rule}' }}]\n")
+    };
     for rule in ["YY-MM-DD~SBT09:00:00", "YY-MM-L~PBT18:00:00", "YY-MM-BD#3T09:00:00", "YY-MM-L~2NT09:00:00"] {
         assert!(invalid(&doc(rule, "")).contains("uses business days"), "{rule}");
         assert!(build(&doc(rule, "calendar: WEEKENDS\n")).is_ok(), "{rule}");
@@ -168,7 +185,9 @@ fn business_days_need_a_calendar() {
 
 #[test]
 fn calendars_resolve_by_code() {
-    let doc = |code: &str| format!("version: 1\ntime_zone: Europe/London\ncalendar: {code}\nstart: 2026-01-01\nrules: [{{ rule: YY-MM-DD~SBT09:00:00 }}]");
+    let doc = |code: &str| {
+        format!("version: 1\ntime_zone: Europe/London\ncalendar: {code}\nstart: 2026-01-01\nrules: [{{ rule: YY-MM-DD~SBT09:00:00 }}]")
+    };
     assert!(build(&doc("GBLO")).is_ok());
     assert!(matches!(build(&doc("XXXX")), Err(Error::Calendar(why)) if why.contains("no calendar XXXX")));
     // New York's business days judged on London dates fail at the first
@@ -206,7 +225,9 @@ fn reads_an_instance() {
     assert_eq!(account.until(), Some(&crate::utils::just_before(&london(2027, 3, 15, 0, 0))));
     // The definition excludes 29 May, May's month end: it is missed.
     let mut missed = Vec::new();
-    let next = account.next_after(&definition, &london(2026, 5, 1, 0, 0), &london(2026, 7, 1, 0, 0), |m| missed.push(m.at)).unwrap();
+    let next = account
+        .next_after(&definition, &london(2026, 5, 1, 0, 0), &london(2026, 7, 1, 0, 0), |m| missed.push(m.at))
+        .unwrap();
     let crate::schedule::Next::Due(slot) = next else { panic!("{next:?}") };
     assert_eq!(missed, [london(2026, 5, 29, 18, 0)]);
     assert_eq!(slot.at, london(2026, 6, 30, 18, 0));
@@ -232,7 +253,8 @@ fn an_instance_uses_its_definitions_zone_calendar_and_options() {
     }
     // With no calendar in the definition, an instance's business days would
     // silently be weekdays.
-    let plain = build("version: 1\ntime_zone: Europe/London\nstart: 2026-01-01\nrules: [{ rule: YY-MM-DDT18:00:00 }]").unwrap();
+    let plain =
+        build("version: 1\ntime_zone: Europe/London\nstart: 2026-01-01\nrules: [{ rule: YY-MM-DDT18:00:00 }]").unwrap();
     match yaml(ACCOUNT).selector(&plain) {
         Err(Error::InvalidSchedule(why)) => assert!(why.contains("its definition has no `calendar`"), "{why}"),
         other => panic!("{other:?}"),
@@ -261,7 +283,8 @@ rules:
     assert_eq!(serde_json::from_str::<ScheduleDoc>(&json).unwrap(), doc);
     // A basis needs an id; a derived rule's adjustment needs a calendar.
     assert!(invalid(&text.replace("id: payment, ", "")).contains("needs an `id`"));
-    assert!(invalid(&text.replace("calendar: GBLO\n", "").replace("~MF", "~W")).contains("`{payment}~2PT09:00:00` uses business days"));
+    assert!(invalid(&text.replace("calendar: GBLO\n", "").replace("~MF", "~W"))
+        .contains("`{payment}~2PT09:00:00` uses business days"));
     assert!(build(&text.replace("calendar: GBLO\n", "").replace("~MF", "~W").replace("~2P", "~PFRI")).is_ok());
 }
 

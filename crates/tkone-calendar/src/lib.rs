@@ -106,13 +106,15 @@ pub fn read_dir(dir: &std::path::Path) -> Result<Vec<model::CalendarFile>> {
 fn anchor_line(text: &str) -> Option<usize> {
     use std::sync::LazyLock;
     static QUOTED: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#""[^"]*"|'[^']*'"#).unwrap());
-    static ANCHOR: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?:^|[\s\[{,:-])[&*][A-Za-z0-9_]").unwrap());
-    text.lines().position(|line| {
-        let line = QUOTED.replace_all(line, "\"\"");
-        let line = line.split('#').next().unwrap_or_default();
-        ANCHOR.is_match(line)
-    })
-    .map(|i| i + 1)
+    static ANCHOR: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?:^|[\s\[{,:-])[&*][A-Za-z0-9_]").unwrap());
+    text.lines()
+        .position(|line| {
+            let line = QUOTED.replace_all(line, "\"\"");
+            let line = line.split('#').next().unwrap_or_default();
+            ANCHOR.is_match(line)
+        })
+        .map(|i| i + 1)
 }
 
 #[cfg(all(test, feature = "yaml"))]

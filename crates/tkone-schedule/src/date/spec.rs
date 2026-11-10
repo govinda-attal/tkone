@@ -7,7 +7,6 @@ use std::fmt;
 use std::str::FromStr;
 
 use nom::{
-    Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1, multispace0},
@@ -15,7 +14,7 @@ use nom::{
     error::Error as NomError,
     multi::separated_list1,
     sequence::{delimited, pair, preceded},
-    IResult,
+    IResult, Parser,
 };
 
 /// How a single calendar component (years or months) advances on each iteration.
@@ -360,7 +359,11 @@ fn n_of(option: &WeekdayOption) -> u8 {
 /// Positions are always bracketed: `[1]`, `[1-2]`, `[1,3]`.
 fn fmt_positions(positions: &BTreeSet<u32>) -> String {
     let list = fmt_list(positions.iter().map(|&p| (p, p.to_string())));
-    if list.starts_with('[') { list } else { format!("[{list}]") }
+    if list.starts_with('[') {
+        list
+    } else {
+        format!("[{list}]")
+    }
 }
 
 impl fmt::Display for WeekCycle {
@@ -382,10 +385,7 @@ struct CycleDisplayer<'a> {
 impl Cycle {
     /// Returns a helper struct that can display the cycle with context.
     fn display(&self, is_year: bool) -> CycleDisplayer<'_> {
-        CycleDisplayer {
-            cycle: self,
-            is_year,
-        }
+        CycleDisplayer { cycle: self, is_year }
     }
 }
 
@@ -564,13 +564,7 @@ impl fmt::Display for BizDayAdjustment {
 // --- 5. Spec Display (The Root) ---
 impl fmt::Display for Spec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}-{}-{}",
-            self.years.display(true),
-            self.months.display(false),
-            self.days
-        )?;
+        write!(f, "{}-{}-{}", self.years.display(true), self.months.display(false), self.days)?;
         if let Some(weeks) = &self.weeks {
             write!(f, "{weeks}")?;
         }
@@ -720,13 +714,7 @@ pub fn parse_spec(input: &str) -> Result<Spec> {
     );
 
     let spec = match all_consuming(full_parser).parse(input) {
-        Ok((_, (years, months, days, weeks, biz_day_adj))) => Spec {
-            years,
-            months,
-            days,
-            weeks,
-            biz_day_adj,
-        },
+        Ok((_, (years, months, days, weeks, biz_day_adj))) => Spec { years, months, days, weeks, biz_day_adj },
         Err(_) => return Err(Error::InvalidDateSpec(format!("failed to parse: {input}"))),
     };
     validate(&spec).map_err(|reason| Error::InvalidDateSpec(format!("{input}: {reason}")))?;
@@ -789,10 +777,9 @@ fn validate(spec: &Spec) -> core::result::Result<(), String> {
                 return Err(format!("day {d} is out of range 1-31"));
             }
         }
-        DayCycle::OnWeekDays {
-            option: WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)),
-            ..
-        } if !(1..=5).contains(n) => {
+        DayCycle::OnWeekDays { option: WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)), .. }
+            if !(1..=5).contains(n) =>
+        {
             return Err(format!("weekday occurrence #{n} is out of range 1-5"));
         }
         DayCycle::Easter { offset, .. } if !EASTER_OFFSETS.contains(offset) => {
@@ -833,17 +820,14 @@ const MAX_RANGE: u32 = 10_000;
 
 /// `[a,b,c-d,…]`: values and inclusive ranges. Ranges must run forwards.
 fn parse_u32_list(input: &'_ str) -> Res<'_, BTreeSet<u32>> {
-    let span = map_res(
-        pair(parse_u32, opt(preceded(char('-'), parse_u32))),
-        |(lo, hi): (u32, Option<u32>)| {
-            let hi = hi.unwrap_or(lo);
-            if lo > hi || hi - lo >= MAX_RANGE {
-                Err("invalid range")
-            } else {
-                Ok(lo..=hi)
-            }
-        },
-    );
+    let span = map_res(pair(parse_u32, opt(preceded(char('-'), parse_u32))), |(lo, hi): (u32, Option<u32>)| {
+        let hi = hi.unwrap_or(lo);
+        if lo > hi || hi - lo >= MAX_RANGE {
+            Err("invalid range")
+        } else {
+            Ok(lo..=hi)
+        }
+    });
     let (input, spans) = delimited(char('['), separated_list1(char(','), span), char(']')).parse(input)?;
     Ok((input, spans.into_iter().flatten().collect()))
 }
@@ -886,38 +870,20 @@ fn parse_cycle_foreach<'a>(input: &'a str, wildcard: &'static str) -> Res<'a, Cy
 }
 
 fn parse_year_cycle(input: &'_ str) -> Res<'_, Cycle> {
-    alt((
-        parse_cycle_vals,
-        |i| parse_cycle_foreach(i, "YY"),
-        |i| parse_cycle_next_nth(i, 'Y'),
-        parse_cycle_single_val,
-    ))
-    .parse(input)
+    alt((parse_cycle_vals, |i| parse_cycle_foreach(i, "YY"), |i| parse_cycle_next_nth(i, 'Y'), parse_cycle_single_val))
+        .parse(input)
 }
 
 fn parse_month_cycle(input: &'_ str) -> Res<'_, Cycle> {
-    alt((
-        parse_cycle_vals,
-        |i| parse_cycle_foreach(i, "MM"),
-        |i| parse_cycle_next_nth(i, 'M'),
-        parse_cycle_single_val,
-    ))
-    .parse(input)
+    alt((parse_cycle_vals, |i| parse_cycle_foreach(i, "MM"), |i| parse_cycle_next_nth(i, 'M'), parse_cycle_single_val))
+        .parse(input)
 }
 
 // --- Day Cycle Parsers ---
 
 fn parse_weekday_enum(input: &'_ str) -> Res<'_, WeekdayStartingMonday> {
-    let (input, w_str) = alt((
-        tag("MON"),
-        tag("TUE"),
-        tag("WED"),
-        tag("THU"),
-        tag("FRI"),
-        tag("SAT"),
-        tag("SUN"),
-    ))
-    .parse(input)?;
+    let (input, w_str) =
+        alt((tag("MON"), tag("TUE"), tag("WED"), tag("THU"), tag("FRI"), tag("SAT"), tag("SUN"))).parse(input)?;
 
     let w = match w_str {
         "MON" => Weekday::Mon,
@@ -935,47 +901,26 @@ fn parse_weekday_enum(input: &'_ str) -> Res<'_, WeekdayStartingMonday> {
 /// `[MON,WED]`, `[MON-FRI]`, `[MON-WED,FRI]`. A range runs Monday→Sunday
 /// and must not wrap (`[FRI-MON]` is rejected).
 fn parse_day_weekday_list(input: &'_ str) -> Res<'_, DayCycle> {
-    let span = map_res(
-        pair(parse_weekday_enum, opt(preceded(char('-'), parse_weekday_enum))),
-        |(lo, hi)| {
-            let (lo, hi) = (lo.0.num_days_from_monday(), hi.unwrap_or(lo).0.num_days_from_monday());
-            if lo > hi {
-                Err("weekday range must run Monday to Sunday")
-            } else {
-                Ok((lo..=hi).map(|d| WeekdayStartingMonday(Weekday::try_from(d as u8).unwrap())))
-            }
-        },
-    );
+    let span = map_res(pair(parse_weekday_enum, opt(preceded(char('-'), parse_weekday_enum))), |(lo, hi)| {
+        let (lo, hi) = (lo.0.num_days_from_monday(), hi.unwrap_or(lo).0.num_days_from_monday());
+        if lo > hi {
+            Err("weekday range must run Monday to Sunday")
+        } else {
+            Ok((lo..=hi).map(|d| WeekdayStartingMonday(Weekday::try_from(d as u8).unwrap())))
+        }
+    });
     let (input, spans) = delimited(char('['), separated_list1(char(','), span), char(']')).parse(input)?;
-    Ok((
-        input,
-        DayCycle::OnWeekDays {
-            weekdays: spans.into_iter().flatten().collect(),
-            option: WeekdayOption::NA,
-        },
-    ))
+    Ok((input, DayCycle::OnWeekDays { weekdays: spans.into_iter().flatten().collect(), option: WeekdayOption::NA }))
 }
 
 fn parse_day_int_list(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, days) = parse_u32_list(input)?;
-    Ok((
-        input,
-        DayCycle::OnDays {
-            days,
-            option: LastDayOption::NA,
-        },
-    ))
+    Ok((input, DayCycle::OnDays { days, option: LastDayOption::NA }))
 }
 
 fn parse_day_weekday_solo(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, wd) = parse_weekday_enum(input)?;
-    Ok((
-        input,
-        DayCycle::OnWeekDays {
-            weekdays: BTreeSet::from([wd]),
-            option: WeekdayOption::NA,
-        },
-    ))
+    Ok((input, DayCycle::OnWeekDays { weekdays: BTreeSet::from([wd]), option: WeekdayOption::NA }))
 }
 
 /// `#L`, `#n` or `#nL`; `n` must fit a u8 (range-checked in `validate`).
@@ -998,13 +943,7 @@ fn parse_occurrence(input: &'_ str) -> Res<'_, WeekdayOption> {
 fn parse_day_weekday_complex(input: &'_ str) -> Res<'_, DayCycle> {
     let (input, wd) = parse_weekday_enum(input)?;
     let (input, option) = parse_occurrence(input)?;
-    Ok((
-        input,
-        DayCycle::OnWeekDays {
-            weekdays: BTreeSet::from([wd]),
-            option,
-        },
-    ))
+    Ok((input, DayCycle::OnWeekDays { weekdays: BTreeSet::from([wd]), option }))
 }
 
 /// One position in `BD#[…]`: `n`, `n-m` (from the start), `L` or `nL` (from
@@ -1013,7 +952,11 @@ fn parse_biz_position(input: &'_ str) -> Res<'_, Vec<WeekdayOption>> {
     alt((
         value(vec![WeekdayOption::Ending(None)], char('L')),
         map_res(
-            (map_res(digit1, str::parse::<u8>), opt(preceded(char('-'), map_res(digit1, str::parse::<u8>))), opt(char('L'))),
+            (
+                map_res(digit1, str::parse::<u8>),
+                opt(preceded(char('-'), map_res(digit1, str::parse::<u8>))),
+                opt(char('L')),
+            ),
             |(lo, hi, last)| match (hi, last) {
                 (None, Some(_)) => Ok(vec![WeekdayOption::Ending(Some(lo))]),
                 (None, None) => Ok(vec![WeekdayOption::Starting(Some(lo))]),
@@ -1027,13 +970,11 @@ fn parse_biz_position(input: &'_ str) -> Res<'_, Vec<WeekdayOption>> {
 
 /// `BD#n`, `BD#L`, `BD#nL`, `BD#[1-5]`, `BD#[1,L]`, and the same with `WD`.
 fn parse_day_nth_biz(input: &'_ str) -> Res<'_, DayCycle> {
-    let (input, calendar) = alt((
-        value(BizDayCalendar::BizDay, tag("BD")),
-        value(BizDayCalendar::WeekDay, tag("WD")),
-    ))
-    .parse(input)?;
+    let (input, calendar) =
+        alt((value(BizDayCalendar::BizDay, tag("BD")), value(BizDayCalendar::WeekDay, tag("WD")))).parse(input)?;
     let list = preceded(char('#'), delimited(char('['), separated_list1(char(','), parse_biz_position), char(']')));
-    let (input, options) = alt((list.map(|ps: Vec<Vec<WeekdayOption>>| ps.concat()), parse_occurrence.map(|o| vec![o]))).parse(input)?;
+    let (input, options) =
+        alt((list.map(|ps: Vec<Vec<WeekdayOption>>| ps.concat()), parse_occurrence.map(|o| vec![o]))).parse(input)?;
     // Keep the first of any repeated position.
     let mut unique: Vec<WeekdayOption> = Vec::new();
     for o in options {
@@ -1079,26 +1020,14 @@ fn parse_day_single_complex(input: &'_ str) -> Res<'_, DayCycle> {
         _ => LastDayOption::NA,
     };
 
-    Ok((
-        input,
-        DayCycle::OnDays {
-            days: BTreeSet::from([num]),
-            option,
-        },
-    ))
+    Ok((input, DayCycle::OnDays { days: BTreeSet::from([num]), option }))
 }
 
 fn parse_day_literals(input: &'_ str) -> Res<'_, DayCycle> {
     alt((
         value(DayCycle::ForEach, tag("DD")),
         value(DayCycle::ForEach, tag("_")),
-        value(
-            DayCycle::OnDays {
-                days: BTreeSet::new(),
-                option: LastDayOption::LastDay,
-            },
-            tag("L"),
-        ),
+        value(DayCycle::OnDays { days: BTreeSet::new(), option: LastDayOption::LastDay }, tag("L")),
     ))
     .parse(input)
 }
@@ -1106,16 +1035,10 @@ fn parse_day_literals(input: &'_ str) -> Res<'_, DayCycle> {
 /// `EAS` or `OEAS`, then an optional signed offset in days: `EAS-2`,
 /// `OEAS+1`. The offset is range-checked in `validate`.
 fn parse_day_easter(input: &'_ str) -> Res<'_, DayCycle> {
-    let (input, easter) = alt((
-        value(Easter::Orthodox, tag("OEAS")),
-        value(Easter::Western, tag("EAS")),
-    ))
-    .parse(input)?;
-    let (input, offset) = opt(pair(
-        alt((value(1, char('+')), value(-1, char('-')))),
-        map_res(digit1, str::parse::<i32>),
-    ))
-    .parse(input)?;
+    let (input, easter) =
+        alt((value(Easter::Orthodox, tag("OEAS")), value(Easter::Western, tag("EAS")))).parse(input)?;
+    let (input, offset) =
+        opt(pair(alt((value(1, char('+')), value(-1, char('-')))), map_res(digit1, str::parse::<i32>))).parse(input)?;
     let offset = offset.map_or(0, |(sign, n)| sign * n);
     Ok((input, DayCycle::Easter { easter, offset }))
 }
@@ -1161,7 +1084,11 @@ fn parse_adjustment(input: &'_ str) -> Res<'_, BizDayAdjustment> {
         // `~nP` / `~nN`; a bare `~P` / `~N` means 1
         pair(opt(parse_u32), alt((char('P'), char('N')))).map(|(n, dir)| {
             let n = n.unwrap_or(1);
-            if dir == 'P' { BizDayAdjustment::Prev(n) } else { BizDayAdjustment::Next(n) }
+            if dir == 'P' {
+                BizDayAdjustment::Prev(n)
+            } else {
+                BizDayAdjustment::Next(n)
+            }
         }),
     ))
     .parse(input)
@@ -1185,10 +1112,7 @@ mod tests {
                 "[2023,2024]-01-01",
                 Cycle::Values(BTreeSet::from([2023, 2024])),
                 Cycle::Values(BTreeSet::from([1])),
-                DayCycle::OnDays {
-                    days: BTreeSet::from([1]),
-                    option: LastDayOption::NA,
-                },
+                DayCycle::OnDays { days: BTreeSet::from([1]), option: LastDayOption::NA },
                 None,
             ),
         ];
@@ -1235,10 +1159,7 @@ mod table_tests {
                 expected: Spec {
                     years: Cycle::ForEach,
                     months: Cycle::NextNth(1),
-                    days: DayCycle::OnDays {
-                        days: set(vec![29]),
-                        option: LastDayOption::LastDay,
-                    },
+                    days: DayCycle::OnDays { days: set(vec![29]), option: LastDayOption::LastDay },
                     weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Weekday(Direction::Nearest)),
                 },
@@ -1264,10 +1185,7 @@ mod table_tests {
                 expected: Spec {
                     years: Cycle::Values(set(vec![2024])),
                     months: Cycle::ForEach,
-                    days: DayCycle::OnDays {
-                        days: set(vec![31]),
-                        option: LastDayOption::LastDay,
-                    },
+                    days: DayCycle::OnDays { days: set(vec![31]), option: LastDayOption::LastDay },
                     weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
@@ -1313,10 +1231,7 @@ mod table_tests {
                 expected: Spec {
                     years: Cycle::Values(set(vec![2024])),
                     months: Cycle::Values(set(vec![1, 2])),
-                    days: DayCycle::OnDays {
-                        days: set(vec![5, 10, 15]),
-                        option: LastDayOption::NA,
-                    },
+                    days: DayCycle::OnDays { days: set(vec![5, 10, 15]), option: LastDayOption::NA },
                     weeks: None,
                     biz_day_adj: Some(BizDayAdjustment::Prev(3)),
                 },
@@ -1330,10 +1245,7 @@ mod table_tests {
                     years: Cycle::Values(set(vec![2024])),
                     months: Cycle::Values(set(vec![1, 2])),
                     days: DayCycle::OnWeekDays {
-                        weekdays: set(vec![
-                            WeekdayStartingMonday(Weekday::Sat),
-                            WeekdayStartingMonday(Weekday::Sun),
-                        ]),
+                        weekdays: set(vec![WeekdayStartingMonday(Weekday::Sat), WeekdayStartingMonday(Weekday::Sun)]),
                         option: WeekdayOption::NA,
                     },
                     weeks: None,
@@ -1362,10 +1274,7 @@ mod table_tests {
                 expected: Spec {
                     years: Cycle::Values(set(vec![2023, 2025])),
                     months: Cycle::ForEach,
-                    days: DayCycle::OnDays {
-                        days: set(vec![]),
-                        option: LastDayOption::LastDay,
-                    },
+                    days: DayCycle::OnDays { days: set(vec![]), option: LastDayOption::LastDay },
                     weeks: None,
                     biz_day_adj: None,
                 },
@@ -1376,8 +1285,7 @@ mod table_tests {
             println!("Running test: {}", case.name);
 
             // 1. Parse
-            let parsed =
-                parse_spec(case.input).unwrap_or_else(|_| panic!("Failed to parse input: {}", case.input));
+            let parsed = parse_spec(case.input).unwrap_or_else(|_| panic!("Failed to parse input: {}", case.input));
 
             // 2. Assert Struct Equality
             // Using Debug formatting for clearer error diffs if they don't match
@@ -1389,12 +1297,7 @@ mod table_tests {
             );
 
             // 3. Assert Round-Trip String (Uncomment if Display is implemented)
-            assert_eq!(
-                parsed.to_string(),
-                case.expected_str,
-                "String mismatch in '{}'",
-                case.name
-            );
+            assert_eq!(parsed.to_string(), case.expected_str, "String mismatch in '{}'", case.name);
         }
     }
 }

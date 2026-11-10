@@ -110,10 +110,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse::Parse, parse::ParseStream,
-    Attribute, ImplItem, ImplItemFn, ItemImpl, ItemFn,
-    LitStr, Meta, Path, Token, Type, FnArg,
-    ReturnType, punctuated::Punctuated,
+    parse::Parse, parse::ParseStream, parse_macro_input, punctuated::Punctuated, Attribute, FnArg, ImplItem,
+    ImplItemFn, ItemFn, ItemImpl, LitStr, Meta, Path, ReturnType, Token, Type,
 };
 
 // ── #[schedule(spec = "...", fire_on_start)] ─────────────────────────────────
@@ -327,7 +325,8 @@ fn expand_schedule(args: ScheduleArgs, item_impl: ItemImpl) -> syn::Result<Token
 fn check_args(args: &ScheduleArgs) -> syn::Result<String> {
     let spec = args.spec.value();
     if let Err(e) = tkone_schedule::time::describe(&spec) {
-        let is_date = tkone_schedule::date::describe(&spec).is_ok() || tkone_schedule::datetime::describe(&spec).is_ok();
+        let is_date =
+            tkone_schedule::date::describe(&spec).is_ok() || tkone_schedule::datetime::describe(&spec).is_ok();
         let message = if is_date {
             format!(
                 "`{spec}` is a date schedule; #[schedule] only takes time specs such as \"1H:00:00\", \
@@ -477,19 +476,18 @@ fn expand_job(struct_path: Path, item_fn: ItemFn) -> syn::Result<TokenStream2> {
 fn extract_job_error_type(f: &ItemFn) -> syn::Result<Type> {
     // Return type must be `-> Result<(), E>`
     let ReturnType::Type(_, ty) = &f.sig.output else {
-        return Err(syn::Error::new_spanned(
-            &f.sig,
-            "#[job] function must return `Result<(), E>`",
-        ));
+        return Err(syn::Error::new_spanned(&f.sig, "#[job] function must return `Result<(), E>`"));
     };
 
     let Type::Path(tp) = ty.as_ref() else {
         return Err(syn::Error::new_spanned(ty, "#[job] return type must be `Result<(), E>`"));
     };
 
-    let last = tp.path.segments.last().ok_or_else(|| {
-        syn::Error::new_spanned(ty, "#[job] return type must be `Result<(), E>`")
-    })?;
+    let last = tp
+        .path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(ty, "#[job] return type must be `Result<(), E>`"))?;
 
     if last.ident != "Result" {
         return Err(syn::Error::new_spanned(ty, "#[job] return type must be `Result<(), E>`"));
@@ -501,9 +499,7 @@ fn extract_job_error_type(f: &ItemFn) -> syn::Result<Type> {
 
     let args: Vec<_> = ab.args.iter().collect();
     match args.as_slice() {
-        [syn::GenericArgument::Type(_unit), syn::GenericArgument::Type(err_ty)] => {
-            Ok(err_ty.clone())
-        }
+        [syn::GenericArgument::Type(_unit), syn::GenericArgument::Type(err_ty)] => Ok(err_ty.clone()),
         _ => Err(syn::Error::new_spanned(ty, "#[job] return type must be `Result<(), E>`")),
     }
 }

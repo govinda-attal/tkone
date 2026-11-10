@@ -16,9 +16,7 @@ struct TestCase<Tz: TimeZone> {
 fn run_cases<Tz: TimeZone + Clone>(cases: Vec<TestCase<Tz>>) {
     let bdp = WeekendSkipper::new();
     for tc in cases {
-        let iter = SpecIteratorBuilder::new_with_start(tc.spec, bdp.clone(), tc.start)
-            .build()
-            .unwrap();
+        let iter = SpecIteratorBuilder::new_with_start(tc.spec, bdp.clone(), tc.start).build().unwrap();
         let results: Vec<Occurrence<DateTime<_>>> = iter.take(tc.take).collect().unwrap();
         assert_eq!(tc.expected, Ok(results), "spec: {}", tc.spec);
     }
@@ -719,13 +717,10 @@ fn test_finite_specs() {
 fn test_finite_spec_terminates() {
     let tz = chrono_tz::America::New_York;
     let bdp = WeekendSkipper::new();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "2025-MM-01",
-        bdp,
-        tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
-    )
-    .build()
-    .unwrap();
+    let iter =
+        SpecIteratorBuilder::new_with_start("2025-MM-01", bdp, tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap())
+            .build()
+            .unwrap();
     // collect all – should be exactly 12
     let results: Vec<_> = iter.collect().unwrap();
     assert_eq!(results.len(), 12, "2025-MM-01 should produce exactly 12 results");
@@ -1094,14 +1089,9 @@ fn test_never_matching_specs_error() {
     let tz = chrono_tz::America::New_York;
     let after = tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     for spec in ["YY-02-30", "[2025,2026]-02-29"] {
-        let mut iter = SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after)
-            .build()
-            .unwrap();
+        let mut iter = SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after).build().unwrap();
         let result = iter.next();
-        assert!(
-            matches!(result, Err(Error::IteratorNotConverged) | Ok(None)),
-            "spec: {spec}, got {result:?}"
-        );
+        assert!(matches!(result, Err(Error::IteratorNotConverged) | Ok(None)), "spec: {spec}, got {result:?}");
     }
 }
 
@@ -1192,10 +1182,8 @@ fn test_with_end_in_other_timezone() {
     let start = ny.with_ymd_and_hms(2025, 1, 10, 20, 0, 0).unwrap();
     // 2025-01-13 00:30 London = 2025-01-12 19:30 New York
     let end = london.with_ymd_and_hms(2025, 1, 13, 0, 30, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start("YY-MM-DD", WeekendSkipper::new(), start)
-        .with_end(end)
-        .build()
-        .unwrap();
+    let iter =
+        SpecIteratorBuilder::new_with_start("YY-MM-DD", WeekendSkipper::new(), start).with_end(end).build().unwrap();
     let results: Vec<_> = iter.collect().unwrap();
     assert!(results.iter().all(|r| *r.observed() <= end), "{results:?}");
     assert_eq!(results.len(), 2, "{results:?}"); // Jan 10, Jan 11
@@ -1253,14 +1241,8 @@ fn test_weekday_adjustment_ignores_holidays() {
     let tz = chrono_tz::America::New_York;
     let after = tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     let holiday = tz.with_ymd_and_hms(2025, 1, 15, 0, 0, 0).unwrap();
-    let next = |spec| {
-        SpecIteratorBuilder::new_after(spec, HolidayOn15Jan, after)
-            .build()
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-    };
+    let next =
+        |spec| SpecIteratorBuilder::new_after(spec, HolidayOn15Jan, after).build().unwrap().next().unwrap().unwrap();
     // ~NW: a weekday holiday is still a weekday
     assert_eq!(next("YY-MM-15~NW"), Occurrence::Exact(holiday));
     // ~NB: the holiday is not a business day
@@ -1294,10 +1276,7 @@ fn test_skipped_day_reported_as_adjusted_later() {
     assert_eq!(observed.to_rfc3339(), "2011-12-31T00:00:00+14:00");
     assert_eq!(actual, observed, "label and shift are the same instant");
     // Dec 31's own occurrence collides with the shift and is dropped
-    assert_eq!(
-        results[2],
-        Occurrence::Exact(apia.with_ymd_and_hms(2012, 1, 1, 0, 0, 0).unwrap())
-    );
+    assert_eq!(results[2], Occurrence::Exact(apia.with_ymd_and_hms(2012, 1, 1, 0, 0, 0).unwrap()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1310,12 +1289,7 @@ fn test_conditional_adjustments_keep_every_raw_date() {
     let thu = tz.with_ymd_and_hms(2025, 1, 9, 0, 0, 0).unwrap();
     let day = |d| tz.with_ymd_and_hms(2025, 1, d, 0, 0, 0).unwrap();
     let take = |spec| -> Vec<_> {
-        SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), thu)
-            .build()
-            .unwrap()
-            .take(4)
-            .collect()
-            .unwrap()
+        SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), thu).build().unwrap().take(4).collect().unwrap()
     };
     assert_eq!(
         take("YY-MM-DD~NB"),
@@ -1360,7 +1334,10 @@ fn test_nth_biz_day_of_month() {
     assert_eq!(take("YY-MM-BD#1", WeekendSkipper::new()), vec![day(1, 1), day(2, 3), day(3, 3)]);
     assert_eq!(take("YY-MM-BD#L", WeekendSkipper::new()), vec![day(1, 31), day(2, 28), day(3, 31)]);
     assert_eq!(take("YY-MM-BD#2L", WeekendSkipper::new()), vec![day(1, 30), day(2, 27), day(3, 28)]);
-    assert_eq!(take("YY-[03,06]-BD#1", WeekendSkipper::new()), vec![day(3, 3), day(6, 2), tz.with_ymd_and_hms(2026, 3, 2, 0, 0, 0).unwrap()]);
+    assert_eq!(
+        take("YY-[03,06]-BD#1", WeekendSkipper::new()),
+        vec![day(3, 3), day(6, 2), tz.with_ymd_and_hms(2026, 3, 2, 0, 0, 0).unwrap()]
+    );
 }
 
 #[test]
@@ -1414,12 +1391,7 @@ fn test_modified_following_and_preceding() {
     let tz = chrono_tz::America::New_York;
     let day = |m, d| tz.with_ymd_and_hms(2025, m, d, 0, 0, 0).unwrap();
     let first = |spec: &str, after| {
-        SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after)
-            .build()
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
+        SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after).build().unwrap().next().unwrap().unwrap()
     };
     // Sat 2025-05-31: following is Mon Jun 2 (next month), so roll back to Fri May 30.
     assert_eq!(first("YY-MM-31L~MF", day(5, 1)), Occurrence::AdjustedEarlier(day(5, 31), day(5, 30)));
@@ -1476,7 +1448,15 @@ fn test_ranges_in_date_lists() {
         assert_eq!(again.to_string(), shown, "round trip of {shown}");
     }
 
-    for s in ["YY-MM-[FRI-MON]", "YY-[06-01]-01", "YY-MM-[15-01]", "[1-4000000000]-MM-01", "YY-[01-13]-01", "YY-MM-[00-05]", "YY-MM-[MON-]"] {
+    for s in [
+        "YY-MM-[FRI-MON]",
+        "YY-[06-01]-01",
+        "YY-MM-[15-01]",
+        "[1-4000000000]-MM-01",
+        "YY-[01-13]-01",
+        "YY-MM-[00-05]",
+        "YY-MM-[MON-]",
+    ] {
         assert!(s.parse::<Spec>().is_err(), "{s} should be rejected");
     }
 
@@ -1524,10 +1504,7 @@ fn test_week_cycles() {
     assert_eq!(got[9], "2025-01-17");
     assert_eq!(got[10], "2025-02-03");
     // The week cycle counts across month boundaries and from a mid-week start.
-    assert_eq!(
-        dates_from("YY-MM-FRI/2W", (2025, 1, 29), 3),
-        ["2025-01-29", "2025-01-31", "2025-02-14"]
-    );
+    assert_eq!(dates_from("YY-MM-FRI/2W", (2025, 1, 29), 3), ["2025-01-29", "2025-01-31", "2025-02-14"]);
     // Week 2 of every 2: the weeks not containing the start.
     assert_eq!(dates_from("YY-MM-MON/2W[2]", (2025, 1, 6), 3), ["2025-01-06", "2025-01-13", "2025-01-27"]);
     // Adjustments apply as usual.
@@ -1554,10 +1531,7 @@ fn test_positions_inside_cycles() {
         ["2025-01-15", "2025-02-15", "2025-04-15", "2025-05-15", "2025-07-15"]
     );
     // Years 1 and 3 of every 4.
-    assert_eq!(
-        dates_from("4Y[1,3]-06-15", (2025, 6, 15), 4),
-        ["2025-06-15", "2027-06-15", "2029-06-15", "2031-06-15"]
-    );
+    assert_eq!(dates_from("4Y[1,3]-06-15", (2025, 6, 15), 4), ["2025-06-15", "2027-06-15", "2029-06-15", "2031-06-15"]);
 }
 
 #[test]
@@ -1606,10 +1580,24 @@ fn test_business_day_position_lists() {
     // Jan 2025: business days 1, 2, 3, 6, 7, …, 30, 31; Feb 1 is a Saturday.
     assert_eq!(
         dates_from("YY-MM-BD#[1-5]", (2025, 1, 1), 10),
-        ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-02-03", "2025-02-04", "2025-02-05", "2025-02-06", "2025-02-07"]
+        [
+            "2025-01-01",
+            "2025-01-02",
+            "2025-01-03",
+            "2025-01-06",
+            "2025-01-07",
+            "2025-02-03",
+            "2025-02-04",
+            "2025-02-05",
+            "2025-02-06",
+            "2025-02-07"
+        ]
     );
     assert_eq!(dates_from("YY-MM-BD#[1,L]", (2025, 1, 1), 4), ["2025-01-01", "2025-01-31", "2025-02-03", "2025-02-28"]);
-    assert_eq!(dates_from("YY-MM-BD#[L,3,2L,1]", (2025, 1, 1), 4), ["2025-01-01", "2025-01-03", "2025-01-30", "2025-01-31"]);
+    assert_eq!(
+        dates_from("YY-MM-BD#[L,3,2L,1]", (2025, 1, 1), 4),
+        ["2025-01-01", "2025-01-03", "2025-01-30", "2025-01-31"]
+    );
     // With a holiday calendar.
     let tz = chrono_tz::America::New_York;
     let after = tz.with_ymd_and_hms(2024, 12, 31, 0, 0, 0).unwrap();
@@ -1675,13 +1663,14 @@ fn test_skip_non_business_days() {
     assert_eq!(counted, ["04-15", "05-15", "07-15"]);
     // Display, and with a time part.
     assert_eq!("YY-MM-DD/2W~SB".parse::<crate::date::Spec>().unwrap().to_string(), "YY-MM-DD/2W~SB");
-    let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after("YY-MM-DD~SBT09:00:00", HolidayOn15Jan, day(1, 14))
-        .build()
-        .unwrap()
-        .take(2)
-        .map(|o| Ok(o.observed().format("%m-%d %H:%M").to_string()))
-        .collect()
-        .unwrap();
+    let got: Vec<_> =
+        crate::datetime::SpecIteratorBuilder::new_after("YY-MM-DD~SBT09:00:00", HolidayOn15Jan, day(1, 14))
+            .build()
+            .unwrap()
+            .take(2)
+            .map(|o| Ok(o.observed().format("%m-%d %H:%M").to_string()))
+            .collect()
+            .unwrap();
     assert_eq!(got, ["01-14 09:00", "01-16 09:00"]);
 }
 
@@ -1706,7 +1695,8 @@ fn test_every_business_day_two_ways() {
     }
     for rule in ["YY-MM-1BDT00:00:00", "YY-MM-DD~SBT00:00:00"] {
         let schedule = crate::schedule::Schedule::builder(sat, HolidayOn15Jan).rule(rule).build().unwrap();
-        let got: Vec<_> = schedule.slots().unwrap().take(10).map(|s| Ok(s.at.format("%m-%d").to_string())).collect().unwrap();
+        let got: Vec<_> =
+            schedule.slots().unwrap().take(10).map(|s| Ok(s.at.format("%m-%d").to_string())).collect().unwrap();
         assert_eq!(got, expected, "{rule}");
     }
 }
@@ -1746,13 +1736,17 @@ fn test_easter() {
     assert_eq!(dates_after("YY-MM-OEAS+250", (2174, 1, 1), 1), ["2174-01-14"]);
     // With an end.
     let tz = chrono_tz::America::New_York;
-    let bounded: Vec<_> = SpecIteratorBuilder::new_after("YY-MM-EAS-2", WeekendSkipper::new(), tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap())
-        .with_end(tz.with_ymd_and_hms(2027, 12, 31, 0, 0, 0).unwrap())
-        .build()
-        .unwrap()
-        .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
-        .collect()
-        .unwrap();
+    let bounded: Vec<_> = SpecIteratorBuilder::new_after(
+        "YY-MM-EAS-2",
+        WeekendSkipper::new(),
+        tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+    )
+    .with_end(tz.with_ymd_and_hms(2027, 12, 31, 0, 0, 0).unwrap())
+    .build()
+    .unwrap()
+    .map(|o| Ok(o.observed().format("%Y-%m-%d").to_string()))
+    .collect()
+    .unwrap();
     assert_eq!(bounded, ["2025-04-18", "2026-04-03", "2027-03-26"]);
 }
 
@@ -1780,13 +1774,17 @@ fn test_easter_adjusted_and_combined() {
         .unwrap();
     assert_eq!(weekdays, ["2025-04-16", "2025-04-17", "2025-04-22", "2025-04-23"]);
     // With a time.
-    let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after("YY-MM-OEAS-2T09:00:00", WeekendSkipper::new(), day(2026, 1, 1))
-        .build()
-        .unwrap()
-        .take(1)
-        .map(|o| Ok(o.observed().format("%Y-%m-%d %H:%M").to_string()))
-        .collect()
-        .unwrap();
+    let got: Vec<_> = crate::datetime::SpecIteratorBuilder::new_after(
+        "YY-MM-OEAS-2T09:00:00",
+        WeekendSkipper::new(),
+        day(2026, 1, 1),
+    )
+    .build()
+    .unwrap()
+    .take(1)
+    .map(|o| Ok(o.observed().format("%Y-%m-%d %H:%M").to_string()))
+    .collect()
+    .unwrap();
     assert_eq!(got, ["2026-04-10 09:00"]);
 }
 
@@ -1797,10 +1795,7 @@ fn test_easter_parsing() {
         assert_eq!(spec.parse::<Spec>().unwrap().to_string(), spec);
     }
     assert_eq!("YY-MM-EAS+0".parse::<Spec>().unwrap().to_string(), "YY-MM-EAS");
-    assert_eq!(
-        "YY-MM-OEAS-2".parse::<Spec>().unwrap().days,
-        DayCycle::Easter { easter: Easter::Orthodox, offset: -2 }
-    );
+    assert_eq!("YY-MM-OEAS-2".parse::<Spec>().unwrap().days, DayCycle::Easter { easter: Easter::Orthodox, offset: -2 });
     for bad in [
         "YY-MM-EAS-81",
         "YY-MM-EAS+251",
@@ -1837,7 +1832,15 @@ fn test_to_weekday() {
     // Auckland Anniversary: the Monday nearest 29 January.
     assert_eq!(
         yearly("YY-01-29~MON", 7),
-        ["Mon 2020-01-27", "Mon 2021-02-01", "Mon 2022-01-31", "Mon 2023-01-30", "Mon 2024-01-29", "Mon 2025-01-27", "Mon 2026-01-26"]
+        [
+            "Mon 2020-01-27",
+            "Mon 2021-02-01",
+            "Mon 2022-01-31",
+            "Mon 2023-01-30",
+            "Mon 2024-01-29",
+            "Mon 2025-01-27",
+            "Mon 2026-01-26"
+        ]
     );
     // Victoria Day: the Monday on or before 24 May.
     assert_eq!(yearly("YY-05-24~PMON", 4), ["Mon 2020-05-18", "Mon 2021-05-24", "Mon 2022-05-23", "Mon 2023-05-22"]);
@@ -1845,20 +1848,28 @@ fn test_to_weekday() {
     assert_eq!(yearly("YY-05-18~NMON", 4), yearly("YY-05-24~PMON", 4));
     // The actual date is kept: Saturday 29 January 2022 moved to Monday 31.
     let start = chrono::Utc.with_ymd_and_hms(2022, 1, 1, 0, 0, 0).unwrap();
-    let first = SpecIteratorBuilder::new_after("YY-01-29~MON", WeekendSkipper::new(), start).build().unwrap().next().unwrap().unwrap();
+    let first = SpecIteratorBuilder::new_after("YY-01-29~MON", WeekendSkipper::new(), start)
+        .build()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap();
     assert_eq!(first.actual().date_naive().to_string(), "2022-01-29");
     assert!(matches!(first, Occurrence::AdjustedLater(..)));
 }
 
 #[test]
 fn test_to_weekday_parsing() {
-    use crate::date::{BizDayAdjustment, Spec};
     use crate::biz_day::Direction;
+    use crate::date::{BizDayAdjustment, Spec};
     for spec in ["YY-01-29~MON", "YY-05-24~PMON", "YY-05-18~NMON", "YY-MM-DD~NWED", "YY-MM-DD~SUN", "YY-MM-DD~PSAT"] {
         assert_eq!(spec.parse::<Spec>().unwrap().to_string(), spec);
     }
     // Weekday names are read before `~NW`, `~W` and `~SB`.
-    assert_eq!("YY-MM-DD~NWED".parse::<Spec>().unwrap().biz_day_adj, Some(BizDayAdjustment::ToWeekday(chrono::Weekday::Wed, Direction::Next)));
+    assert_eq!(
+        "YY-MM-DD~NWED".parse::<Spec>().unwrap().biz_day_adj,
+        Some(BizDayAdjustment::ToWeekday(chrono::Weekday::Wed, Direction::Next))
+    );
     assert_eq!("YY-MM-DD~NW".parse::<Spec>().unwrap().biz_day_adj, Some(BizDayAdjustment::Weekday(Direction::Next)));
     assert_eq!("YY-MM-DD~SB".parse::<Spec>().unwrap().biz_day_adj, Some(BizDayAdjustment::SkipNonBizDay));
     assert!("YY-MM-DD~XMON".parse::<Spec>().is_err());

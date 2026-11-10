@@ -1,0 +1,3 @@
+# The code was written at about 120 columns; this keeps it that way.
+max_width = 120
+use_small_heuristics = "Max"

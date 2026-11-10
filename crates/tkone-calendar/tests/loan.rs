@@ -143,7 +143,9 @@ fn a_closure_at_short_notice() {
     let before = repayments(calendar());
     let after = repayments(closed);
 
-    let paid = |s: &Schedule<Calendar>| -> Vec<NaiveDate> { s.slots().unwrap().map(|s| Ok(s.at.date_naive())).collect().unwrap() };
+    let paid = |s: &Schedule<Calendar>| -> Vec<NaiveDate> {
+        s.slots().unwrap().map(|s| Ok(s.at.date_naive())).collect().unwrap()
+    };
     let moved: Vec<_> = paid(&before).into_iter().zip(paid(&after)).filter(|(a, b)| a != b).collect();
     assert_eq!(moved, [(date(2027, 9, 15), date(2027, 9, 16))]);
 
@@ -197,7 +199,11 @@ fn a_floating_rate_over_ten_years() {
     for entry in moments.iter().flat_map(|m| &m.entries) {
         if entry.key == "fixing" {
             let fixed = Some(rate_for(entry.slot.at));
-            if rate.is_none() { rate = fixed } else { next_rate = fixed }
+            if rate.is_none() {
+                rate = fixed
+            } else {
+                next_rate = fixed
+            }
             continue;
         }
         let days = days(entry.since.actual, entry.slot.sources[0].actual);

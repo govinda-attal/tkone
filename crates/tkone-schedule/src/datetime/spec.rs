@@ -8,9 +8,8 @@ use crate::prelude::*;
 /// The time spec always starts with: `HH:`, `_:`, `<n>H:`, a two-digit hour `<dd>:`, an hour
 /// range `<dd>-<dd>:`, or an hour list `[…]:`.
 /// This deliberately does NOT match `T` inside weekday names like `TUE` or `THU`.
-static DATE_TIME_SEP: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"T(?:HH|_|\[[0-9,\-]+\]|[0-9]{1,2}H|[0-2]?[0-9](?:-[0-2]?[0-9])?):").unwrap()
-});
+static DATE_TIME_SEP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"T(?:HH|_|\[[0-9,\-]+\]|[0-9]{1,2}H|[0-2]?[0-9](?:-[0-2]?[0-9])?):").unwrap());
 
 /// Combined date + time recurrence specification.
 ///
@@ -30,16 +29,12 @@ impl FromStr for Spec {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let sep = DATE_TIME_SEP
-            .find(s)
-            .ok_or_else(|| Error::InvalidDateTimeSpec(format!("missing T separator: {s}")))?;
+        let sep =
+            DATE_TIME_SEP.find(s).ok_or_else(|| Error::InvalidDateTimeSpec(format!("missing T separator: {s}")))?;
         let date_spec = s[..sep.start()].to_string();
         // +1 to skip the 'T' itself; the rest is the time spec
         let time_spec = s[sep.start() + 1..].to_string();
-        Ok(Spec {
-            date_spec,
-            time_spec,
-        })
+        Ok(Spec { date_spec, time_spec })
     }
 }
 

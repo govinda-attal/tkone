@@ -62,9 +62,14 @@ impl Calendar {
     ) -> PyResult<Self> {
         let weekend = weekend
             .iter()
-            .map(|day| day.parse::<chrono::Weekday>().map_err(|_| CalendarError::new_err(format!("`{day}` is not a day of the week"))))
+            .map(|day| {
+                day.parse::<chrono::Weekday>()
+                    .map_err(|_| CalendarError::new_err(format!("`{day}` is not a day of the week")))
+            })
             .collect::<PyResult<Vec<_>>>()?;
-        tkone_calendar::Calendar::fixed(code, valid_from..=valid_until, &weekend, days_off).map(Self).map_err(calendar_err)
+        tkone_calendar::Calendar::fixed(code, valid_from..=valid_until, &weekend, days_off)
+            .map(Self)
+            .map_err(calendar_err)
     }
 
     /// This calendar with `dates` as days off too: a closure at short notice.

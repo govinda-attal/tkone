@@ -199,7 +199,8 @@ impl Schedule {
             return Ok(Self { spec: spec.to_string(), kind: *kind });
         }
         // Report the error of the kind the text looks like.
-        let looks = if spec.contains(':') && spec.split(':').next().is_some_and(|h| h.contains('-') && h.contains('T')) {
+        let looks = if spec.contains(':') && spec.split(':').next().is_some_and(|h| h.contains('-') && h.contains('T'))
+        {
             Kind::DateTime
         } else if spec.contains(':') {
             Kind::Time
@@ -250,7 +251,9 @@ impl Schedule {
         tz: Option<&str>,
     ) -> PyResult<Occurrences> {
         let zone = match tz {
-            Some(name) => name.parse::<chrono_tz::Tz>().map_err(|_| ScheduleError::new_err(format!("`{name}` is not an IANA time zone")))?,
+            Some(name) => name
+                .parse::<chrono_tz::Tz>()
+                .map_err(|_| ScheduleError::new_err(format!("`{name}` is not an IANA time zone")))?,
             None => chrono_tz::UTC,
         };
         let after = after.map(|a| a.in_zone(&zone)).unwrap_or_else(|| Utc::now().with_timezone(&zone));
@@ -342,7 +345,8 @@ impl Slot {
 
 impl From<tkone_schedule::schedule::Slot> for Slot {
     fn from(slot: tkone_schedule::schedule::Slot) -> Self {
-        let sources = slot.sources.into_iter().map(|s| Source { rule_id: s.rule_id, actual: s.actual, basis: s.basis }).collect();
+        let sources =
+            slot.sources.into_iter().map(|s| Source { rule_id: s.rule_id, actual: s.actual, basis: s.basis }).collect();
         Self { at: slot.at, sources }
     }
 }

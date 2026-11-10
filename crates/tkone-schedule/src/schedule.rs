@@ -28,9 +28,9 @@
 //! # Ok::<(), tkone_schedule::Error>(())
 //! ```
 
+mod derived;
 #[cfg(feature = "serde")]
 pub mod document;
-mod derived;
 pub mod period;
 pub mod selector;
 pub mod timeline;
@@ -255,7 +255,8 @@ impl<B: BizDayProcessor> Schedule<B> {
     /// The slots strictly after `after` and no later than `until`.
     fn slots_in(&self, after: &DateTime<Tz>, until: Option<DateTime<Tz>>) -> Result<Slots<B>> {
         let after = after.with_timezone(&self.zone());
-        let from = if self.count.is_some() || after < self.start { just_before(&self.start) } else { self.lookback(&after)? };
+        let from =
+            if self.count.is_some() || after < self.start { just_before(&self.start) } else { self.lookback(&after)? };
         let exclusions = Exclusions {
             dates: self.exclude_dates.clone(),
             rules: self
@@ -272,10 +273,22 @@ impl<B: BizDayProcessor> Schedule<B> {
             .filter(|(_, rule)| !rule.basis)
             .map(|(index, rule)| {
                 let iter = match &rule.reference {
-                    None => RuleIter::Spec(Box::new(SpecIterator::anchored(&rule.spec, self.bdp.clone(), &self.start, &from, self.options)?)),
+                    None => RuleIter::Spec(Box::new(SpecIterator::anchored(
+                        &rule.spec,
+                        self.bdp.clone(),
+                        &self.start,
+                        &from,
+                        self.options,
+                    )?)),
                     Some((to, reference)) => RuleIter::Derived(Box::new(derived::Derived {
                         reference: reference.clone(),
-                        basis: SpecIterator::anchored(&self.rules[*to].spec, self.bdp.clone(), &self.start, &from, self.options)?,
+                        basis: SpecIterator::anchored(
+                            &self.rules[*to].spec,
+                            self.bdp.clone(),
+                            &self.start,
+                            &from,
+                            self.options,
+                        )?,
                         bdp: self.bdp.clone(),
                         zone: self.zone(),
                         policy: self.options.0,
@@ -468,8 +481,14 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
             let rule = &schedule.rules[n];
             let reference = match derived::Reference::parse(&rule.spec) {
                 None => {
-                    SpecIterator::anchored(&rule.spec, schedule.bdp.clone(), &schedule.start, &schedule.start, schedule.options)
-                        .map_err(|e| invalid(format!("{} (`{}`): {e}", name(n, rule), rule.spec)))?;
+                    SpecIterator::anchored(
+                        &rule.spec,
+                        schedule.bdp.clone(),
+                        &schedule.start,
+                        &schedule.start,
+                        schedule.options,
+                    )
+                    .map_err(|e| invalid(format!("{} (`{}`): {e}", name(n, rule), rule.spec)))?;
                     let date = date_spec(&rule.spec)?;
                     schedule.reach = schedule.reach.max(date.forward_reach());
                     schedule.back_reach = schedule.back_reach.max(date.backward_reach());
@@ -477,11 +496,10 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
                 }
                 Some(reference) => reference.map_err(|e| invalid(format!("{}: {e}", name(n, rule))))?,
             };
-            let to = schedule
-                .rules
-                .iter()
-                .position(|other| other.id.as_deref() == Some(reference.id.as_str()))
-                .ok_or_else(|| invalid(format!("{} refers to `{}`, which no rule is", name(n, rule), reference.id)))?;
+            let to =
+                schedule.rules.iter().position(|other| other.id.as_deref() == Some(reference.id.as_str())).ok_or_else(
+                    || invalid(format!("{} refers to `{}`, which no rule is", name(n, rule), reference.id)),
+                )?;
             if derived::Reference::parse(&schedule.rules[to].spec).is_some() {
                 return Err(invalid(format!(
                     "{} refers to `{}`, which is itself derived; refer to the rule it derives from",
@@ -617,11 +635,7 @@ struct Batch {
 impl<B: BizDayProcessor> RuleStream<B> {
     /// The next occurrence not excluded by its actual date, if its actual
     /// date is no later than `last_actual`.
-    fn pull(
-        &mut self,
-        exclusions: &Exclusions<B>,
-        last_actual: Option<NaiveDate>,
-    ) -> Result<Option<Item>> {
+    fn pull(&mut self, exclusions: &Exclusions<B>, last_actual: Option<NaiveDate>) -> Result<Option<Item>> {
         if self.exhausted {
             return Ok(None);
         }

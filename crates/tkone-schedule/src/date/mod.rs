@@ -54,8 +54,8 @@ mod spec;
 #[cfg(test)]
 mod tests;
 
-pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 pub(crate) use iter::{needs_start, resume_needs_start};
+pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 
 /// Describes a date spec in plain English: [`Spec::describe`] on the parsed
 /// spec.

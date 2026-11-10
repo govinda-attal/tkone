@@ -4,7 +4,6 @@ use std::fmt;
 use std::str::FromStr;
 
 use nom::{
-    Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, digit1},
@@ -12,7 +11,7 @@ use nom::{
     error::Error as NomError,
     multi::separated_list1,
     sequence::{delimited, preceded},
-    IResult,
+    IResult, Parser,
 };
 
 /// ## Spec
@@ -158,7 +157,7 @@ fn parse_minutes_cycle(input: &str) -> Res<'_, Cycle> {
     .parse(input)
 }
 
-fn parse_seconds_every(input: &str) -> Res<'_,  Cycle> {
+fn parse_seconds_every(input: &str) -> Res<'_, Cycle> {
     let (input, n) = verify(parse_u8, |&n| n > 0).parse(input)?;
     let (input, _) = char('S').parse(input)?;
     Ok((input, Cycle::Every(n)))
@@ -181,29 +180,17 @@ fn parse_seconds_cycle(input: &str) -> Res<'_, Cycle> {
 }
 
 fn parse_spec(input: &str) -> Result<Spec> {
-    let full_parser = (
-        parse_hours_cycle,
-        preceded(char(':'), parse_minutes_cycle),
-        preceded(char(':'), parse_seconds_cycle),
-    );
+    let full_parser =
+        (parse_hours_cycle, preceded(char(':'), parse_minutes_cycle), preceded(char(':'), parse_seconds_cycle));
     let spec = match all_consuming(full_parser).parse(input) {
-        Ok((_, (hours, minutes, seconds))) => Spec {
-            hours,
-            minutes,
-            seconds,
-        },
+        Ok((_, (hours, minutes, seconds))) => Spec { hours, minutes, seconds },
         Err(_) => return Err(Error::InvalidTimeSpec(format!("failed to parse: {input}"))),
     };
-    for (cycle, max, unit) in [
-        (&spec.hours, 23, "hour"),
-        (&spec.minutes, 59, "minute"),
-        (&spec.seconds, 59, "second"),
-    ] {
+    for (cycle, max, unit) in [(&spec.hours, 23, "hour"), (&spec.minutes, 59, "minute"), (&spec.seconds, 59, "second")]
+    {
         if let Some(n) = cycle.pinned().and_then(|vs| vs.last().copied()) {
             if n > max {
-                return Err(Error::InvalidTimeSpec(format!(
-                    "{input}: {unit} {n} is out of range 0-{max}"
-                )));
+                return Err(Error::InvalidTimeSpec(format!("{input}: {unit} {n} is out of range 0-{max}")));
             }
         }
     }
@@ -253,10 +240,8 @@ fn fmt_values(vs: &BTreeSet<u8>) -> String {
             _ => runs.push((v, v)),
         }
     }
-    let parts: Vec<String> = runs
-        .iter()
-        .map(|&(lo, hi)| if lo == hi { format!("{lo:02}") } else { format!("{lo:02}-{hi:02}") })
-        .collect();
+    let parts: Vec<String> =
+        runs.iter().map(|&(lo, hi)| if lo == hi { format!("{lo:02}") } else { format!("{lo:02}-{hi:02}") }).collect();
     match parts.as_slice() {
         [range] if runs[0].0 != runs[0].1 => range.clone(),
         _ => format!("[{}]", parts.join(",")),
@@ -274,13 +259,7 @@ impl fmt::Display for Spec {
                 Cycle::Every(n) => format!("{}{}", n, letter),
             }
         };
-        write!(
-            f,
-            "{}:{}:{}",
-            fmt_cycle(&self.hours, 'H'),
-            fmt_cycle(&self.minutes, 'M'),
-            fmt_cycle(&self.seconds, 'S'),
-        )
+        write!(f, "{}:{}:{}", fmt_cycle(&self.hours, 'H'), fmt_cycle(&self.minutes, 'M'), fmt_cycle(&self.seconds, 'S'),)
     }
 }
 
@@ -291,14 +270,7 @@ mod tests {
     #[test]
     fn test_time_spec_from_str() {
         let time_spec = "HH:30M:05".parse::<Spec>().unwrap();
-        assert_eq!(
-            &time_spec,
-            &Spec {
-                hours: Cycle::ForEach,
-                minutes: Cycle::Every(30),
-                seconds: Cycle::At(5),
-            },
-        );
+        assert_eq!(&time_spec, &Spec { hours: Cycle::ForEach, minutes: Cycle::Every(30), seconds: Cycle::At(5) },);
         assert_eq!(time_spec.to_string(), "HH:30M:05");
     }
 
@@ -359,7 +331,9 @@ mod tests {
         // a single value is `At`
         assert_eq!("[09]:00:00".parse::<Spec>().unwrap().hours, Cycle::At(9));
         assert_eq!("09-09:00:00".parse::<Spec>().unwrap().hours, Cycle::At(9));
-        for s in ["16-09:00:00", "[09,24]:00:00", "HH:[00,60]:00", "HH:MM:55-60", "[]:00:00", "[09,]:00:00", "09-:00:00"] {
+        for s in
+            ["16-09:00:00", "[09,24]:00:00", "HH:[00,60]:00", "HH:MM:55-60", "[]:00:00", "[09,]:00:00", "09-:00:00"]
+        {
             assert!(s.parse::<Spec>().is_err(), "{s} should be a parse error");
         }
         for (s, shown) in [
@@ -375,16 +349,7 @@ mod tests {
 
     #[test]
     fn test_time_spec_roundtrip() {
-        for s in &[
-            "HH:MM:SS",
-            "1H:00:00",
-            "HH:30M:00",
-            "_:_:_",
-            "_:00:00",
-            "09:30:00",
-            "HH:MM:30S",
-            "2H:15:00",
-        ] {
+        for s in &["HH:MM:SS", "1H:00:00", "HH:30M:00", "_:_:_", "_:00:00", "09:30:00", "HH:MM:30S", "2H:15:00"] {
             let parsed = s.parse::<Spec>().unwrap();
             assert_eq!(&parsed.to_string(), s, "roundtrip failed for {}", s);
         }

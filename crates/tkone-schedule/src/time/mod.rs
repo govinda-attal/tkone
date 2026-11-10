@@ -58,8 +58,8 @@ mod spec;
 #[cfg(test)]
 mod tests;
 
-pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 pub(crate) use engine::next_after;
+pub use iter::{NaiveSpecIterator, SpecIterator, SpecIteratorBuilder};
 
 pub use spec::{Cycle, Spec};
 

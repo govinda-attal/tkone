@@ -20,26 +20,15 @@ type NR<Tz> = Occurrence<DateTime<Tz>>;
 fn test_last_biz_day_monthly_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~NBT11:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .build()
-    .unwrap();
+    let iter =
+        SpecIteratorBuilder::new_with_start("YY-1M-31L~NBT11:00:00", WeekendSkipper::new(), start).build().unwrap();
     let results: Vec<NR<_>> = iter.take(3).collect().unwrap();
 
     // Apr 30 (Wed): Exact  at 11:00
-    assert_eq!(
-        results[0],
-        Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap())
-    );
+    assert_eq!(results[0], Occurrence::Exact(tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap()));
 
     // May 31 (Sat) → Jun 2 (Mon): AdjustedLater, observed at 11:00 on Jun 2
-    assert!(
-        matches!(results[1], Occurrence::AdjustedLater(_, _)),
-        "May 31 (Sat) should be AdjustedLater"
-    );
+    assert!(matches!(results[1], Occurrence::AdjustedLater(_, _)), "May 31 (Sat) should be AdjustedLater");
     assert_eq!(
         results[1].observed().date_naive(),
         NaiveDate::from_ymd_opt(2025, 6, 2).unwrap(),
@@ -50,10 +39,7 @@ fn test_last_biz_day_monthly_fixed_time() {
     assert_eq!(results[1].actual().month(), 5, "actual month should be May");
 
     // Jun 30 (Mon): Exact  at 11:00
-    assert_eq!(
-        results[2],
-        Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 30, 11, 0, 0).unwrap())
-    );
+    assert_eq!(results[2], Occurrence::Exact(tz.with_ymd_and_hms(2025, 6, 30, 11, 0, 0).unwrap()));
 }
 
 /// Spec 2: `YY-MM-[MON,WED,FRI]T09:30:00` — Monday, Wednesday, Friday at 09:30
@@ -61,13 +47,9 @@ fn test_last_biz_day_monthly_fixed_time() {
 fn test_mwf_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 6, 9, 30, 0).unwrap(); // Monday
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-[MON,WED,FRI]T09:30:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-[MON,WED,FRI]T09:30:00", WeekendSkipper::new(), start)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.take(6).collect().unwrap();
 
     let expected = [
@@ -84,11 +66,7 @@ fn test_mwf_fixed_time() {
     // All on Mon/Wed/Fri
     for r in &results {
         let wd = r.observed().date_naive().weekday();
-        assert!(
-            matches!(wd, Weekday::Mon | Weekday::Wed | Weekday::Fri),
-            "expected Mon/Wed/Fri, got {:?}",
-            wd
-        );
+        assert!(matches!(wd, Weekday::Mon | Weekday::Wed | Weekday::Fri), "expected Mon/Wed/Fri, got {:?}", wd);
     }
 }
 
@@ -97,13 +75,7 @@ fn test_mwf_fixed_time() {
 fn test_weekly_friday_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 3, 16, 30, 0).unwrap(); // Friday
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-FRIT16:30:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-FRIT16:30:00", WeekendSkipper::new(), start).build().unwrap();
     let results: Vec<NR<_>> = iter.take(4).collect().unwrap();
 
     let expected = [
@@ -114,10 +86,7 @@ fn test_weekly_friday_fixed_time() {
     ];
     for (i, dt) in expected.iter().enumerate() {
         assert_eq!(results[i], Occurrence::Exact(*dt), "result[{}]", i);
-        assert_eq!(
-            results[i].observed().date_naive().weekday(),
-            Weekday::Fri
-        );
+        assert_eq!(results[i].observed().date_naive().weekday(), Weekday::Fri);
     }
 }
 
@@ -126,13 +95,7 @@ fn test_weekly_friday_fixed_time() {
 fn test_quarterly_15th_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-3M-15T09:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-3M-15T09:00:00", WeekendSkipper::new(), start).build().unwrap();
     let results: Vec<NR<_>> = iter.take(4).collect().unwrap();
 
     let expected = [
@@ -158,13 +121,8 @@ fn test_quarterly_15th_fixed_time() {
 fn test_first_monday_monthly_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 6, 9, 30, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-MON#1T09:30:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .build()
-    .unwrap();
+    let iter =
+        SpecIteratorBuilder::new_with_start("YY-MM-MON#1T09:30:00", WeekendSkipper::new(), start).build().unwrap();
     let results: Vec<NR<_>> = iter.take(4).collect().unwrap();
 
     let expected = [
@@ -198,31 +156,21 @@ fn test_daily_every_6h() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 1, 6, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 1, 2, 18, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-DDT6H:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-DDT6H:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     // Jan 1: 06:00 (passthrough), 12:00, 18:00 — 3 ticks (start was mid-cycle)
-    let jan1: Vec<_> = results
-        .iter()
-        .filter(|r| r.observed().day() == 1)
-        .collect();
+    let jan1: Vec<_> = results.iter().filter(|r| r.observed().day() == 1).collect();
     assert_eq!(jan1.len(), 3, "Jan 1 should have 3 ticks");
     assert_eq!(jan1[0].observed().hour(), 6);
     assert_eq!(jan1[1].observed().hour(), 12);
     assert_eq!(jan1[2].observed().hour(), 18);
 
     // Jan 2: 00:00 (midnight — spec_delta fix), 06:00, 12:00, 18:00 — 4 ticks
-    let jan2: Vec<_> = results
-        .iter()
-        .filter(|r| r.observed().day() == 2)
-        .collect();
+    let jan2: Vec<_> = results.iter().filter(|r| r.observed().day() == 2).collect();
     assert_eq!(jan2.len(), 4, "Jan 2 should have 4 ticks");
     assert_eq!(jan2[0].observed().hour(), 0, "Jan 2 first tick must be midnight");
     assert_eq!(jan2[1].observed().hour(), 6);
@@ -239,23 +187,15 @@ fn test_weekly_monday_every_hour() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 6, 9, 0, 0).unwrap(); // Monday
     let end = tz.with_ymd_and_hms(2025, 1, 14, 0, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-[MON]T1H:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-[MON]T1H:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     // All ticks are on Mondays
     for r in &results {
-        assert_eq!(
-            r.observed().date_naive().weekday(),
-            Weekday::Mon,
-            "all ticks must be on Monday"
-        );
+        assert_eq!(r.observed().date_naive().weekday(), Weekday::Mon, "all ticks must be on Monday");
     }
 
     // Jan 6: 09:00 (passthrough) through 23:00 — 15 ticks
@@ -280,14 +220,10 @@ fn test_monthly_15th_every_4h() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 15, 8, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 2, 16, 0, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-15T4H:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-15T4H:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     // Jan 15: 08:00, 12:00, 16:00, 20:00 — 4 ticks
@@ -316,14 +252,10 @@ fn test_last_biz_day_every_30min() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 31, 8, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 3, 31, 18, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~NBTHH:30M:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-31L~NBTHH:30M:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     assert!(!results.is_empty());
@@ -358,14 +290,10 @@ fn test_every_biz_day_every_4h() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap(); // Wednesday
     let end = tz.with_ymd_and_hms(2025, 1, 7, 0, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-1BDT4H:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-1BDT4H:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     // No Saturday (Jan 4) or Sunday (Jan 5)
@@ -408,47 +336,23 @@ fn test_every_biz_day_every_4h() {
 fn test_31n_overflow_fixed_time() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 31, 11, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31NT11:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-31NT11:00:00", WeekendSkipper::new(), start).build().unwrap();
     let results: Vec<NR<_>> = iter.take(4).collect().unwrap();
 
     // Jan 31: Exact
-    assert_eq!(
-        results[0],
-        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 11, 0, 0).unwrap())
-    );
+    assert_eq!(results[0], Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 31, 11, 0, 0).unwrap()));
 
     // Feb: overflows → AdjustedLater, observed = Mar 1 at 11:00
-    assert!(
-        matches!(results[1], Occurrence::AdjustedLater(_, _)),
-        "Feb overflow should be AdjustedLater"
-    );
-    assert_eq!(
-        results[1].observed().date_naive(),
-        NaiveDate::from_ymd_opt(2025, 3, 1).unwrap()
-    );
+    assert!(matches!(results[1], Occurrence::AdjustedLater(_, _)), "Feb overflow should be AdjustedLater");
+    assert_eq!(results[1].observed().date_naive(), NaiveDate::from_ymd_opt(2025, 3, 1).unwrap());
     assert_eq!(results[1].observed().hour(), 11);
 
     // Mar 31: Exact
-    assert_eq!(
-        results[2],
-        Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 11, 0, 0).unwrap())
-    );
+    assert_eq!(results[2], Occurrence::Exact(tz.with_ymd_and_hms(2025, 3, 31, 11, 0, 0).unwrap()));
 
     // Apr: overflows → AdjustedLater, observed = May 1 at 11:00
-    assert!(
-        matches!(results[3], Occurrence::AdjustedLater(_, _)),
-        "Apr overflow should be AdjustedLater"
-    );
-    assert_eq!(
-        results[3].observed().date_naive(),
-        NaiveDate::from_ymd_opt(2025, 5, 1).unwrap()
-    );
+    assert!(matches!(results[3], Occurrence::AdjustedLater(_, _)), "Apr overflow should be AdjustedLater");
+    assert_eq!(results[3].observed().date_naive(), NaiveDate::from_ymd_opt(2025, 5, 1).unwrap());
     assert_eq!(results[3].observed().hour(), 11);
 }
 
@@ -462,20 +366,14 @@ fn test_adjustment_on_every_intraday_tick() {
     // Apr 30 → last biz day of Apr (Exact); May 31 Sat → Jun 2 Mon (AdjustedLater)
     let start = tz.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 6, 2, 2, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~NBTHH:30M:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-31L~NBTHH:30M:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
-    let jun2: Vec<_> = results
-        .iter()
-        .filter(|r| r.observed().date_naive() == NaiveDate::from_ymd_opt(2025, 6, 2).unwrap())
-        .collect();
+    let jun2: Vec<_> =
+        results.iter().filter(|r| r.observed().date_naive() == NaiveDate::from_ymd_opt(2025, 6, 2).unwrap()).collect();
     // 00:00 … 02:00 inclusive
     assert_eq!(jun2.len(), 5, "expected ticks on Jun 2: {jun2:?}");
     for tick in &jun2 {
@@ -502,10 +400,7 @@ fn test_adjustment_on_every_intraday_tick() {
 fn test_new_after_skips_entire_initial_date() {
     let tz = Utc;
     let dtm = tz.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
-    let iter =
-        SpecIteratorBuilder::new_after("YY-1M-15T11:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
+    let iter = SpecIteratorBuilder::new_after("YY-1M-15T11:00:00", WeekendSkipper::new(), dtm).build().unwrap();
     let results: Vec<NR<_>> = iter.take(3).collect().unwrap();
 
     // Jan 15 is skipped; first result is Feb 15
@@ -515,10 +410,7 @@ fn test_new_after_skips_entire_initial_date() {
         "Jan 15 should be skipped when dtm is past 11:00"
     );
     assert_eq!(results[0].observed().hour(), 11);
-    assert_eq!(
-        results[1].observed().date_naive(),
-        NaiveDate::from_ymd_opt(2025, 3, 15).unwrap()
-    );
+    assert_eq!(results[1].observed().date_naive(), NaiveDate::from_ymd_opt(2025, 3, 15).unwrap());
 }
 
 /// Spec 14: `YY-MM-DDT1H:00:00` via `new_after` from a non-aligned cursor
@@ -529,10 +421,7 @@ fn test_new_after_skips_entire_initial_date() {
 fn test_new_after_non_aligned_cursor() {
     let tz = Utc;
     let dtm = tz.with_ymd_and_hms(2025, 1, 15, 9, 30, 0).unwrap();
-    let iter =
-        SpecIteratorBuilder::new_after("YY-MM-DDT1H:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
+    let iter = SpecIteratorBuilder::new_after("YY-MM-DDT1H:00:00", WeekendSkipper::new(), dtm).build().unwrap();
     let results: Vec<NR<_>> = iter.take(3).collect().unwrap();
 
     assert_eq!(
@@ -540,14 +429,8 @@ fn test_new_after_non_aligned_cursor() {
         Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).unwrap()),
         "first result after 09:30 with 1H:00:00 should be 10:00"
     );
-    assert_eq!(
-        results[1],
-        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap())
-    );
-    assert_eq!(
-        results[2],
-        Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap())
-    );
+    assert_eq!(results[1], Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 11, 0, 0).unwrap()));
+    assert_eq!(results[2], Occurrence::Exact(tz.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap()));
 }
 
 /// `new_after` from before the daily fixed time: first result is same day
@@ -555,10 +438,7 @@ fn test_new_after_non_aligned_cursor() {
 fn test_new_after_same_day_future_time() {
     let tz = Utc;
     let dtm = tz.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap();
-    let iter =
-        SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
+    let iter = SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm).build().unwrap();
     let results: Vec<NR<_>> = iter.take(2).collect().unwrap();
 
     assert_eq!(results[0].observed().day(), 15);
@@ -570,10 +450,7 @@ fn test_new_after_same_day_future_time() {
 fn test_new_after_past_time_skips_to_next_day() {
     let tz = Utc;
     let dtm = tz.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
-    let iter =
-        SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap();
+    let iter = SpecIteratorBuilder::new_after("YY-MM-DDT11:00:00", WeekendSkipper::new(), dtm).build().unwrap();
     let results: Vec<NR<_>> = iter.take(2).collect().unwrap();
 
     assert_eq!(results[0].observed().day(), 16, "past daily time should skip to next day");
@@ -593,25 +470,18 @@ fn test_asis_time_on_date_gaps() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 31, 14, 30, 0).unwrap();
     let times = |anchor| {
-        let results: Vec<NR<_>> =
-            SpecIteratorBuilder::new_with_start("YY-1M-31LT_:_:_", WeekendSkipper::new(), start)
-                .with_time_anchor(anchor)
-                .build()
-                .unwrap()
-                .take(3)
-                .collect()
-                .unwrap();
+        let results: Vec<NR<_>> = SpecIteratorBuilder::new_with_start("YY-1M-31LT_:_:_", WeekendSkipper::new(), start)
+            .with_time_anchor(anchor)
+            .build()
+            .unwrap()
+            .take(3)
+            .collect()
+            .unwrap();
         assert_eq!(results[0], Occurrence::Exact(start));
         results.iter().map(|r| r.observed().naive_utc().to_string()).collect::<Vec<_>>()
     };
-    assert_eq!(
-        times(TimeAnchor::Start),
-        ["2025-01-31 14:30:00", "2025-02-28 14:30:00", "2025-03-31 14:30:00"]
-    );
-    assert_eq!(
-        times(TimeAnchor::Midnight),
-        ["2025-01-31 14:30:00", "2025-02-28 00:00:00", "2025-03-31 00:00:00"]
-    );
+    assert_eq!(times(TimeAnchor::Start), ["2025-01-31 14:30:00", "2025-02-28 14:30:00", "2025-03-31 14:30:00"]);
+    assert_eq!(times(TimeAnchor::Midnight), ["2025-01-31 14:30:00", "2025-02-28 00:00:00", "2025-03-31 00:00:00"]);
 }
 
 /// Spec 16: `YY-1M-15T1H:MM:SS` — hourly with minute/second carry
@@ -660,14 +530,10 @@ fn test_every_hour_includes_midnight_on_new_days() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 1, 1, 9, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 1, 3, 0, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-DDT1H:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-DDT1H:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     let jan1: Vec<_> = results.iter().filter(|r| r.observed().day() == 1).collect();
@@ -689,14 +555,10 @@ fn test_every_30min_includes_midnight_on_new_days() {
     let start = tz.with_ymd_and_hms(2025, 1, 1, 23, 0, 0).unwrap();
     // End at 00:31 so the 01:00 tick is excluded, giving exactly 4 results.
     let end = tz.with_ymd_and_hms(2025, 1, 2, 0, 31, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-MM-DDTHH:30M:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-MM-DDTHH:30M:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     // 23:00 (passthrough), 23:30, 00:00 (midnight — spec_delta fix), 00:30
@@ -722,14 +584,10 @@ fn test_biz_day_adjustment_does_not_skip_next_month() {
     let tz = Utc;
     let start = tz.with_ymd_and_hms(2025, 5, 1, 11, 0, 0).unwrap();
     let end = tz.with_ymd_and_hms(2025, 8, 1, 11, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~NBT11:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-31L~NBT11:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     // Find Jun 2 (the AdjustedLater for May 31)
@@ -758,14 +616,10 @@ fn test_ny_timezone_last_biz_day_11am() {
     let ny = New_York;
     let start = ny.with_ymd_and_hms(2024, 11, 29, 11, 0, 0).unwrap();
     let end = ny.with_ymd_and_hms(2025, 4, 30, 11, 0, 0).unwrap();
-    let iter = SpecIteratorBuilder::new_with_start(
-        "YY-1M-31L~NBT11:00:00",
-        WeekendSkipper::new(),
-        start,
-    )
-    .with_end(end)
-    .build()
-    .unwrap();
+    let iter = SpecIteratorBuilder::new_with_start("YY-1M-31L~NBT11:00:00", WeekendSkipper::new(), start)
+        .with_end(end)
+        .build()
+        .unwrap();
     let results: Vec<NR<_>> = iter.collect().unwrap();
 
     assert!(!results.is_empty());
@@ -793,13 +647,12 @@ fn occurrence_strings(results: &[NR<chrono_tz::Tz>]) -> Vec<String> {
 fn test_dst_gap_hourly_reports_shift_and_drops_duplicate() {
     let ny: chrono_tz::Tz = chrono_tz::America::New_York;
     let start = ny.with_ymd_and_hms(2025, 3, 9, 0, 0, 0).unwrap();
-    let results: Vec<NR<_>> =
-        SpecIteratorBuilder::new_with_start("YY-MM-DDT1H:00:00", WeekendSkipper::new(), start)
-            .build()
-            .unwrap()
-            .take(4)
-            .collect()
-            .unwrap();
+    let results: Vec<NR<_>> = SpecIteratorBuilder::new_with_start("YY-MM-DDT1H:00:00", WeekendSkipper::new(), start)
+        .build()
+        .unwrap()
+        .take(4)
+        .collect()
+        .unwrap();
     assert_eq!(
         occurrence_strings(&results),
         [
@@ -815,13 +668,12 @@ fn test_dst_gap_hourly_reports_shift_and_drops_duplicate() {
 fn test_dst_gap_daily_fixed_time_reports_shift() {
     let ny: chrono_tz::Tz = chrono_tz::America::New_York;
     let start = ny.with_ymd_and_hms(2025, 3, 8, 2, 30, 0).unwrap();
-    let results: Vec<NR<_>> =
-        SpecIteratorBuilder::new_with_start("YY-MM-DDT02:30:00", WeekendSkipper::new(), start)
-            .build()
-            .unwrap()
-            .take(3)
-            .collect()
-            .unwrap();
+    let results: Vec<NR<_>> = SpecIteratorBuilder::new_with_start("YY-MM-DDT02:30:00", WeekendSkipper::new(), start)
+        .build()
+        .unwrap()
+        .take(3)
+        .collect()
+        .unwrap();
     assert_eq!(
         occurrence_strings(&results),
         [
@@ -840,13 +692,12 @@ fn test_dst_gap_daily_fixed_time_reports_shift() {
 #[test]
 fn test_step_phase_is_stable_across_midnight() {
     let dtm = Utc.with_ymd_and_hms(2025, 1, 15, 19, 15, 0).unwrap();
-    let results: Vec<NR<_>> =
-        SpecIteratorBuilder::new_after("YY-MM-DDT2H:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap()
-            .take(4)
-            .collect()
-            .unwrap();
+    let results: Vec<NR<_>> = SpecIteratorBuilder::new_after("YY-MM-DDT2H:00:00", WeekendSkipper::new(), dtm)
+        .build()
+        .unwrap()
+        .take(4)
+        .collect()
+        .unwrap();
     let hours: Vec<_> = results.iter().map(|r| r.observed().hour()).collect();
     assert_eq!(hours, [21, 23, 1, 3]);
 }
@@ -902,13 +753,12 @@ fn test_elapsed_steps_visit_repeated_hour() {
 #[test]
 fn test_adjusted_days_keep_every_raw_date() {
     let dtm = Utc.with_ymd_and_hms(2025, 1, 10, 0, 0, 0).unwrap(); // Fri
-    let results: Vec<NR<_>> =
-        SpecIteratorBuilder::new_after("YY-MM-DD~PBT12H:00:00", WeekendSkipper::new(), dtm)
-            .build()
-            .unwrap()
-            .take(6)
-            .collect()
-            .unwrap();
+    let results: Vec<NR<_>> = SpecIteratorBuilder::new_after("YY-MM-DD~PBT12H:00:00", WeekendSkipper::new(), dtm)
+        .build()
+        .unwrap()
+        .take(6)
+        .collect()
+        .unwrap();
     let actual: Vec<_> = results.iter().map(|r| r.actual().format("%a %H").to_string()).collect();
     let observed: Vec<_> = results.iter().map(|r| r.observed().format("%a %H").to_string()).collect();
     assert_eq!(actual, ["Fri 12", "Sat 00", "Sat 12", "Sun 00", "Sun 12", "Mon 00"]);
@@ -918,13 +768,12 @@ fn test_adjusted_days_keep_every_raw_date() {
 #[test]
 fn test_end_is_inclusive_without_made_up_item() {
     let start = Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap();
-    let results: Vec<NR<_>> =
-        SpecIteratorBuilder::new_with_start("YY-MM-DDT1H:00:00", WeekendSkipper::new(), start)
-            .with_end(Utc.with_ymd_and_hms(2025, 1, 15, 11, 30, 0).unwrap())
-            .build()
-            .unwrap()
-            .collect()
-            .unwrap();
+    let results: Vec<NR<_>> = SpecIteratorBuilder::new_with_start("YY-MM-DDT1H:00:00", WeekendSkipper::new(), start)
+        .with_end(Utc.with_ymd_and_hms(2025, 1, 15, 11, 30, 0).unwrap())
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
     let hours: Vec<_> = results.iter().map(|r| r.observed().hour()).collect();
     assert_eq!(hours, [9, 10, 11]);
 }
@@ -933,15 +782,13 @@ fn test_end_is_inclusive_without_made_up_item() {
 #[test]
 fn test_with_end_spec() {
     let start = Utc.with_ymd_and_hms(2025, 1, 15, 9, 0, 0).unwrap();
-    let results: Vec<NR<_>> =
-        SpecIteratorBuilder::new_with_start("YY-MM-DDT4H:00:00", WeekendSkipper::new(), start)
-            .with_end_spec("YY-MM-16T09:00:00")
-            .build()
-            .unwrap()
-            .collect()
-            .unwrap();
-    let ticks: Vec<_> =
-        results.iter().map(|r| r.observed().format("%d %H").to_string()).collect();
+    let results: Vec<NR<_>> = SpecIteratorBuilder::new_with_start("YY-MM-DDT4H:00:00", WeekendSkipper::new(), start)
+        .with_end_spec("YY-MM-16T09:00:00")
+        .build()
+        .unwrap()
+        .collect()
+        .unwrap();
+    let ticks: Vec<_> = results.iter().map(|r| r.observed().format("%d %H").to_string()).collect();
     assert_eq!(ticks, ["15 09", "15 13", "15 17", "15 21", "16 01", "16 05", "16 09"]);
 }
 

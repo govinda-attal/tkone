@@ -22,24 +22,20 @@ pub(crate) fn join(parts: &[String]) -> String {
 ///   the length of the gap; a time inside an overlap (fall-back) takes the
 ///   earlier offset.
 /// - `Strict`: returns [`Error::AmbiguousLocalTime`] for any non-unique mapping.
-pub(crate) fn resolve_local<Tz: TimeZone>(
-    tz: &Tz,
-    dtm: NaiveDateTime,
-    policy: DstPolicy,
-) -> Result<DateTime<Tz>> {
+pub(crate) fn resolve_local<Tz: TimeZone>(tz: &Tz, dtm: NaiveDateTime, policy: DstPolicy) -> Result<DateTime<Tz>> {
     match tz.from_local_datetime(&dtm) {
         LocalResult::Single(dt) => Ok(dt),
         LocalResult::None => match policy {
             DstPolicy::Adjust => Ok(gap_shift(tz, dtm)?.1),
-            DstPolicy::Strict => Err(Error::AmbiguousLocalTime(format!(
-                "{dtm} does not exist in timezone (DST spring-forward gap)"
-            ))),
+            DstPolicy::Strict => {
+                Err(Error::AmbiguousLocalTime(format!("{dtm} does not exist in timezone (DST spring-forward gap)")))
+            }
         },
         LocalResult::Ambiguous(earliest, _) => match policy {
             DstPolicy::Adjust => Ok(earliest),
-            DstPolicy::Strict => Err(Error::AmbiguousLocalTime(format!(
-                "{dtm} is ambiguous in timezone (DST fall-back overlap)"
-            ))),
+            DstPolicy::Strict => {
+                Err(Error::AmbiguousLocalTime(format!("{dtm} is ambiguous in timezone (DST fall-back overlap)")))
+            }
         },
     }
 }
@@ -57,13 +53,10 @@ pub(crate) fn resolve_local<Tz: TimeZone>(
 fn gap_shift<Tz: TimeZone>(tz: &Tz, dtm: NaiveDateTime) -> Result<(DateTime<Tz>, DateTime<Tz>)> {
     // Walk back to the last local time before the gap; 15-minute steps over
     // 48 hours cover every gap in the tz database.
-    let before = (1..=48 * 4)
-        .find_map(|k| tz.from_local_datetime(&(dtm - Duration::minutes(15 * k))).latest())
-        .ok_or_else(|| {
-            Error::AmbiguousLocalTime(format!(
-                "{dtm} does not exist in timezone and no offset precedes the gap"
-            ))
-        })?;
+    let before =
+        (1..=48 * 4).find_map(|k| tz.from_local_datetime(&(dtm - Duration::minutes(15 * k))).latest()).ok_or_else(
+            || Error::AmbiguousLocalTime(format!("{dtm} does not exist in timezone and no offset precedes the gap")),
+        )?;
     let offset = before.offset().clone();
     let utc = dtm - Duration::seconds(i64::from(offset.fix().local_minus_utc()));
     Ok((DateTime::from_naive_utc_and_offset(utc, offset), tz.from_utc_datetime(&utc)))
@@ -121,9 +114,7 @@ pub struct WeekdayStartingMonday(pub Weekday);
 impl Ord for WeekdayStartingMonday {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Compare based on 0 (Mon) to 6 (Sun)
-        self.0
-            .num_days_from_monday()
-            .cmp(&other.0.num_days_from_monday())
+        self.0.num_days_from_monday().cmp(&other.0.num_days_from_monday())
     }
 }
 

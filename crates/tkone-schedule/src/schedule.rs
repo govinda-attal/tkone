@@ -293,6 +293,7 @@ impl<B: BizDayProcessor> Schedule<B> {
                         zone: self.zone(),
                         policy: self.options.0,
                         last: None,
+                        day: None,
                     })),
                 };
                 Ok(RuleStream { index, iter, pending: None, exhausted: false, last: None, batch: None })
@@ -350,8 +351,10 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
     /// each repayment, at 09:00). Its dates are the referred rule's
     /// *adjusted* dates; then its own one adjustment applies, on this
     /// schedule's business days. After the reference come an optional
-    /// adjustment and a fixed time, or `T_:_:_` for the referred slot's
-    /// time. The referred rule must not itself be derived.
+    /// adjustment and `T` with a time spec, read with the referred slot's
+    /// time as other rules' are read with the start: `T09:00:00`,
+    /// `T[09,13]:00:00` (two times a day), `T_:_:_` (the referred slot's
+    /// time). The referred rule must not itself be derived.
     ///
     /// ```rust
     /// use chrono::TimeZone;

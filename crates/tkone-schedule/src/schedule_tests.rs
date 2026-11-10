@@ -557,6 +557,37 @@ fn a_basis_has_no_slots_of_its_own() {
 }
 
 #[test]
+fn derived_rules_take_any_time_spec() {
+    let start = at(2026, 1, 1, 0, 0);
+    // Two times a day, two business days before each 15th (as moved).
+    let two = derived(start, "YY-MM-15~NBT12:00:00", "{basis}~2PT[09,13]:00:00");
+    assert_eq!(
+        first(&two, 4),
+        [
+            "Tue 13 Jan 09:00 derived",
+            "Tue 13 Jan 13:00 derived",
+            "Thu 12 Feb 09:00 derived",
+            "Thu 12 Feb 13:00 derived"
+        ]
+    );
+    // Every time on a derived date shares its adjustment and its basis.
+    let slots: Vec<Slot> = two.slots().unwrap().take(2).collect().unwrap();
+    assert!(slots.iter().all(|s| s.sources[0].basis == Some(at(2026, 1, 15, 12, 0))));
+    assert_eq!(slots[1].sources[0].actual, at(2026, 1, 15, 13, 0));
+    // `_` fields keep the basis slot's: its hour, then every 30 minutes.
+    let carried = derived(start, "YY-MM-15T12:00:00", "{basis}T_:[00,30]:00");
+    assert_eq!(first(&carried, 2), ["Thu 15 Jan 12:00 derived", "Thu 15 Jan 12:30 derived"]);
+    // A step: every 4 hours on the derived date, in phase with the basis slot.
+    let stepped = derived(start, "YY-MM-15T10:00:00", "{basis}~1PT4H:00:00");
+    assert_eq!(
+        first(&stepped, 3),
+        ["Wed 14 Jan 02:00 derived", "Wed 14 Jan 06:00 derived", "Wed 14 Jan 10:00 derived"]
+    );
+    agrees(&two, 40);
+    agrees(&stepped, 40);
+}
+
+#[test]
 fn derived_slots_follow_the_schedule_around_them() {
     // Exclusions match the actual date, the basis slot's date (D3): no
     // derived slot for the drawdown.
@@ -615,7 +646,7 @@ fn invalid_derived_rules() {
         (&[("p", "YY-MM-15T12:00:00", true), ("q", "YY-MM-01T12:00:00", false)], "no rule refers to it"),
         (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}/2WT09:00:00", false)], "only an adjustment"),
         (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2P", false)], "then `T` and a time"),
-        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2PT1H:00:00", false)], "a fixed time"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2PT25:00:00", false)], "the time"),
         (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~XXT09:00:00", false)], "the adjustment"),
         (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p~2PT09:00:00", false)], "closed by"),
     ];

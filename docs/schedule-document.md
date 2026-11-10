@@ -634,9 +634,12 @@ A reference within one document keeps everything else as it is:
   schedule. Anything that spans documents is the application's (D11).
 - **One level.** The referred rule must not itself be derived, so references
   cannot loop.
-- **A fixed time, or the basis slot's.** After the reference come an
-  optional adjustment and `T` with a fixed time (`09:00:00`) or `_:_:_`.
-  Several times a day (`T[09,13]:00:00`) are not taken.
+- **Any time spec, read from the basis slot's time.** After the reference
+  come an optional adjustment and `T` with a time spec, read with the basis
+  slot's time as an ordinary rule's is read with its start: `09:00:00`,
+  `[09,13]:00:00` (two slots a day), `_:_:_` (the basis slot's time),
+  `_:30:00` (its hour), `4H:00:00` (in phase with it). The adjustment applies
+  once per date; every time on that date shares it and its basis.
 - **A basis must be referred to, and needs an `id`.** An unreferred basis is
   refused: it would produce nothing, which is almost always a typo.
 - **Reach composes.** `slots_after(t)` reads the basis from far enough back:

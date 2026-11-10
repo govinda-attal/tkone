@@ -6,7 +6,7 @@
 //! before the repayment, after Modified Following" is written once, as
 //! two rules, without counting back from the unadjusted date.
 
-use chrono::{DateTime, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
@@ -22,8 +22,9 @@ pub(super) struct Reference {
     pub id: String,
     /// The adjustment, as a date spec with every date (`YY-MM-DD~2P`).
     pub adjustment: crate::date::Spec,
-    /// The time of day; `None` keeps the referred slot's (`T_:_:_`).
-    pub time: Option<NaiveTime>,
+    /// The times of day, read with the referred slot's time as the start's
+    /// is for other rules: `_:_:_` is that time, `[09,13]:00:00` two times.
+    pub time: crate::time::Spec,
 }
 
 impl Reference {
@@ -48,13 +49,7 @@ impl Reference {
         let adjustment = format!("YY-MM-DD{adjustment}")
             .parse::<crate::date::Spec>()
             .map_err(|e| invalid(&format!("the adjustment: {e}")))?;
-        let time = match time {
-            "_:_:_" => None,
-            time => Some(
-                NaiveTime::parse_from_str(time, "%H:%M:%S")
-                    .map_err(|_| invalid("a derived rule's time is a fixed time (`09:00:00`) or `_:_:_`"))?,
-            ),
-        };
+        let time = time.parse::<crate::time::Spec>().map_err(|e| invalid(&format!("the time: {e}")))?;
         Ok(Self { id: id.to_string(), adjustment, time })
     }
 
@@ -91,26 +86,49 @@ pub(super) struct Derived<B: BizDayProcessor> {
     /// The last actual time given: one referred date can come from several
     /// referred occurrences (`~NB` moves Saturday and Sunday to Monday).
     pub last: Option<DateTime<Tz>>,
+    /// The date whose times are being given, if any.
+    pub day: Option<Day>,
+}
+
+/// A referred slot's date, adjusted, and where its times have got to.
+#[derive(Debug)]
+pub(super) struct Day {
+    /// The referred slot.
+    from: DateTime<Tz>,
+    /// The derived date before adjustment: the referred slot's date.
+    actual: NaiveDate,
+    /// The derived date after it.
+    observed: NaiveDate,
+    /// The referred slot's time on the observed date: the time spec's anchor.
+    anchor: NaiveDateTime,
+    /// The last time given on the observed date, or just before it began.
+    local: NaiveDateTime,
 }
 
 impl<B: BizDayProcessor> Derived<B> {
     /// The next occurrence, with the referred slot's instant.
     pub fn next(&mut self) -> Result<Option<Derivation>> {
-        while let Some(basis) = self.basis.next()? {
-            let from = *basis.observed();
-            let local: NaiveDateTime = match self.reference.time {
-                Some(time) => from.date_naive().and_time(time),
-                None => from.naive_local(),
+        loop {
+            if self.day.is_none() && !self.next_day()? {
+                return Ok(None);
+            }
+            let day = self.day.as_mut().expect("set above");
+            let Some(next) = crate::time::next_after(&self.reference.time, day.anchor, day.local) else {
+                self.day = None;
+                continue;
             };
-            let Some(adjusted) = crate::date::adjust_one(&self.reference.adjustment, local, &self.bdp)? else {
-                continue; // `~SB`
-            };
-            let actual = resolve_local(&self.zone, *adjusted.actual(), self.policy)?;
+            if next.date() != day.observed {
+                self.day = None;
+                continue;
+            }
+            day.local = next;
+            let (from, at) = (day.from, next.time());
+            let actual = resolve_local(&self.zone, day.actual.and_time(at), self.policy)?;
+            let observed = resolve_local(&self.zone, next, self.policy)?;
             if self.last.is_some_and(|last| actual <= last) {
                 continue;
             }
             self.last = Some(actual);
-            let observed = resolve_local(&self.zone, *adjusted.observed(), self.policy)?;
             if let Some(zone) = self.bdp.time_zone() {
                 let code = self.bdp.code().unwrap_or_else(|| "the calendar".into());
                 crate::datetime::check_calendar_date(&code, &zone, &observed)?;
@@ -124,6 +142,29 @@ impl<B: BizDayProcessor> Derived<B> {
             };
             return Ok(Some((occurrence, from)));
         }
-        Ok(None)
+    }
+
+    /// Move to the next referred slot whose date the adjustment keeps
+    /// (`~SB` drops some); `false` when there are none.
+    fn next_day(&mut self) -> Result<bool> {
+        while let Some(basis) = self.basis.next()? {
+            let from = *basis.observed();
+            let date = from.date_naive();
+            let Some(adjusted) = crate::date::adjust_one(&self.reference.adjustment, from.naive_local(), &self.bdp)?
+            else {
+                continue; // `~SB`
+            };
+            let observed = adjusted.observed().date();
+            let midnight = observed.and_time(NaiveTime::MIN);
+            self.day = Some(Day {
+                from,
+                actual: date,
+                observed,
+                anchor: observed.and_time(from.naive_local().time()),
+                local: midnight - Duration::nanoseconds(1),
+            });
+            return Ok(true);
+        }
+        Ok(false)
     }
 }

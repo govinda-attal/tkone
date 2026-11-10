@@ -38,9 +38,18 @@ exclusions. See the
 
 | | |
 |---|---|
-| `doc.slots(after=None)` | an iterator of `Slot`, strictly after `after` (an aware `datetime`), or from the start |
+| `doc.slots(after=None)` | an iterator of `Slot`, strictly after `after`, or from the start |
 | `doc.take(n, after=None)` | the first `n`, as a list |
+| `doc.between(start, end)` | the slots from `start` to `end`, both included; always ends |
+| `doc.periods(start=None, end=None)` | an iterator of `Period`, from one slot to the next (see below) |
+| `doc.moved_before_start()` | slots an adjustment moved before the start, and so dropped: for a loan, a payment that never happens |
+| `doc.start`, `doc.until` | the start, and the end if any |
 | `doc.to_json()` | the document as JSON |
+
+Times passed in are aware `datetime`s with any `tzinfo` (`zoneinfo.ZoneInfo`
+or `datetime.timezone`); a naive one raises `ScheduleError`.
+`Document(doc, calendars=[...])` uses the given `Calendar`s for their codes
+instead of the built-in ones; see [Testing](#testing-with-schedules).
 
 A `Slot` has `at` (an aware `datetime`) and `sources`: the rules that
 produced it, each a `Source` with `rule_id` and `actual`, the time the rule
@@ -62,6 +71,68 @@ for slot in doc.slots():
 # 2026-03-31 → 2026-03-31
 ```
 
+### Testing with schedules
+
+To check a loan's interest and repayments, step through its **periods**. Each
+has `start` and `end` boundaries with both times: `at`, when it happens, and
+`actual`, when the rule put it before adjustment. Which one interest counts is
+the contract's choice, and the day count is yours. A **fixed calendar** never
+changes, so expected dates don't break when holiday data is updated, and
+`with_days_off` simulates a closure at short notice. A **timeline** reads
+several documents as one, moment by moment.
+
+```python
+import datetime as dt
+from zoneinfo import ZoneInfo
+from tkone.calendar import Calendar
+from tkone.schedule import Document, Timeline
+
+london = ZoneInfo("Europe/London")
+loan = {
+    "version": 1, "time_zone": "Europe/London", "calendar": "GBLO",
+    "start": "2026-01-15", "until": "2026-04-15",
+    "rules": [{"rule": "YY-MM-15~MFT00:00:00"}],
+    "exclude": {"dates": ["2026-01-15"]},     # the drawdown is not a repayment
+}
+# A calendar that never changes: weekends, and Monday 16 March off.
+test = Calendar.fixed("GBLO", dt.date(2026, 1, 1), dt.date(2026, 12, 31), days_off=[dt.date(2026, 3, 16)])
+doc = Document(loan, calendars=[test])
+assert doc.moved_before_start() == []
+for p in doc.periods():
+    days = (p.end.actual.date() - p.start.actual.date()).days
+    print(p.start.at.date(), "→", p.end.at.date(), f"{days} days")
+# 2026-01-15 → 2026-02-16 31 days
+# 2026-02-16 → 2026-03-17 28 days
+# 2026-03-17 → 2026-04-15 31 days
+
+# Rates fixed two business days before each period starts, derived from the
+# boundaries as adjusted.
+fixings = Document({**loan, "start": "2026-01-01", "until": "2026-03-31",
+                    "rules": [{"id": "boundary", "rule": "YY-MM-15~MFT00:00:00", "basis": True},
+                              {"rule": "{boundary}~2PT11:00:00"}], "exclude": {}}, calendars=[test])
+timeline = Timeline([("fixing", fixings), ("repayment", doc)])
+for m in timeline.between(dt.datetime(2026, 1, 1, tzinfo=london), dt.datetime(2026, 3, 31, tzinfo=london)):
+    print(m.at.strftime("%a %d %b %H:%M"), [e.key for e in m.entries])
+# Tue 13 Jan 11:00 ['fixing']
+# Thu 12 Feb 11:00 ['fixing']
+# Mon 16 Feb 00:00 ['repayment']
+# Thu 12 Mar 11:00 ['fixing']
+# Tue 17 Mar 00:00 ['repayment']
+```
+
+| | |
+|---|---|
+| `Period` | `start`, `end` (`Boundary`: `at`, `actual`) and `slot`, the slot that ends it |
+| `Calendar.fixed(code, valid_from, valid_until, weekend=("Sat", "Sun"), days_off=())` | a calendar written out in full |
+| `calendar.with_days_off(dates)` | the same calendar with more days off |
+| `calendar.holidays_between(start, end)` | a calendar's days off, to copy into a fixed one |
+| `Timeline([(key, doc), ...]).between(start, end)` | an iterator of `Moment`: `at`, and `entries` in the order given, each an `Entry` with `key`, `slot` and `since` (the document's previous boundary) |
+
+[`tests/test_loan.py`](tests/test_loan.py) steps a ten-year loan through
+this way, with a floating rate on a second calendar. The design is in
+[timelines](https://github.com/govinda-attal/tkone/blob/main/docs/timeline.md)
+and [a loan's life](https://github.com/govinda-attal/tkone/blob/main/docs/loan-lifecycle.md).
+
 ### `Schedule`: one rule
 
 `Schedule(spec)` takes one rule: a date spec (`YY-MM-BD#3`), a time spec
@@ -75,8 +146,8 @@ for slot in doc.slots():
 | `s.occurrences(after=None, calendar=None, tz=None)` | an iterator of `Occurrence` |
 | `s.take(n, …)` | the first `n`, as a list |
 
-- **`after`**: an aware `datetime`; occurrences strictly after it. Without it,
-  from now.
+- **`after`**: an aware `datetime` (any `tzinfo`); occurrences strictly after
+  it. Without it, from now.
 - **`calendar`**: a `tkone.calendar.Calendar` or a code. Without it, weekends
   only.
 - **`tz`**: read the rule in this IANA zone (UTC if none).

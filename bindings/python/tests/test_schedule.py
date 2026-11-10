@@ -130,3 +130,17 @@ def test_derived_rules():
     assert report.at.isoformat() == "2026-05-27T09:00:00+01:00"
     assert report.sources[0].basis.isoformat() == "2026-05-29T12:00:00+01:00"
     assert report.sources[0].rule_id == "report"
+
+
+def test_any_aware_datetime():
+    from zoneinfo import ZoneInfo
+
+    s = Schedule("YY-MM-15~NB")
+    zoned = dt.datetime(2026, 1, 1, tzinfo=ZoneInfo("Europe/London"))
+    fixed = dt.datetime(2026, 1, 1, tzinfo=UTC)
+    assert dates(s.take(2, after=zoned, calendar="GBLO")) == dates(s.take(2, after=fixed, calendar="GBLO"))
+    assert [x.at for x in Document(EOD).take(2, after=dt.datetime(2026, 11, 26, tzinfo=ZoneInfo("Asia/Tokyo")))] == [
+        x.at for x in Document(EOD).take(2, after=dt.datetime(2026, 11, 25, 15, tzinfo=UTC))
+    ]
+    with pytest.raises(ScheduleError, match="no time zone"):
+        s.take(1, after=dt.datetime(2026, 1, 1))

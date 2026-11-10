@@ -13,17 +13,31 @@ Document = _native.Document
 Slot = _native.Slot
 Source = _native.Source
 Slots = _native.Slots
+Boundary = _native.Boundary
+Period = _native.Period
+Periods = _native.Periods
+Timeline = _native.Timeline
+Moment = _native.Moment
+Entry = _native.Entry
+Moments = _native.Moments
 ScheduleError = _native.ScheduleError
 describe = _native.describe
 
 __all__ = [
+    "Boundary",
     "Document",
+    "Entry",
+    "Moment",
+    "Moments",
     "Occurrence",
     "Occurrences",
+    "Period",
+    "Periods",
     "Schedule",
     "ScheduleError",
     "Slot",
     "Slots",
     "Source",
+    "Timeline",
     "describe",
 ]

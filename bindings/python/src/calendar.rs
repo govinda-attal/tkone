@@ -33,12 +33,44 @@ impl Holiday {
     }
 }
 
+impl Holiday {
+    fn of(h: &tkone_calendar::Holiday) -> Self {
+        Holiday { name: h.name.clone(), actual: h.actual, observed: h.observed }
+    }
+}
+
 #[pymethods]
 impl Calendar {
     /// The calendar with this code; codes joined with `+` give a joint one.
     #[new]
     pub(crate) fn new(code: &str) -> PyResult<Self> {
         Calendars::builtin().get(code).map(Self).map_err(calendar_err)
+    }
+
+    /// A calendar written out in full, for tests: the dates from `valid_from`
+    /// to `valid_until`, with `weekend` (day names, `"Sat"` or `"Saturday"`)
+    /// and `days_off` as the only days that are not business days. It never
+    /// changes, unlike the built-in data.
+    #[staticmethod]
+    #[pyo3(signature = (code, valid_from, valid_until, weekend=vec!["Sat".to_string(), "Sun".to_string()], days_off=vec![]))]
+    fn fixed(
+        code: &str,
+        valid_from: NaiveDate,
+        valid_until: NaiveDate,
+        weekend: Vec<String>,
+        days_off: Vec<NaiveDate>,
+    ) -> PyResult<Self> {
+        let weekend = weekend
+            .iter()
+            .map(|day| day.parse::<chrono::Weekday>().map_err(|_| CalendarError::new_err(format!("`{day}` is not a day of the week"))))
+            .collect::<PyResult<Vec<_>>>()?;
+        tkone_calendar::Calendar::fixed(code, valid_from..=valid_until, &weekend, days_off).map(Self).map_err(calendar_err)
+    }
+
+    /// This calendar with `dates` as days off too: a closure at short notice.
+    /// The code and dates covered stay the same.
+    fn with_days_off(&self, dates: Vec<NaiveDate>) -> PyResult<Self> {
+        self.0.with_days_off(dates).map(Self).map_err(calendar_err)
     }
 
     #[getter]
@@ -82,10 +114,12 @@ impl Calendar {
     }
     /// The holidays whose day off is in `year`.
     fn holidays(&self, year: i32) -> Vec<Holiday> {
-        self.0
-            .holidays(year)
-            .map(|h| Holiday { name: h.name.clone(), actual: h.actual, observed: h.observed })
-            .collect()
+        self.0.holidays(year).map(Holiday::of).collect()
+    }
+    /// The holidays whose day off is from `start` to `end`, inclusive: to copy
+    /// a built-in calendar's days off into a fixed one.
+    fn holidays_between(&self, start: NaiveDate, end: NaiveDate) -> Vec<Holiday> {
+        self.0.holidays_between(start, end).map(Holiday::of).collect()
     }
     fn __repr__(&self) -> String {
         format!("Calendar({:?})", self.0.code())
@@ -97,7 +131,6 @@ impl Calendar {
 fn calendar_codes() -> Vec<String> {
     Calendars::builtin().codes().map(str::to_string).collect()
 }
-
 
 /// Registers `tkone.calendar` on `parent`.
 pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -24,6 +24,32 @@ fn schedule_err(e: tkone_schedule::Error) -> PyErr {
     ScheduleError::new_err(e.to_string())
 }
 
+// ── Instants ─────────────────────────────────────────────────────────────────
+
+/// An aware `datetime` with any `tzinfo` (`zoneinfo.ZoneInfo`,
+/// `datetime.timezone`, …), as an instant. A naive one is refused: it has no
+/// instant.
+#[derive(Clone, Copy)]
+struct Aware(DateTime<FixedOffset>);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for Aware {
+    type Error = PyErr;
+
+    fn extract(obj: pyo3::Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if obj.getattr("tzinfo")?.is_none() || obj.call_method0("utcoffset")?.is_none() {
+            return Err(ScheduleError::new_err("a datetime with no time zone has no instant; give it a tzinfo"));
+        }
+        let utc = obj.py().import("datetime")?.getattr("timezone")?.getattr("utc")?;
+        Ok(Aware(obj.call_method1("astimezone", (utc,))?.extract()?))
+    }
+}
+
+impl Aware {
+    fn in_zone(self, zone: &chrono_tz::Tz) -> DateTime<chrono_tz::Tz> {
+        self.0.with_timezone(zone)
+    }
+}
+
 // ── Business days ────────────────────────────────────────────────────────────
 
 /// Weekends only, or a holiday calendar.
@@ -219,7 +245,7 @@ impl Schedule {
     #[pyo3(signature = (after=None, calendar=None, tz=None))]
     fn occurrences(
         &self,
-        after: Option<DateTime<FixedOffset>>,
+        after: Option<Aware>,
         calendar: Option<&Bound<'_, PyAny>>,
         tz: Option<&str>,
     ) -> PyResult<Occurrences> {
@@ -227,7 +253,7 @@ impl Schedule {
             Some(name) => name.parse::<chrono_tz::Tz>().map_err(|_| ScheduleError::new_err(format!("`{name}` is not an IANA time zone")))?,
             None => chrono_tz::UTC,
         };
-        let after = after.map(|a| a.with_timezone(&zone)).unwrap_or_else(|| Utc::now().with_timezone(&zone));
+        let after = after.map(|a| a.in_zone(&zone)).unwrap_or_else(|| Utc::now().with_timezone(&zone));
         let inner = match self.kind {
             Kind::Time => {
                 if calendar.is_some() {
@@ -255,7 +281,7 @@ impl Schedule {
     fn take(
         &self,
         n: usize,
-        after: Option<DateTime<FixedOffset>>,
+        after: Option<Aware>,
         calendar: Option<&Bound<'_, PyAny>>,
         tz: Option<&str>,
     ) -> PyResult<Vec<Occurrence>> {
@@ -338,34 +364,152 @@ impl Slots {
     }
 }
 
+/// One end of a `Period`: when it happens (`at`, adjusted) and when its rule
+/// put it (`actual`, unadjusted).
+#[pyclass(module = "tkone.schedule", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct Boundary {
+    at: DateTime<chrono_tz::Tz>,
+    actual: DateTime<chrono_tz::Tz>,
+}
+
+#[pymethods]
+impl Boundary {
+    fn __repr__(&self) -> String {
+        format!("Boundary({}, actual={})", self.at.to_rfc3339(), self.actual.to_rfc3339())
+    }
+}
+
+impl From<tkone_schedule::schedule::Boundary> for Boundary {
+    fn from(b: tkone_schedule::schedule::Boundary) -> Self {
+        Self { at: b.at, actual: b.actual }
+    }
+}
+
+/// The time from one boundary to the next slot: the first period starts at
+/// the document's start.
+#[pyclass(module = "tkone.schedule", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct Period {
+    start: Boundary,
+    end: Boundary,
+    /// The slot that ends it.
+    slot: Slot,
+}
+
+#[pymethods]
+impl Period {
+    fn __repr__(&self) -> String {
+        format!("Period({} -> {})", self.start.at.to_rfc3339(), self.end.at.to_rfc3339())
+    }
+}
+
+/// An iterator over a document's periods.
+#[pyclass(module = "tkone.schedule")]
+struct Periods(tkone_schedule::schedule::Periods<BusinessDays<tkone_calendar::Calendar>>);
+
+#[pymethods]
+impl Periods {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<Period>> {
+        let next = self.0.next().map_err(schedule_err)?;
+        Ok(next.map(|p| Period { start: p.start.into(), end: p.end.into(), slot: p.slot.into() }))
+    }
+}
+
 /// A schedule document: rules with their start, time zone, calendar (a
 /// `tkone.calendar` code), end, count and exclusions. Built from a `dict`
 /// or a JSON string; read YAML with a YAML library first.
+///
+/// `calendars`: `Calendar`s to use for their codes instead of the built-in
+/// ones, such as a `Calendar.fixed("GBLO", ...)` in a test.
 #[pyclass(module = "tkone.schedule", frozen)]
 struct Document {
     doc: ScheduleDoc,
     schedule: DocSchedule,
 }
 
+impl Document {
+    fn zoned(&self, t: Aware) -> DateTime<chrono_tz::Tz> {
+        t.in_zone(&self.schedule.zone())
+    }
+}
+
 #[pymethods]
 impl Document {
     #[new]
-    fn new(doc: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (doc, calendars=vec![]))]
+    fn new(doc: &Bound<'_, PyAny>, calendars: Vec<Calendar>) -> PyResult<Self> {
         let json: String = match doc.extract::<String>() {
             Ok(text) => text,
             Err(_) => doc.py().import("json")?.call_method1("dumps", (doc,))?.extract()?,
         };
         let doc: ScheduleDoc = serde_json::from_str(&json).map_err(|e| ScheduleError::new_err(e.to_string()))?;
-        let schedule = doc.schedule(Calendars::builtin()).map_err(schedule_err)?;
+        let schedule = if calendars.is_empty() {
+            doc.schedule(Calendars::builtin())
+        } else {
+            let mut set = Calendars::builtin().clone();
+            for calendar in calendars {
+                set.insert(calendar.0).map_err(crate::calendar::calendar_err)?;
+            }
+            doc.schedule(&set)
+        }
+        .map_err(schedule_err)?;
         Ok(Self { doc, schedule })
+    }
+
+    /// The start: the anchor, and the earliest a slot can be.
+    #[getter]
+    fn start(&self) -> DateTime<chrono_tz::Tz> {
+        *self.schedule.start()
+    }
+
+    /// The last instant a slot can be at, if any.
+    #[getter]
+    fn until(&self) -> Option<DateTime<chrono_tz::Tz>> {
+        self.schedule.until().copied()
+    }
+
+    /// The slots from `start` to `end`, both included. Always ends, even
+    /// with no `until`.
+    fn between(&self, start: Aware, end: Aware) -> PyResult<Slots> {
+        let slots = self.schedule.slots_between(self.zoned(start)..=self.zoned(end)).map_err(schedule_err)?;
+        Ok(Slots(slots))
+    }
+
+    /// The periods, from one slot to the next: each with `start` and `end`
+    /// boundaries, adjusted (`at`) and unadjusted (`actual`). Without `end`,
+    /// every period (which ends only if the document does); with it, those
+    /// that end from `start` (default: the document's start) to `end`.
+    #[pyo3(signature = (start=None, end=None))]
+    fn periods(&self, start: Option<Aware>, end: Option<Aware>) -> PyResult<Periods> {
+        let periods = match (start, end) {
+            (None, None) => self.schedule.periods(),
+            (start, Some(end)) => {
+                let start = start.map(|s| self.zoned(s)).unwrap_or(*self.schedule.start());
+                self.schedule.periods_between(start..=self.zoned(end))
+            }
+            (Some(_), None) => return Err(ScheduleError::new_err("periods from a `start` need an `end`")),
+        };
+        Ok(Periods(periods.map_err(schedule_err)?))
+    }
+
+    /// The slots a rule put on or after the start that an adjustment moved
+    /// before it, and so are dropped. For a loan, a payment that never
+    /// happens; a test can require there are none.
+    fn moved_before_start(&self) -> PyResult<Vec<Slot>> {
+        Ok(self.schedule.moved_before_start().map_err(schedule_err)?.into_iter().map(Slot::from).collect())
     }
 
     /// The slots, in order: strictly after `after` (an aware `datetime`), or
     /// from the start.
     #[pyo3(signature = (after=None))]
-    fn slots(&self, after: Option<DateTime<FixedOffset>>) -> PyResult<Slots> {
+    fn slots(&self, after: Option<Aware>) -> PyResult<Slots> {
         let slots = match after {
-            Some(after) => self.schedule.slots_after(&after.with_timezone(&self.schedule.zone())),
+            Some(after) => self.schedule.slots_after(&self.zoned(after)),
             None => self.schedule.slots(),
         };
         Ok(Slots(slots.map_err(schedule_err)?))
@@ -373,7 +517,7 @@ impl Document {
 
     /// The first `n` slots, as a list (see `slots`).
     #[pyo3(signature = (n, after=None))]
-    fn take(&self, n: usize, after: Option<DateTime<FixedOffset>>) -> PyResult<Vec<Slot>> {
+    fn take(&self, n: usize, after: Option<Aware>) -> PyResult<Vec<Slot>> {
         let mut iter = self.slots(after)?;
         let mut out = Vec::new();
         while out.len() < n {
@@ -395,6 +539,98 @@ impl Document {
     }
 }
 
+// ── Timelines ────────────────────────────────────────────────────────────────
+
+/// One document's slot in a `Moment`, with `since`: the boundary before it
+/// (its previous slot, or the document's start).
+#[pyclass(module = "tkone.schedule", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct Entry {
+    key: String,
+    slot: Slot,
+    since: Boundary,
+}
+
+#[pymethods]
+impl Entry {
+    fn __repr__(&self) -> String {
+        format!("Entry({:?}, {})", self.key, self.slot.at.to_rfc3339())
+    }
+}
+
+/// One instant on a `Timeline`, with every document that has a slot at it,
+/// in the order they were added.
+#[pyclass(module = "tkone.schedule", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct Moment {
+    at: DateTime<chrono_tz::Tz>,
+    entries: Vec<Entry>,
+}
+
+#[pymethods]
+impl Moment {
+    fn __repr__(&self) -> String {
+        let keys: Vec<_> = self.entries.iter().map(|e| e.key.as_str()).collect();
+        format!("Moment({}, {})", self.at.to_rfc3339(), keys.join("+"))
+    }
+}
+
+/// An iterator over a timeline's moments.
+#[pyclass(module = "tkone.schedule")]
+struct Moments(tkone_schedule::schedule::Moments<String, BusinessDays<tkone_calendar::Calendar>>);
+
+#[pymethods]
+impl Moments {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<Moment>> {
+        let next = self.0.next().map_err(schedule_err)?;
+        Ok(next.map(|m| Moment {
+            at: m.at,
+            entries: m
+                .entries
+                .into_iter()
+                .map(|e| Entry { key: e.key, slot: e.slot.into(), since: e.since.into() })
+                .collect(),
+        }))
+    }
+}
+
+/// Several documents read as one: `Timeline([("fixing", fixings),
+/// ("repayment", repayments)])`. Each keeps its own start, zone, calendar
+/// and end. Within a moment, entries come in the order given here.
+#[pyclass(module = "tkone.schedule", frozen)]
+struct Timeline(tkone_schedule::schedule::Timeline<String, BusinessDays<tkone_calendar::Calendar>>);
+
+#[pymethods]
+impl Timeline {
+    #[new]
+    fn new(lanes: Vec<(String, PyRef<'_, Document>)>) -> Self {
+        let timeline = lanes
+            .iter()
+            .fold(tkone_schedule::schedule::Timeline::new(), |t, (key, doc)| t.add(key.clone(), doc.schedule.clone()));
+        Self(timeline)
+    }
+
+    /// The keys, in the order given.
+    #[getter]
+    fn keys(&self) -> Vec<String> {
+        self.0.keys().cloned().collect()
+    }
+
+    /// The moments from `start` to `end`, both included. Always ends.
+    fn between(&self, start: Aware, end: Aware) -> PyResult<Moments> {
+        let utc = |t: Aware| t.in_zone(&chrono_tz::UTC);
+        Ok(Moments(self.0.between(utc(start)..=utc(end)).map_err(schedule_err)?))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Timeline({:?})", self.keys())
+    }
+}
+
 /// The spec in plain English.
 #[pyfunction]
 fn describe(spec: &str) -> PyResult<String> {
@@ -412,6 +648,13 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Slot>()?;
     m.add_class::<Source>()?;
     m.add_class::<Slots>()?;
+    m.add_class::<Boundary>()?;
+    m.add_class::<Period>()?;
+    m.add_class::<Periods>()?;
+    m.add_class::<Timeline>()?;
+    m.add_class::<Moment>()?;
+    m.add_class::<Entry>()?;
+    m.add_class::<Moments>()?;
     m.add_function(wrap_pyfunction!(describe, &m)?)?;
     let err = py.get_type::<ScheduleError>();
     err.setattr("__module__", "tkone.schedule")?;

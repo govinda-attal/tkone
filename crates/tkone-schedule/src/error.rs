@@ -17,7 +17,14 @@ pub enum Error {
     InvalidSchedule(String),
     #[error("invalid end spec")]
     InvalidEndSpec,
-    #[error("schedule iterator did not converge")]
+    /// A rule found no date within its search limit. A rule that can never
+    /// happen whatever the start (`YY-02-30`) is refused when it is read;
+    /// one that never happens from this start is reported here (`4Y-02-29`
+    /// counted from a year that is not a leap year).
+    #[error(
+        "the rule found no date within its search limit: it may never happen from this start \
+         (`4Y-02-29` counted from a year that is not a leap year never does)"
+    )]
     IteratorNotConverged,
     #[error("ambiguous or non-existent local time in target timezone: {0}")]
     AmbiguousLocalTime(String),

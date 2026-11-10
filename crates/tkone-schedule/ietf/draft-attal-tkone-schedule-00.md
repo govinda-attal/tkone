@@ -243,6 +243,7 @@ A schedule that matches the grammar is still rejected if any of these rules is b
 | A year or month step (`nY`, `nM`) is at least 1 | `0Y-MM-01`, `YY-0M-01` |
 | Months are 1–12 | `YY-13-01`, `YY-[01-13]-01` |
 | Days of the month are 1–31 | `YY-MM-32`, `YY-MM-[00-05]` |
+| A day of the month, with no `L`, `N` or `O`, exists in at least one of the listed months and years (a 29th of February needs a leap year) | `YY-02-30`, `YY-[04,06]-31`, `2027-02-29` |
 | A day step (`nD`, `nBD`, `nWD`) is at least 1 | `YY-MM-0D` |
 | A weekday occurrence (`DAY#n`, `DAY#nL`) is 1–5 | `YY-MM-MON#0`, `YY-MM-FRI#6` |
 | A business-day position (`BD#n`, `BD#nL`, `BD#[…]`) is 1–23 | `YY-MM-BD#0`, `YY-MM-BD#24` |

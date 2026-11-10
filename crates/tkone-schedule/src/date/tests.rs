@@ -1086,13 +1086,28 @@ fn test_step_rolls_across_adjacent_eligible_months() {
 
 #[test]
 fn test_never_matching_specs_error() {
-    let tz = chrono_tz::America::New_York;
-    let after = tz.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
-    for spec in ["YY-02-30", "[2025,2026]-02-29"] {
-        let mut iter = SpecIteratorBuilder::new_after(spec, WeekendSkipper::new(), after).build().unwrap();
-        let result = iter.next();
-        assert!(matches!(result, Err(Error::IteratorNotConverged) | Ok(None)), "spec: {spec}, got {result:?}");
+    // Never, whatever the start: refused when the rule is read.
+    for (spec, why) in [
+        ("YY-02-30", "February never has a 30th"),
+        ("YY-[04,06]-31", "neither April nor June has a 31st"),
+        ("YY-02-[28,30]", "February never has a 30th"),
+        ("2027-02-29", "2027 is not one"),
+        ("[2025,2026]-02-29", "none of 2025, 2026 is"),
+    ] {
+        let err = spec.parse::<crate::date::Spec>().unwrap_err().to_string();
+        assert!(err.contains(why) && err.contains("L` is the last day"), "{spec}: {err}");
     }
+    // Possible somewhere: accepted.
+    for spec in ["YY-02-29", "[2024,2025]-02-29", "YY-[02,04]-30", "YY-02-30L", "2027-02-29N", "YY-1M-31", "YY-MM-31"] {
+        assert!(spec.parse::<crate::date::Spec>().is_ok(), "{spec}");
+    }
+    // Never from this start: found while iterating. Every 4 years from
+    // 2025 is 2025, 2029, 2033, …: never a leap year.
+    let after = chrono_tz::America::New_York.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+    let mut iter = SpecIteratorBuilder::new_after("4Y-02-29", WeekendSkipper::new(), after).build().unwrap();
+    let err = iter.next().unwrap_err();
+    assert!(matches!(err, Error::IteratorNotConverged), "{err:?}");
+    assert!(err.to_string().contains("may never happen from this start"));
 }
 
 // ---------------------------------------------------------------------------

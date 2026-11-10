@@ -197,8 +197,9 @@ pub enum WeekdayOption {
 /// For example, day 31 in February or day 29 in a non-leap-year February.
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub enum LastDayOption {
-    /// No special handling; the day is clamped to the last valid day of the
-    /// month automatically by the calendar. Default.
+    /// No special handling: a month without the day has no occurrence
+    /// (`YY-MM-31` skips April). A rule whose day exists in none of its
+    /// months is refused when it is read (`YY-02-30`). Default.
     #[default]
     NA,
     /// Clamp to the last day of the month and emit a [`crate::Occurrence::Exact`]
@@ -733,6 +734,74 @@ fn validate_cycle(what: &str, every: u32, positions: &BTreeSet<u32>) -> core::re
     Ok(())
 }
 
+const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// Fails when a listed day of the month never exists in the listed months
+/// and years: `YY-02-30`, `YY-[04,06]-31`, `2027-02-29`. Such a rule would
+/// produce nothing (or never converge), so it is refused while the rule is
+/// read. A month or year cycle that depends on the start (`12M`, `4Y`) is
+/// not judged here.
+fn days_exist(spec: &Spec, days: &BTreeSet<u32>) -> core::result::Result<(), String> {
+    let Cycle::Values(months) = &spec.months else {
+        return Ok(());
+    };
+    let leap = |y: u32| i32::try_from(y).ok().and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 2, 29)).is_some();
+    let fixed_years = match &spec.years {
+        Cycle::Values(years) => Some(years),
+        _ => None,
+    };
+    let can_be_leap = fixed_years.is_none_or(|years| years.iter().any(|y| leap(*y)));
+    let length = |m: u32| match m {
+        2 if can_be_leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    let longest = months.iter().map(|m| length(*m)).max().unwrap_or(31);
+    let Some(day) = days.iter().copied().find(|d| *d > longest) else {
+        return Ok(());
+    };
+    let names: Vec<&str> = months.iter().map(|m| MONTH_NAMES[*m as usize - 1]).collect();
+    let ordinal = match day {
+        29 => "29th",
+        30 => "30th",
+        _ => "31st",
+    };
+    if day == 29 && months.iter().all(|m| *m == 2) {
+        let years: Vec<String> = fixed_years.into_iter().flatten().map(u32::to_string).collect();
+        let which = match years.as_slice() {
+            [one] => format!("{one} is not one"),
+            _ => format!("none of {} is", years.join(", ")),
+        };
+        return Err(format!(
+            "February has a 29th only in leap years, and {which}: the rule never happens \
+             (`29L` is the last day of February, `29N` the day after it)"
+        ));
+    }
+    let months = match names.as_slice() {
+        [one] => format!("{one} never has"),
+        [rest @ .., last] => format!("neither {} nor {last} has", rest.join(", ")),
+        [] => unreachable!("a month list is never empty"),
+    };
+    Err(format!(
+        "{months} a {ordinal}: the rule never happens \
+         (`{day}L` is the last day of the month, `{day}N` the day after it)"
+    ))
+}
+
 fn validate(spec: &Spec) -> core::result::Result<(), String> {
     if let Cycle::Positions { every, positions } = &spec.years {
         validate_cycle("year", *every, positions)?;
@@ -772,9 +841,12 @@ fn validate(spec: &Spec) -> core::result::Result<(), String> {
     }
     match &spec.days {
         DayCycle::NextNth(0, _) => return Err("day step must be at least 1".into()),
-        DayCycle::OnDays { days, .. } => {
+        DayCycle::OnDays { days, option } => {
             if let Some(d) = days.iter().find(|d| !(1..=31).contains(*d)) {
                 return Err(format!("day {d} is out of range 1-31"));
+            }
+            if *option == LastDayOption::NA {
+                days_exist(spec, days)?;
             }
         }
         DayCycle::OnWeekDays { option: WeekdayOption::Starting(Some(n)) | WeekdayOption::Ending(Some(n)), .. }

@@ -1387,7 +1387,7 @@ All three handle the case where the target day does not exist in a given month:
 
 Specs with finite year sets (`2025-MM-01`, `[2025,2026]-MM-15`) terminate once all valid dates are exhausted. Callers should handle `None` from the iterator.
 
-Out-of-range values (month `13`, day `32`, `FRI#6`, `BD#24`, step `0M` / `0D`) are rejected when parsing with `Error::InvalidDateSpec`. Specs that parse but can never match (`YY-02-30`) return `Error::IteratorNotConverged` after a bounded search instead of looping forever.
+Out-of-range values (month `13`, day `32`, `FRI#6`, `BD#24`, step `0M` / `0D`) are rejected when parsing with `Error::InvalidDateSpec`. A day that exists in none of the listed months and years (`YY-02-30`, `YY-[04,06]-31`, `2027-02-29`) is rejected the same way, with a message saying why and what to write instead. A rule that never matches only from a particular start (`4Y-02-29` counted from a year that is not a leap year) returns `Error::IteratorNotConverged` after a bounded search instead of looping forever.
 
 ### Daylight saving time
 
@@ -1448,15 +1448,17 @@ The following combinations silently skip dates, produce no results, end in an er
 
 ---
 
-### `YY-02-30`, `YY-02-31` — Fixed day that never exists in February (without overflow suffix)
+### `YY-02-30`, `YY-02-31`, `2027-02-29` — A day that never exists (without overflow suffix)
 
-**Examples:** `YY-02-30`, `YY-02-31`
+**Examples:** `YY-02-30`, `YY-02-31`, `YY-[04,06]-31`, `2027-02-29`
 
-**Problem:** Without an overflow suffix (`L`, `N`, or `O`), day 30 or 31 in February (`02`) simply does not exist. `YY-02-30` can never match, so the iterator returns `Error::IteratorNotConverged` after a bounded search.
+**Problem:** Without an overflow suffix (`L`, `N`, or `O`), day 30 or 31 in February simply does not exist, nor does the 31st in April or June, nor 29 February in a year that is not a leap year. Such a spec is rejected when it is parsed (`Error::InvalidDateSpec`), with the reason and the alternatives in the message. A day that exists in *some* of the listed months is accepted: those months just have no result.
 
 ```text
-YY-02-30  →  no February result (day 30 never exists)
-YY-MM-31  →  skips all months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb)
+YY-02-30       →  rejected: "February never has a 30th: … (`30L` is the last day of the month, `30N` the day after it)"
+2027-02-29     →  rejected: "February has a 29th only in leap years, and 2027 is not one: …"
+YY-[02,04]-30  →  accepted: 30 April each year, nothing in February
+YY-MM-31       →  accepted: skips the months with fewer than 31 days (Apr, Jun, Sep, Nov, Feb)
 ```
 
 **Safe alternatives:**
@@ -1505,7 +1507,7 @@ The same applies to `BD#0` / `WD#0`, which are rejected. `BD#n` / `WD#n` accept 
 
 | Combination | Problem | Safe alternative |
 |-------------|---------|-----------------|
-| `YY-02-30` / `YY-02-31` | Day never exists in February; `IteratorNotConverged` | `YY-02-L` or `YY-02-29L` |
+| `YY-02-30` / `YY-02-31` | Day never exists in February; rejected when parsed | `YY-02-L` or `YY-02-29L` |
 | `YY-MM-31` (no suffix) | Silently skips short months | `YY-MM-31L` (clamp) |
 | `MON#0`, `MON#6` | Occurrence never exists; rejected at parse time | `MON#1` or `MON#L` |
 | `BD#23` | Most months have fewer business days; they are skipped | `BD#L` for the last business day |

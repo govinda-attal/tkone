@@ -335,11 +335,13 @@ does all five for a ten-year loan with a floating rate.
 
 ## Limits
 
-- **A rule cannot refer to another schedule.** "Two business days before the
-  *adjusted* repayment date" is not expressible: a fixing rule counts from the
-  rule's own date (the 15th). In Example 1 the two agree. Where they wouldn't,
-  compute the dependent date from the entry, with the calendar's
-  `BizDayProcessor`.
+- **A rule cannot refer to another schedule.** Within one schedule, a rule
+  can be derived from another's adjusted dates (`{repayment}~2PT11:00:00`,
+  see [derived rules](schedule-document.md#rules-derived-from-other-rules)).
+  Across schedules, as in Example 1 with its two calendars, it can't: the
+  fixing rule counts from its own date (the 15th). There the two agree. Where
+  they wouldn't, compute the dependent date from the entry, with the
+  calendar's `BizDayProcessor`.
 - **One calendar type.** All lanes are `Schedule<B>` with one `B`. Calendars
   of different codes and zones are one type (`Calendar`), so this rarely
   matters. Mixing `WeekendSkipper` with `Calendar` needs a `Calendar::fixed`

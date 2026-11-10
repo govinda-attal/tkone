@@ -112,3 +112,21 @@ def test_package_layout():
     assert Document.__module__ == "tkone.schedule"
     assert Calendar.__module__ == "tkone.calendar"
     assert ScheduleError.__module__ == "tkone.schedule"
+
+
+def test_derived_rules():
+    doc = Document({
+        "version": 1,
+        "time_zone": "Europe/London",
+        "calendar": "GBLO",
+        "start": "2026-05-01",
+        "rules": [
+            {"id": "payment", "rule": "YY-MM-L~MFT12:00:00", "basis": True},
+            {"id": "report", "rule": "{payment}~2PT09:00:00"},
+        ],
+    })
+    # 31 May 2026 is a Sunday: paid Friday 29 May, reported Wednesday 27 May.
+    report = doc.take(1)[0]
+    assert report.at.isoformat() == "2026-05-27T09:00:00+01:00"
+    assert report.sources[0].basis.isoformat() == "2026-05-29T12:00:00+01:00"
+    assert report.sources[0].rule_id == "report"

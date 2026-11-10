@@ -245,6 +245,11 @@ change with its holiday data; its `tests/loan.rs` puts them together.
 A `schedule::Timeline` reads several schedules, each on its own calendar
 and in its own zone, as one stream of moments (`docs/timeline.md`).
 
+Within a schedule, a rule can be derived from another rule's adjusted
+dates: `{payment}~2PT09:00:00` is two business days before each payment
+*as moved*, which no single spec can say (it has one adjustment). See
+`ScheduleBuilder::rule`.
+
 The iterator builders also take an end (`with_end`), a count
 (`with_count`) and exclusions (`with_exclusions`) for a single rule.
 

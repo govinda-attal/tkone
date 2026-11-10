@@ -285,6 +285,8 @@ struct Source {
     rule_id: Option<String>,
     /// The time the rule produced, before any business-day adjustment.
     actual: DateTime<chrono_tz::Tz>,
+    /// For a derived rule (`{repayment}~2PT09:00:00`), the referred slot.
+    basis: Option<DateTime<chrono_tz::Tz>>,
 }
 
 #[pymethods]
@@ -314,7 +316,7 @@ impl Slot {
 
 impl From<tkone_schedule::schedule::Slot> for Slot {
     fn from(slot: tkone_schedule::schedule::Slot) -> Self {
-        let sources = slot.sources.into_iter().map(|s| Source { rule_id: s.rule_id, actual: s.actual }).collect();
+        let sources = slot.sources.into_iter().map(|s| Source { rule_id: s.rule_id, actual: s.actual, basis: s.basis }).collect();
         Self { at: slot.at, sources }
     }
 }

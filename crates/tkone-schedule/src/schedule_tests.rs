@@ -477,6 +477,114 @@ fn timeline_edges() {
 }
 
 // ---------------------------------------------------------------------------
+// Derived rules
+// ---------------------------------------------------------------------------
+
+fn derived(start: DateTime<Tz>, basis: &str, rule: &str) -> Schedule<Holidays> {
+    Schedule::builder(start, Holidays::london()).basis_rule("basis", basis).named_rule("derived", rule).build().unwrap()
+}
+
+#[test]
+fn derived_rules_count_from_the_adjusted_date() {
+    // Two business days before each adjusted month end: never `YY-MM-L~2P`'s
+    // count from the unadjusted date.
+    let schedule = derived(at(2025, 11, 1, 0, 0), "YY-MM-L~MFT12:00:00", "{basis}~2PT09:00:00");
+    let got: Vec<Slot> = schedule.slots().unwrap().take(14).collect().unwrap();
+    let holidays = Holidays::london();
+    let payments = Schedule::builder(at(2025, 11, 1, 0, 0), Holidays::london()).rule("YY-MM-L~MFT12:00:00").build().unwrap();
+    let payments: Vec<Slot> = payments.slots().unwrap().take(14).collect().unwrap();
+    for (slot, payment) in got.iter().zip(&payments) {
+        let want = holidays.sub(&payment.at.naive_local(), 2).unwrap().date();
+        assert_eq!(slot.at.date_naive(), want);
+        assert_eq!(slot.at.format("%H:%M").to_string(), "09:00");
+        assert_eq!(slot.sources[0].basis, Some(payment.at), "provenance");
+        assert_eq!(slot.sources[0].actual.date_naive(), payment.at.date_naive());
+    }
+    // Sat 31 Jan 2026: paid Fri 30 Jan; derived Wed 28 Jan (`~2P` from the 31st gives Thu 29).
+    assert!(got.iter().any(|s| s.at == at(2026, 1, 28, 9, 0)));
+}
+
+#[test]
+fn a_basis_has_no_slots_of_its_own() {
+    let schedule = derived(at(2026, 1, 1, 0, 0), "YY-MM-15T12:00:00", "{basis}T_:_:_");
+    // `T_:_:_` keeps the basis slot's time; no adjustment keeps its date.
+    assert_eq!(first(&schedule, 2), ["Thu 15 Jan 12:00 derived", "Sun 15 Feb 12:00 derived"]);
+    // A rule that is referred to and not a basis keeps its own slots.
+    let both = Schedule::builder(at(2026, 1, 1, 0, 0), Holidays::london())
+        .named_rule("payment", "YY-MM-15~NBT12:00:00")
+        .named_rule("notice", "{payment}~1PT12:00:00")
+        .build()
+        .unwrap();
+    assert_eq!(first(&both, 4), ["Wed 14 Jan 12:00 notice", "Thu 15 Jan 12:00 payment", "Fri 13 Feb 12:00 notice", "Mon 16 Feb 12:00 payment"]);
+}
+
+#[test]
+fn derived_slots_follow_the_schedule_around_them() {
+    // Exclusions match the actual date, the basis slot's date (D3): no
+    // derived slot for the drawdown.
+    let start = at(2026, 1, 1, 0, 0);
+    let schedule = Schedule::builder(start, Holidays::london())
+        .basis_rule("boundary", "YY-MM-15~MFT12:00:00")
+        .named_rule("fixing", "{boundary}~2PT11:00:00")
+        .exclude_date(d(2026, 1, 15))
+        .until(at(2026, 3, 31, 0, 0))
+        .build()
+        .unwrap();
+    assert_eq!(first(&schedule, 5), ["Thu 12 Feb 11:00 fixing", "Thu 12 Mar 11:00 fixing"]);
+    // A derived slot moved before the start is dropped, and reported.
+    let late = Schedule::builder(at(2026, 1, 14, 0, 0), Holidays::london())
+        .basis_rule("boundary", "YY-MM-15~MFT12:00:00")
+        .named_rule("fixing", "{boundary}~2PT11:00:00")
+        .build()
+        .unwrap();
+    let lost = late.moved_before_start().unwrap();
+    assert_eq!(lost.iter().map(|s| s.at).collect::<Vec<_>>(), [at(2026, 1, 13, 11, 0)]);
+    assert_eq!(first(&late, 1), ["Thu 12 Feb 11:00 fixing"]);
+    // `~SB` after a reference drops what is not a business day.
+    let skip = derived(start, "YY-MM-DDT12:00:00", "{basis}~SBT12:00:00");
+    assert!(first(&skip, 10).iter().all(|s| !s.starts_with("Sat") && !s.starts_with("Sun")));
+}
+
+#[test]
+fn derived_slots_after_agree() {
+    for (basis, rule) in [
+        ("YY-MM-L~MFT12:00:00", "{basis}~2PT09:00:00"),
+        ("YY-MM-DD~NBT09:00:00", "{basis}~2NT18:00:00"),
+        ("YY-MM-[1,15]~PBT10:00:00", "{basis}~MONT_:_:_"),
+    ] {
+        agrees(&derived(at(2025, 11, 1, 0, 0), basis, rule), 70);
+    }
+}
+
+#[test]
+fn invalid_derived_rules() {
+    let error = |rules: &[(&str, &str, bool)]| {
+        let mut builder = Schedule::builder(at(2026, 1, 1, 0, 0), WeekendSkipper::new());
+        for (id, rule, basis) in rules {
+            builder = if *basis { builder.basis_rule(*id, *rule) } else { builder.named_rule(*id, *rule) };
+        }
+        builder.build().unwrap_err().to_string()
+    };
+    type Case<'a> = (&'a [(&'a str, &'a str, bool)], &'a str);
+    let cases: &[Case] = &[
+        (&[("a", "{b}~2PT09:00:00", false)], "which no rule is"),
+        (&[("a", "{a}~2PT09:00:00", false)], "itself derived"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2PT09:00:00", false), ("b", "{a}~1PT09:00:00", false)], "itself derived"),
+        (&[("p", "YY-MM-15T12:00:00", true)], "not a basis"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("q", "YY-MM-01T12:00:00", false)], "no rule refers to it"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}/2WT09:00:00", false)], "only an adjustment"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2P", false)], "then `T` and a time"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~2PT1H:00:00", false)], "a fixed time"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p}~XXT09:00:00", false)], "the adjustment"),
+        (&[("p", "YY-MM-15T12:00:00", true), ("a", "{p~2PT09:00:00", false)], "closed by"),
+    ];
+    for (rules, want) in cases {
+        let got = error(rules);
+        assert!(got.contains(want), "{rules:?}: {got}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Invalid schedules
 // ---------------------------------------------------------------------------
 

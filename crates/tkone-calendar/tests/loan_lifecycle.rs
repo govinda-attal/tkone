@@ -78,6 +78,7 @@ impl Loan {
         let (selector, definition) = self.instance(key, None);
         let end = london(2031, 12, 31, 0);
         assert!(selector.uncovered(definition, *selector.start()..=end).unwrap().is_empty(), "{key}");
+        assert!(selector.schedule().moved_before_start().unwrap().is_empty(), "{key}");
         selector.schedule().slots().unwrap().map(|s| Ok(fmt(&s.at))).collect().unwrap()
     }
 }
@@ -151,6 +152,16 @@ fn fixings_and_reminders_match_the_adjusted_repayments() {
     starts.extend(collections[..59].iter().cloned());
     assert_eq!(loan.runs("L-1001/fixings"), starts.iter().map(|t| back(t, "11:00")).collect::<Vec<_>>());
     assert_eq!(loan.runs("L-1001/reminders"), collections.iter().map(|t| back(t, "09:00")).collect::<Vec<_>>());
+}
+
+#[test]
+fn derived_runs_name_their_basis() {
+    let loan = Loan::new();
+    let first = |key: &str| loan.instance(key, None).0.schedule().slots().unwrap().next().unwrap().unwrap();
+    let fixing = first("L-1001/fixings");
+    assert_eq!((fixing.at, fixing.sources[0].basis), (london(2026, 1, 13, 11), Some(london(2026, 1, 15, 12))));
+    let reminder = first("L-1001/reminders");
+    assert_eq!((reminder.at, reminder.sources[0].basis), (london(2026, 2, 12, 9), Some(london(2026, 2, 16, 12))));
 }
 
 #[test]

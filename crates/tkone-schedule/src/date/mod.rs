@@ -75,6 +75,21 @@ pub fn describe(spec: &str) -> crate::Result<String> {
 }
 
 pub use easter::Easter;
+
+/// `spec`'s adjustment applied to one date-time, as the iterators apply it;
+/// `None` when `~SB` drops it. For rules derived from another rule's slots.
+pub(crate) fn adjust_one<B: crate::biz_day::BizDayProcessor>(
+    spec: &Spec,
+    dtm: chrono::NaiveDateTime,
+    bdp: &B,
+) -> crate::Result<Option<crate::Occurrence<chrono::NaiveDateTime>>> {
+    let ctx = engine::IterContext { anchor: dtm, bd_processor: bdp.clone() };
+    let raw = crate::Occurrence::Exact(dtm);
+    if engine::skipped(spec, &raw, &ctx)? {
+        return Ok(None);
+    }
+    engine::adjust(spec, raw, &ctx).map(Some)
+}
 pub use spec::{
     parse_spec, BizDayAdjustment, BizDayCalendar, Cycle, DayCycle, LastDayOption, NextNthDayOption, Spec,
     WeekdayOption, EASTER_OFFSETS,

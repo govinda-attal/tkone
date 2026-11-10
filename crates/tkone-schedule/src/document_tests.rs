@@ -240,3 +240,45 @@ fn an_instance_uses_its_definitions_zone_calendar_and_options() {
     let weekday = ACCOUNT.replace("YY-MM-L~PBT18:00:00", "YY-MM-L~WT18:00:00");
     assert!(yaml(&weekday).selector(&plain).is_ok());
 }
+
+#[test]
+fn derived_rules_in_a_document() {
+    let text = "
+version: 1
+time_zone: Europe/London
+calendar: GBLO
+start: 2026-05-01
+rules:
+  - { id: payment, rule: YY-MM-L~MFT12:00:00, basis: true }
+  - { id: report, rule: '{payment}~2PT09:00:00' }
+";
+    let doc = yaml(text);
+    // 31 May 2026 is a Sunday: paid Friday 29 May, reported Wednesday 27 May.
+    assert_eq!(times(&doc.schedule(&Places).unwrap(), 2), ["Wed 27 May 09:00", "Fri 26 Jun 09:00"]);
+    // `basis` is written only when set.
+    let json = serde_json::to_string(&doc).unwrap();
+    assert!(json.contains(r#""basis":true"#) && json.matches("basis").count() == 1, "{json}");
+    assert_eq!(serde_json::from_str::<ScheduleDoc>(&json).unwrap(), doc);
+    // A basis needs an id; a derived rule's adjustment needs a calendar.
+    assert!(invalid(&text.replace("id: payment, ", "")).contains("needs an `id`"));
+    assert!(invalid(&text.replace("calendar: GBLO\n", "").replace("~MF", "~W")).contains("`{payment}~2PT09:00:00` uses business days"));
+    assert!(build(&text.replace("calendar: GBLO\n", "").replace("~MF", "~W").replace("~2P", "~PFRI")).is_ok());
+}
+
+#[test]
+fn derived_rules_keep_to_the_calendars_date() {
+    // 02:00 London is the evening before in New York, whose business days
+    // these are: refused, as for any rule.
+    let text = "
+version: 1
+time_zone: Europe/London
+calendar: USNY
+start: 2026-05-01
+rules:
+  - { id: payment, rule: 'YY-MM-L~MFT12:00:00', basis: true }
+  - { id: report, rule: '{payment}~2PT02:00:00' }
+";
+    let schedule = build(text).unwrap();
+    let err = schedule.slots().unwrap().next().unwrap_err();
+    assert!(err.to_string().contains("America/New_York"), "{err}");
+}

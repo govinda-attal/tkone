@@ -107,7 +107,7 @@ exclude:
 | `start` | local date or datetime | yes | Anchor for cadences and the time of day, and the inclusive lower bound. See [D1](#d1-start-is-an-anchor-not-an-occurrence). |
 | `until` | local date or datetime | no | Inclusive upper bound. A date means the whole of that day. |
 | `count` | integer | no | Stop after this many slots, counted after exclusions. With `until`, whichever comes first. |
-| `rules` | list | yes, at least one | Each `{ id, rule }`. `id` is optional, unique within the document, and carried on every slot the rule produces. |
+| `rules` | list | yes, at least one | Each `{ id, rule, basis }`. `id` is optional, unique within the document, and carried on every slot the rule produces. `rule` is a datetime rule, or one [derived](#rules-derived-from-other-rules) from another rule (`{payment}~2PT09:00:00`). `basis: true` marks a rule that derived rules refer to, with no slots of its own; it needs an `id`. |
 | `exclude.dates` | list of dates | no | Dates with no slots. |
 | `exclude.rules` | list of date specs | no | Dates matching any of these have no slots. |
 | `exclude.match` | `actual` / `observed` | no | Which date an exclusion is tested against. Default `actual`. See [D3](#d3-exclusions-match-the-actual-date-by-default). |
@@ -425,7 +425,7 @@ how to retry, overlap and catch up.
   version of the instance document (D12). Tempo recomputes from it.
 - **Nothing crosses documents.** Tempo never derives one document's dates
   from another's. A rule may refer only to rules in its own document
-  ([proposal](#proposed-rules-derived-from-other-rules)). Anything that
+  ([derived rules](#rules-derived-from-other-rules)). Anything that
   spans documents is application logic, computed with tkone-schedule
   (`Schedule`, periods, a [timeline](timeline.md)) and registered as rules.
 
@@ -493,9 +493,11 @@ Gaps in the earlier builders this closed:
 
 ---
 
-## Proposed: rules derived from other rules
+## Rules derived from other rules
 
-Status: **proposed**, not built. To decide with tempo (Migration step 4).
+Status: **built**, in `Schedule` (`rule`, `named_rule`, `basis_rule`) and in
+documents (`basis: true`). [A loan's life](loan-lifecycle.md) uses it for
+rate fixings and reminders.
 
 ### The need
 
@@ -546,7 +548,7 @@ name; loading, validation and versioning (D12) would have to follow a graph
 of documents, one edge per instance; and it would make tempo derive domain
 dates, which belong to the application (D11).
 
-### Proposal: a reference to a rule in the same document
+### Design: a reference to a rule in the same document
 
 A spec is `date [~adjustment] T time`. The date part can name another rule
 of the same document instead of a date pattern:
@@ -581,8 +583,8 @@ A reference within one document keeps everything else as it is:
 - The document is still one context: one zone, one calendar, one start.
 - It has one version, so a lifetime event changes the basis and the derived
   rule together.
-- Validation stays local: references resolve within the document, and a
-  loop (`{a}` in `b`, `{b}` in `a`) is refused when it is loaded.
+- Validation stays local: references resolve within the document when it is
+  built.
 
 ### Semantics: two sieves
 
@@ -614,44 +616,59 @@ A reference within one document keeps everything else as it is:
   anywhere else.
 - **A reference is the whole date part.** `{repayment}` can't be combined
   with a date pattern or a week cycle.
-- **Grammar.** One alternative for the date part, `"{" id "}"`, in the ABNF
-  and GRAMMAR.md. Nothing else changes.
+- **Not in the rule grammar.** `{id}` is a form of schedules: a rule string
+  alone (an iterator, `describe`, the ABNF) never takes one, because it means
+  nothing outside its schedule. The grammar is unchanged.
 
-### Open questions
+### What was built, and its limits
 
-1. **The basis is read on the document's calendar.** In the reminder
-   instance, the repayment's `~MF` is evaluated on the reminder
-   definition's calendar. If the collections definition uses another one,
-   the basis can differ from the real repayments. The application must use
-   the same calendar, or tempo must check that the basis's calendar matches
-   the definition it was copied from.
-2. **The start as a boundary, not a run.** Settled without a new concept.
-   A loan drawn on the 15th with repayments on the 15th makes the drawdown a
-   slot (D1). Two places want opposite things:
+- **Within one schedule or document.** A reference names a rule of the same
+  schedule. Anything that spans documents is the application's (D11).
+- **One level.** The referred rule must not itself be derived, so references
+  cannot loop.
+- **A fixed time, or the basis slot's.** After the reference come an
+  optional adjustment and `T` with a fixed time (`09:00:00`) or `_:_:_`.
+  Several times a day (`T[09,13]:00:00`) are not taken.
+- **A basis must be referred to, and needs an `id`.** An unreferred basis is
+  refused: it would produce nothing, which is almost always a typo.
+- **Reach composes.** `slots_after(t)` reads the basis from far enough back:
+  a derived slot can be later than its basis slot by its own forward reach
+  (`~2N`), and the basis slot later than its actual date by the basis rule's.
+  `until` bounds the search by the derived rule's backward reach (`~2P`).
+- **Python** reads documents, so references come with them; `Source.basis`
+  is there too.
 
-   | Place | Wants the start to be |
-   |---|---|
-   | repayments | not a slot: nothing is repaid at the drawdown |
-   | the first period's rate fixing, derived from the boundaries | a boundary to derive from |
+### The start as a boundary, not a run
 
-   - **"The start is not a run":** exclude its date, as the repayments do
-     in [the loan example](loan-lifecycle.md#3-collections-the-repayments).
-   - **"The start is a boundary":** a basis rule keeps it. A basis has no
-     slots of its own, so including the drawdown is harmless, and
-     `{boundary}~2P` derives the first fixing from it.
-   - **Both in one document:** a derived reminder whose basis includes the
-     drawdown excludes the drawdown's *date*, since a derived slot's actual
-     is its basis date (D3).
+A loan drawn on the 15th with repayments on the 15th makes the drawdown a
+slot (D1). Two places want opposite things:
 
-   `Schedule::periods()` already treats a slot at the start this way: it
-   opens the first period instead of ending one. A start-exclusive option
-   was considered and rejected: it fixes the first place and breaks the
-   second.
-3. **Reach.** `slots_after(t)` on a derived rule reads the basis from far
-   enough ahead or back, by the derived adjustment's reach (`~2P`: basis
-   slots up to two business days after `t`). The existing reach logic,
-   composed once.
-4. **Python.** The bindings read documents, so references come with them.
+| Place | Wants the start to be |
+|---|---|
+| repayments | not a slot: nothing is repaid at the drawdown |
+| the first period's rate fixing, derived from the boundaries | a boundary to derive from |
+
+- **"The start is not a run":** exclude its date, as the repayments do
+  in [the loan example](loan-lifecycle.md#3-collections-the-repayments).
+- **"The start is a boundary":** a basis rule keeps it. A basis has no
+  slots of its own, so including the drawdown is harmless, and
+  `{boundary}~2P` derives the first fixing from it.
+- **Both in one document:** a derived reminder whose basis includes the
+  drawdown excludes the drawdown's *date*, since a derived slot's actual
+  is its basis date (D3).
+
+`Schedule::periods()` already treats a slot at the start this way: it
+opens the first period instead of ending one. A start-exclusive option
+was considered and rejected: it fixes the first place and breaks the
+second.
+
+### Open question: the basis is read on its document's calendar
+
+In the reminder instance, the repayment's `~MF` is evaluated on the reminder
+definition's calendar. If the collections definition uses another one, the
+basis can differ from the real repayments. The application must use the same
+calendar, or tempo must check that the basis's calendar matches the
+definition it was copied from.
 
 ## Deferred
 
@@ -667,8 +684,6 @@ Specified here so the format can grow into them; not built in version 1.
   definition. The instance calendar would shape selection only; `uncovered`
   still guards it.
 - **Per-rule zone or calendar**: a second zone is a second definition.
-- **Rules derived from other rules** (`{repayment}~2PT09:00:00`), within
-  one document: see [the proposal](#proposed-rules-derived-from-other-rules).
 - **Jitter**: execution, not schedule.
 
 ---

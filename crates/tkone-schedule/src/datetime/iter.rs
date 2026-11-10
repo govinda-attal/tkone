@@ -520,20 +520,10 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
     /// Fails if `occurrence` falls on another date in the calendar's own time
     /// zone: its business day would be judged on the wrong day.
     fn check_calendar_date(&self, occurrence: &Occurrence<DateTime<Tz>>) -> Result<()> {
-        let Some((code, zone)) = &self.calendar else {
-            return Ok(());
-        };
-        let at = occurrence.observed();
-        let there = at.with_timezone(zone);
-        if there.date_naive() == at.date_naive() {
-            return Ok(());
+        match &self.calendar {
+            Some((code, zone)) => check_calendar_date(code, zone, occurrence.observed()),
+            None => Ok(()),
         }
-        Err(Error::Calendar(format!(
-            "{} is {} in {}, where {code}'s business days are counted; read the schedule in that time zone",
-            at.naive_local().format("%Y-%m-%d %H:%M"),
-            there.format("%Y-%m-%d %H:%M"),
-            zone.name(),
-        )))
     }
 
 
@@ -608,6 +598,21 @@ impl<Tz: TimeZone, BDP: BizDayProcessor> SpecIterator<Tz, BDP> {
         self.day = Some(Day { occurrence, date, local, prev });
         Ok(true)
     }
+}
+
+/// Fails if `at` is on another date in `zone`, the time zone `code`'s
+/// business days are counted in: they would be judged on the wrong day.
+pub(crate) fn check_calendar_date<T: TimeZone>(code: &str, zone: &chrono_tz::Tz, at: &DateTime<T>) -> Result<()> {
+    let there = at.with_timezone(zone);
+    if there.date_naive() == at.date_naive() {
+        return Ok(());
+    }
+    Err(Error::Calendar(format!(
+        "{} is {} in {}, where {code}'s business days are counted; read the schedule in that time zone",
+        at.naive_local().format("%Y-%m-%d %H:%M"),
+        there.format("%Y-%m-%d %H:%M"),
+        zone.name(),
+    )))
 }
 
 /// The date-level occurrence carried to one time `t` on its observed date.

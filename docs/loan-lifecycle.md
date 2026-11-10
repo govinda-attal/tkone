@@ -161,29 +161,32 @@ version: 1
 start: 2026-01-01
 until: 2030-12-31
 rules:
-  - rule: YY-MM-15~2PT11:00:00
+  - { id: boundary, rule: YY-MM-15~MFT12:00:00, basis: true }
+  - { id: fixing, rule: "{boundary}~2PT11:00:00" }
 ```
 
 60 runs: Tue 13 Jan 2026 (for the period from the drawdown), Thu 12 Feb,
 Thu 12 Mar, Mon 13 Apr, …, Thu 12 Dec 2030 (for the last period).
 
-The start is 1 January, before the drawdown: the first period's rate is fixed
-two days before the loan exists.
+- **`boundary` is a basis:** the period boundaries, with no runs of their
+  own. The fixing instance belongs to the `rates` definition; the boundaries
+  are repayment times, which `rates` doesn't have.
+- **`{boundary}~2PT11:00:00`** is two business days before each boundary
+  *as adjusted*, at 11:00. Each run's source names its boundary: the
+  13 January fixing is for the 15 January boundary, the drawdown.
+- **The start is 1 January,** before the drawdown: the first period's rate is
+  fixed two days before the loan exists. The basis includes the drawdown,
+  since 15 January is after this document's start, so the first fixing has a
+  boundary to derive from.
+- **`until` is 31 December 2030:** the boundary at maturity (15 January 2031)
+  starts no period, so its fixing (13 January 2031) is cut off.
 
-`~2P` counts back from the 15th, not from the adjusted repayment. Here that
-is exact: for all 60 periods of 2026–2030 it gives the same day as counting
-back from the repayment, because Modified Following on the 15th only ever
-moves forward. On a month-end loan it would be wrong about five months a
-year (31 May 2026 is a Sunday: the repayment is Friday 29 May, `~2P` gives
-Thursday 28 May, the right day is Wednesday 27 May). Such a loan needs the
-[proposed](schedule-document.md#proposed-rules-derived-from-other-rules)
-basis form, or a one-off per date computed by the application:
-
-```text
-rules:                                    (proposed, not built)
-  - { id: boundary, rule: YY-MM-15~MFT12:00:00, basis: true }   # includes the drawdown
-  - { id: fixing,   rule: "{boundary}~2PT11:00:00" }
-```
+Why not the single spec `YY-MM-15~2PT11:00:00`? It counts back from the
+15th, not from the adjusted boundary. On this loan the two happen to agree
+(Modified Following on the 15th only ever moves forward), but on a month-end
+loan they differ about five months a year: 31 May 2026 is a Sunday, the
+repayment is Friday 29 May, `~2P` from the 31st gives Thursday 28 May, and
+the right day is Wednesday 27 May. The derived rule is right on both.
 
 ### 5. Repayment reminders
 
@@ -193,14 +196,27 @@ version: 1
 start: 2026-01-15T12:00:00
 until: 2031-01-15
 rules:
-  - rule: YY-MM-15~2PT09:00:00
+  - { id: repayment, rule: YY-MM-15~MFT12:00:00, basis: true }
+  - { id: reminder, rule: "{repayment}~2PT09:00:00" }
+exclude:
+  dates: [2026-01-15]
 ```
 
 60 runs, two business days before each repayment: Thu 12 Feb 2026 (for
 Mon 16 Feb), Thu 12 Mar (for Mon 16 Mar), Mon 13 Apr (for Wed 15 Apr), …,
-Mon 13 Jan 2031 (for the last). The start drops 13 January, which would be a
-reminder for the drawdown. The same caveat about `~2P` applies as for
-fixings.
+Mon 13 Jan 2031 (for the last).
+
+The basis repeats the collections rule: an instance selects from one
+definition, and the repayments are `servicing`'s, not `notices`'. The
+application writes both documents from one loan record, and replaces both on
+a lifetime event.
+
+The basis starts at the drawdown, so its first slot is the drawdown itself.
+The exclusion drops the reminder derived from it: a derived slot's actual date
+is its basis slot's date, so excluding 15 January removes the reminder "for"
+the drawdown. Without the exclusion, that reminder would be due on
+13 January, before the start, and dropped anyway; `moved_before_start` would
+report it.
 
 ### 6. Statements
 
@@ -337,8 +353,10 @@ that computed it.
 - **Every slot must be the definition's.** A one-off at 12:30, or on a
   Saturday, is not a slot of `servicing`. `uncovered` reports it when the
   instance is registered, instead of when it is due.
-- **The fixings and reminders are exact only because the dates are
-  mid-month.** See [fixings](#4-rate-fixings-two-business-days-before-each-period).
+- **A basis is read on its document's calendar.** The reminders' basis is
+  evaluated on `notices`' calendar, the collections on `servicing`'s. Both
+  are `GBLO` here. If they differed, the basis repayments could differ from
+  the real ones.
 - **`recompute_pending` is proposed**, as part of D12, and so is tempo's
   registration API. Everything else on this page works with today's
-  `ScheduleDoc`.
+  `ScheduleDoc`, derived rules included.

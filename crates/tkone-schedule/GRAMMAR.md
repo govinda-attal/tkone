@@ -241,7 +241,8 @@ A date spec is evaluated in layers:
    part of the grammar: most chains mean nothing (`~NB~PB`), and the one that matters, a date a
    number of business days before another rule's *adjusted* date, usually counts on another
    calendar than that rule's. It is a separate rule derived from the first, which the schedule
-   holding the rules, not the spec, expresses.
+   holding the rules, not the spec, expresses: in tkone's schedules, `{payment}~2PT09:00:00`
+   names the rule it derives from, and is not a spec.
 
 The schedule always continues from actual dates, so an adjustment never shifts the dates that
 follow it. Every actual date produces at most one occurrence, even when several observed dates

@@ -93,8 +93,12 @@ pub struct RuleDoc {
     /// Carried on every slot the rule produces; unique in the document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// A datetime rule with nothing around it (`YY-MM-L~PBT18:00:00`).
+    /// A datetime rule with nothing around it (`YY-MM-L~PBT18:00:00`), or
+    /// one derived from another rule's slots (`{repayment}~2PT09:00:00`).
     pub rule: String,
+    /// Referred to by derived rules, with no slots of its own. Needs an `id`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub basis: bool,
 }
 
 /// The exclusions of a [`ScheduleDoc`].
@@ -383,9 +387,13 @@ impl ScheduleDoc {
             builder = builder.count(count);
         }
         for rule in &self.rules {
-            builder = match &rule.id {
-                Some(id) => builder.named_rule(id, &rule.rule),
-                None => builder.rule(&rule.rule),
+            builder = match (&rule.id, rule.basis) {
+                (Some(id), true) => builder.basis_rule(id, &rule.rule),
+                (None, true) => {
+                    return Err(Error::InvalidSchedule(format!("the basis rule `{}` needs an `id` to be referred to", rule.rule)))
+                }
+                (Some(id), false) => builder.named_rule(id, &rule.rule),
+                (None, false) => builder.rule(&rule.rule),
             };
         }
         for date in &self.exclude.dates {

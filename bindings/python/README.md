@@ -44,8 +44,10 @@ exclusions. See the
 
 A `Slot` has `at` (an aware `datetime`) and `sources`: the rules that
 produced it, each a `Source` with `rule_id` and `actual`, the time the rule
-produced before any business-day adjustment. Rules that land on the same
-instant make one slot:
+produced before any business-day adjustment. A rule derived from another
+(`{"rule": "{payment}~2PT09:00:00"}`, two business days before each payment as
+adjusted, with `{"id": "payment", ..., "basis": True}`) also has `basis`: the
+payment it comes from. Rules that land on the same instant make one slot:
 
 ```python
 doc = Document({

@@ -521,7 +521,7 @@ These are set when building an iterator for a single rule, not written in the sp
 | Option | Iterators | Default | Effect |
 |--------|-----------|---------|--------|
 | `::new_after(spec, …, dtm)` / `::new(spec, …, tz)` | all | — | Results strictly after `dtm` (or now) |
-| `::new_with_start(spec, …, start)` | all | — | `start` is the first result, as-is; cadences count from it |
+| `::new_with_start(spec, …, start)` | all | — | Results from `start`, which anchors cadences and time steps; it is a result only if the rule gives it |
 | `::resume_after(spec, …, tz, last)` / `::resume_with_start(…, start, last)` | all | — | Continue a stored schedule (see below) |
 | `.with_end(end)` / `.with_end_spec(spec)` | all | — | Inclusive upper bound (`with_end_spec` only with `new_with_start`) |
 | `.with_count(n)` | all | — | Stop after `n` results counted from the start; excluded occurrences are not counted |

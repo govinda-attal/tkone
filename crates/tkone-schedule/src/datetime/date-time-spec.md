@@ -91,15 +91,17 @@ date — restarts the time spec from midnight.
 
 ### 4. The start date
 
-- **`new_with_start`**: `start` is returned first, as-is (see below), and only times *strictly
-  after* it are emitted for the rest of that date.
+- **`new_with_start`**: results are from `start` on: on its date, its own time (when it is one of
+  the spec's times) and the times after it.
 - **`new_after`**: the first result must be strictly after `dtm`. If no time on the current date
   is still ahead, the first result comes from the *next* valid date.
 
 A mid-day start therefore usually has fewer ticks on its first date than on later dates.
 
-`start` is yielded as `Exact` even when it does not match the spec, and no `~` adjustment is
-applied to it. This lets you feed an already-adjusted (observed) datetime back in as the start.
+`start` anchors the spec: cadences count from it, and with the default `TimeAnchor::Start` time
+steps take their phase from it. It is a result only if the spec gives it, adjusted like any other:
+`YY-MM-DD~NBT09:00:00` from Saturday 09:00 gives Saturday's 09:00 moved to Monday. To continue from
+an occurrence found with `new_after`, pass its `actual()` time.
 
 ### 5. `AdjustedLater` / `AdjustedEarlier` propagation
 
@@ -782,7 +784,7 @@ YY-1M-15T11:00:00  via new_after from 2025-01-15 12:00:00
 → Jan 15 skipped; first result = 2025-02-15 11:00:00
 ```
 
-Use `new_with_start` if you want the `dtm` itself returned as the first result.
+Use `new_with_start` from 2025-01-15 11:00:00 (or earlier that day) to include that date's 11:00.
 
 ---
 

@@ -149,7 +149,7 @@ Several rules are combined, with dates, in a `schedule::Schedule`; see the crate
 
 ## Examples
 
-Examples use `new_with_start` semantics, where the start datetime is always returned as the first result, unless marked `new_after`.
+Examples use `new_with_start` unless marked `new_after`. The start sets the phase of steps and is the first result when it is one of the spec's times, as in every example here.
 
 ---
 
@@ -725,7 +725,7 @@ end of 11:30 yields 09:00, 10:00, 11:00.
 
 > *Library behaviour: set when building the iterator, not written in the spec.*
 
-When constructed with `new_with_start`, the start datetime is always returned as the **first result** regardless of whether it aligns with the spec pattern. Use `new_after` to begin strictly after a given point in time.
+When constructed with `new_with_start`, the start sets the phase of steps (with the default `TimeAnchor::Start`) and is a result only if it is one of the spec's times: `HH:15M:00` from 09:07 gives 09:07, 09:22, …; `09-16:30M:00` from 08:00 gives 09:00, 09:30, …; `09:30:00` from 08:00 gives 09:30. Use `new_after` to begin strictly after a given point in time.
 
 ### `new_after` with non-aligned starts
 

@@ -144,9 +144,8 @@ Notes:
 - **Dropped dates are not counted** by `with_count` or a schedule's `count`, and a time part has
   no times on a dropped date.
 
-> *Library:* a start given to the builder (`new_with_start`) is still returned as-is, even when it
-> is not a business day. A `schedule::Schedule`'s start is only an anchor, and is skipped like
-> any other date.
+> *Library:* a start given to the builder (`new_with_start`) is only an anchor, as a
+> `schedule::Schedule`'s is: a start that is not a business day is skipped like any other date.
 
 ### Week cycles (optional)
 
@@ -990,7 +989,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 ### 31. `YY-1M-15~3P` — 15th monthly; unconditionally subtract 3 business days
 
-**`new_after`:** 2025-01-14 (with `new_with_start` the start itself would be returned as-is, unadjusted)
+**`new_after`:** 2025-01-14 (`new_with_start` from 2025-01-15 gives the same: the start's own date is adjusted like any other)
 
 `~3P` is **unconditional** — every result is shifted back 3 business days (WeekendSkipper), regardless of what day the 15th falls on.
 
@@ -1016,7 +1015,7 @@ Within each constrained month the 7-day sequence starts fresh from the 1st. Afte
 
 ### 32. `YY-1M-L~2N` — Last day of month; unconditionally add 2 business days
 
-**`new_after`:** 2025-01-30 (with `new_with_start` the start itself would be returned as-is, unadjusted)
+**`new_after`:** 2025-01-30 (`new_with_start` from 2025-01-31 gives the same: the start's own date is adjusted like any other)
 
 `~2N` is **unconditional** — every result is pushed forward 2 business days.
 
@@ -1419,7 +1418,7 @@ pattern and the rules that keep resumed results identical to a continuous iterat
 
 > *Library behaviour: set when building the iterator, not written in the spec.*
 
-When constructed with `new_with_start`, the start date is always returned as the **first result**, as `Exact` and unchanged — even when it does not match the spec, and without applying any `~` adjustment (a Saturday start stays Saturday). This lets you feed an already-adjusted (observed) date back in as the start. Use `new_after` to begin strictly after a given point in time.
+When constructed with `new_with_start`, the start anchors the spec (cadences such as `3M` count from it) and is the earliest a result's **actual** date can be. It is a result only if the spec gives it, adjusted like any other date: `YY-MM-DD~NB` from a Saturday gives the Saturday moved to Monday, and `YY-MM-15` from the 3rd gives the 15th. To continue from an occurrence found with `new_after`, pass its `actual()` date; that works whichever way it was adjusted. Use `new_after` to begin strictly after a given point in time.
 
 ### End bound
 

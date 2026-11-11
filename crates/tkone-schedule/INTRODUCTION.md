@@ -402,7 +402,8 @@ The format is deliberately small. Some things it leaves out:
   London business days before the payment is Wednesday 27 May. In 2026 the two differ in five
   months. In a schedule, write the payments as one rule and derive the other from it:
   `{payment}~2PT09:00:00` is two business days before each payment *as adjusted*. In code,
-  the same is `london.sub(&payment.at.naive_local(), 2)?`.
+  the same is `london.sub(&payment.at.naive_local(), 2)?`. A rule can also refer to another
+  document's rule (`{collections.repayment}`) when the two are built together as a set.
 - **Occurrences are moments, not periods.** A shift is "07:00", not "07:00 to 19:00"; an
   occurrence has no length. The time *between* occurrences is what `Schedule::periods()`
   gives: each period from one slot to the next, with its adjusted and unadjusted boundaries,

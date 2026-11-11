@@ -133,6 +133,59 @@ this way, with a floating rate on a second calendar. The design is in
 [timelines](https://github.com/govinda-attal/tkone/blob/main/docs/timeline.md)
 and [a loan's life](https://github.com/govinda-attal/tkone/blob/main/docs/loan-lifecycle.md).
 
+### Instances and sets
+
+A **definition** is a `Document` that generates slots (accrual batches, a
+notices run). An **instance** is a document read as a `Selector` of a
+definition's slots: it has no `time_zone`, `calendar` or `options` of its
+own, and never produces an instant its definition does not. Documents that
+refer to each other's rules (`{collections.repayment}`) are built together as
+a `Bundle`, all of them or none.
+
+```python
+import datetime as dt
+from zoneinfo import ZoneInfo
+from tkone.schedule import Bundle, Document
+
+london = ZoneInfo("Europe/London")
+def batch(time):  # a definition: a batch at `time` every London business day
+    return Document({"version": 1, "time_zone": "Europe/London", "calendar": "GBLO",
+                     "start": "2026-01-01", "rules": [{"rule": f"YY-MM-DD~SBT{time}"}]})
+servicing, notices = batch("12:00:00"), batch("09:00:00")
+
+# An account accrues at month end, in the 12:00 batch.
+account = servicing.selector({"version": 1, "start": "2026-03-15",
+                              "rules": [{"rule": "YY-MM-L~PBT12:00:00"}]})
+nxt = account.next_after(dt.datetime(2026, 5, 1, tzinfo=london), dt.datetime(2026, 7, 1, tzinfo=london))
+print(nxt.kind, nxt.slot.at, "from", nxt.slot.sources[0].actual.date())
+# due 2026-05-29 12:00:00+01:00 from 2026-05-31
+
+# One loan's instances, as a set: its reminders refer to its repayments.
+loan = Bundle(instances={
+    "collections": ({"version": 1, "start": "2026-01-01",
+                     "rules": [{"id": "repayment", "rule": "YY-MM-L~MFT12:00:00"}]}, servicing),
+    "reminders": ({"version": 1, "start": "2026-01-01",
+                   "rules": [{"rule": "{collections.repayment}~2PT09:00:00"}]}, notices),
+})
+for slot in loan.selector("reminders").between(dt.datetime(2026, 5, 1, tzinfo=london), dt.datetime(2026, 6, 30, tzinfo=london)):
+    print(slot.at, "for", slot.sources[0].basis)
+# 2026-05-27 09:00:00+01:00 for 2026-05-29 12:00:00+01:00
+# 2026-06-26 09:00:00+01:00 for 2026-06-30 12:00:00+01:00
+```
+
+| | |
+|---|---|
+| `Selector(doc, definition)`, `definition.selector(doc)` | an instance; `slots`, `take`, `between`, `periods`, `moved_before_start` and `to_json` as for `Document`, over the slots it wants |
+| `selector.next_after(after, horizon)` | a `Next`: `kind` (`"due"`, `"done"`, `"not_found"`), `slot`, and `missed`, the slots it wanted that the definition does not produce |
+| `selector.uncovered(start, end)` | the slots it wants that the definition does not produce: empty means it fits |
+| `Bundle(definitions={name: doc}, instances={name: (doc, definition)}, calendars=[])` | a set; `bundle.document(name)` and `bundle.selector(name)` give its members |
+| `Timeline([(key, doc_or_selector), ...])` | lanes may be instances too |
+
+A set refuses a reference to a document not in it, to a rule with no slots of
+its own (a basis) or itself derived, a definition referring to an instance,
+and documents referring to each other in a loop. The design is in
+[schedule documents](https://github.com/govinda-attal/tkone/blob/main/docs/schedule-document.md#d13-documents-that-refer-to-each-other-form-a-set).
+
 ### `Schedule`: one rule
 
 `Schedule(spec)` takes one rule: a date spec (`YY-MM-BD#3`), a time spec

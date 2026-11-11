@@ -424,6 +424,78 @@ impl Periods {
     }
 }
 
+/// Reads a document given as a `dict` or a JSON string.
+fn parse_doc(doc: &Bound<'_, PyAny>) -> PyResult<ScheduleDoc> {
+    let json: String = match doc.extract::<String>() {
+        Ok(text) => text,
+        Err(_) => doc.py().import("json")?.call_method1("dumps", (doc,))?.extract()?,
+    };
+    serde_json::from_str(&json).map_err(|e| ScheduleError::new_err(e.to_string()))
+}
+
+/// The built-in calendars, with `calendars` in place of those with their codes.
+fn calendar_set(calendars: Vec<Calendar>) -> PyResult<Calendars> {
+    let mut set = Calendars::builtin().clone();
+    for calendar in calendars {
+        set.insert(calendar.0).map_err(crate::calendar::calendar_err)?;
+    }
+    Ok(set)
+}
+
+fn to_json(doc: &ScheduleDoc) -> PyResult<String> {
+    serde_json::to_string(doc).map_err(|e| ScheduleError::new_err(e.to_string()))
+}
+
+/// What `Document` and `Selector` read from their schedule.
+mod read {
+    use super::*;
+
+    fn zoned(schedule: &DocSchedule, t: Aware) -> DateTime<chrono_tz::Tz> {
+        t.in_zone(&schedule.zone())
+    }
+
+    pub(super) fn slots(schedule: &DocSchedule, after: Option<Aware>) -> PyResult<Slots> {
+        let slots = match after {
+            Some(after) => schedule.slots_after(&zoned(schedule, after)),
+            None => schedule.slots(),
+        };
+        Ok(Slots(slots.map_err(schedule_err)?))
+    }
+
+    pub(super) fn take(schedule: &DocSchedule, n: usize, after: Option<Aware>) -> PyResult<Vec<Slot>> {
+        let mut iter = slots(schedule, after)?;
+        let mut out = Vec::new();
+        while out.len() < n {
+            match iter.__next__()? {
+                Some(s) => out.push(s),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
+    pub(super) fn between(schedule: &DocSchedule, start: Aware, end: Aware) -> PyResult<Slots> {
+        let slots = schedule.slots_between(zoned(schedule, start)..=zoned(schedule, end)).map_err(schedule_err)?;
+        Ok(Slots(slots))
+    }
+
+    pub(super) fn periods(schedule: &DocSchedule, start: Option<Aware>, end: Option<Aware>) -> PyResult<Periods> {
+        let periods = match (start, end) {
+            (None, None) => schedule.periods(),
+            (start, Some(end)) => {
+                let start = start.map(|s| zoned(schedule, s)).unwrap_or(*schedule.start());
+                schedule.periods_between(start..=zoned(schedule, end))
+            }
+            (Some(_), None) => return Err(ScheduleError::new_err("periods from a `start` need an `end`")),
+        };
+        Ok(Periods(periods.map_err(schedule_err)?))
+    }
+
+    pub(super) fn moved_before_start(schedule: &DocSchedule) -> PyResult<Vec<Slot>> {
+        Ok(schedule.moved_before_start().map_err(schedule_err)?.into_iter().map(Slot::from).collect())
+    }
+}
+
 /// A schedule document: rules with their start, time zone, calendar (a
 /// `tkone.calendar` code), end, count and exclusions. Built from a `dict`
 /// or a JSON string; read YAML with a YAML library first.
@@ -436,33 +508,25 @@ struct Document {
     schedule: DocSchedule,
 }
 
-impl Document {
-    fn zoned(&self, t: Aware) -> DateTime<chrono_tz::Tz> {
-        t.in_zone(&self.schedule.zone())
-    }
-}
-
 #[pymethods]
 impl Document {
     #[new]
     #[pyo3(signature = (doc, calendars=vec![]))]
     fn new(doc: &Bound<'_, PyAny>, calendars: Vec<Calendar>) -> PyResult<Self> {
-        let json: String = match doc.extract::<String>() {
-            Ok(text) => text,
-            Err(_) => doc.py().import("json")?.call_method1("dumps", (doc,))?.extract()?,
-        };
-        let doc: ScheduleDoc = serde_json::from_str(&json).map_err(|e| ScheduleError::new_err(e.to_string()))?;
+        let doc = parse_doc(doc)?;
         let schedule = if calendars.is_empty() {
             doc.schedule(Calendars::builtin())
         } else {
-            let mut set = Calendars::builtin().clone();
-            for calendar in calendars {
-                set.insert(calendar.0).map_err(crate::calendar::calendar_err)?;
-            }
-            doc.schedule(&set)
+            doc.schedule(&calendar_set(calendars)?)
         }
         .map_err(schedule_err)?;
         Ok(Self { doc, schedule })
+    }
+
+    /// An instance document read as a selection from this definition: see
+    /// `Selector`.
+    fn selector(slf: PyRef<'_, Self>, doc: &Bound<'_, PyAny>) -> PyResult<Selector> {
+        Selector::new(doc, slf)
     }
 
     /// The start: the anchor, and the earliest a slot can be.
@@ -477,11 +541,23 @@ impl Document {
         self.schedule.until().copied()
     }
 
+    /// The slots, in order: strictly after `after` (an aware `datetime`), or
+    /// from the start.
+    #[pyo3(signature = (after=None))]
+    fn slots(&self, after: Option<Aware>) -> PyResult<Slots> {
+        read::slots(&self.schedule, after)
+    }
+
+    /// The first `n` slots, as a list (see `slots`).
+    #[pyo3(signature = (n, after=None))]
+    fn take(&self, n: usize, after: Option<Aware>) -> PyResult<Vec<Slot>> {
+        read::take(&self.schedule, n, after)
+    }
+
     /// The slots from `start` to `end`, both included. Always ends, even
     /// with no `until`.
     fn between(&self, start: Aware, end: Aware) -> PyResult<Slots> {
-        let slots = self.schedule.slots_between(self.zoned(start)..=self.zoned(end)).map_err(schedule_err)?;
-        Ok(Slots(slots))
+        read::between(&self.schedule, start, end)
     }
 
     /// The periods, from one slot to the next: each with `start` and `end`
@@ -490,56 +566,232 @@ impl Document {
     /// that end from `start` (default: the document's start) to `end`.
     #[pyo3(signature = (start=None, end=None))]
     fn periods(&self, start: Option<Aware>, end: Option<Aware>) -> PyResult<Periods> {
-        let periods = match (start, end) {
-            (None, None) => self.schedule.periods(),
-            (start, Some(end)) => {
-                let start = start.map(|s| self.zoned(s)).unwrap_or(*self.schedule.start());
-                self.schedule.periods_between(start..=self.zoned(end))
-            }
-            (Some(_), None) => return Err(ScheduleError::new_err("periods from a `start` need an `end`")),
-        };
-        Ok(Periods(periods.map_err(schedule_err)?))
+        read::periods(&self.schedule, start, end)
     }
 
     /// The slots a rule put on or after the start that an adjustment moved
     /// before it, and so are dropped. For a loan, a payment that never
     /// happens; a test can require there are none.
     fn moved_before_start(&self) -> PyResult<Vec<Slot>> {
-        Ok(self.schedule.moved_before_start().map_err(schedule_err)?.into_iter().map(Slot::from).collect())
-    }
-
-    /// The slots, in order: strictly after `after` (an aware `datetime`), or
-    /// from the start.
-    #[pyo3(signature = (after=None))]
-    fn slots(&self, after: Option<Aware>) -> PyResult<Slots> {
-        let slots = match after {
-            Some(after) => self.schedule.slots_after(&self.zoned(after)),
-            None => self.schedule.slots(),
-        };
-        Ok(Slots(slots.map_err(schedule_err)?))
-    }
-
-    /// The first `n` slots, as a list (see `slots`).
-    #[pyo3(signature = (n, after=None))]
-    fn take(&self, n: usize, after: Option<Aware>) -> PyResult<Vec<Slot>> {
-        let mut iter = self.slots(after)?;
-        let mut out = Vec::new();
-        while out.len() < n {
-            match iter.__next__()? {
-                Some(s) => out.push(s),
-                None => break,
-            }
-        }
-        Ok(out)
+        read::moved_before_start(&self.schedule)
     }
 
     /// The document as JSON, with only the fields given.
     fn to_json(&self) -> PyResult<String> {
-        serde_json::to_string(&self.doc).map_err(|e| ScheduleError::new_err(e.to_string()))
+        to_json(&self.doc)
     }
 
     fn __repr__(&self) -> String {
         format!("Document({})", self.to_json().unwrap_or_default())
+    }
+}
+
+// ── Selectors ────────────────────────────────────────────────────────────────
+
+type DocSelector = tkone_schedule::schedule::Selector<BusinessDays<tkone_calendar::Calendar>>;
+
+/// What `Selector.next_after` found: `kind` is `"due"` (with `slot`),
+/// `"done"` (the selector's window has ended) or `"not_found"` (none the
+/// definition produces before the horizon). `missed` holds the slots the
+/// selector wanted on the way that the definition does not produce.
+#[pyclass(module = "tkone.schedule", frozen, get_all, skip_from_py_object)]
+#[derive(Clone)]
+struct Next {
+    kind: &'static str,
+    slot: Option<Slot>,
+    missed: Vec<Slot>,
+}
+
+#[pymethods]
+impl Next {
+    fn __repr__(&self) -> String {
+        match &self.slot {
+            Some(slot) => format!("Next(due, {})", slot.at.to_rfc3339()),
+            None => format!("Next({})", self.kind),
+        }
+    }
+}
+
+/// An instance: a document read as a selection from a definition's slots.
+/// It never produces an instant the definition does not; one it wants that
+/// the definition lacks is missed. Built with `Selector(doc, definition)` or
+/// `definition.selector(doc)`; the document may not set `time_zone`,
+/// `calendar` or `options`, which are the definition's.
+#[pyclass(module = "tkone.schedule", frozen)]
+struct Selector {
+    doc: ScheduleDoc,
+    selector: DocSelector,
+    definition: DocSchedule,
+}
+
+#[pymethods]
+impl Selector {
+    #[new]
+    fn new(doc: &Bound<'_, PyAny>, definition: PyRef<'_, Document>) -> PyResult<Self> {
+        let doc = parse_doc(doc)?;
+        let selector = doc.selector(&definition.schedule).map_err(schedule_err)?;
+        Ok(Self { doc, selector, definition: definition.schedule.clone() })
+    }
+
+    /// The first slot strictly after `after`, and no later than `horizon`,
+    /// that this selects and the definition produces.
+    fn next_after(&self, after: Aware, horizon: Aware) -> PyResult<Next> {
+        let zone = self.definition.zone();
+        let mut missed = Vec::new();
+        let next = self
+            .selector
+            .next_after(&self.definition, &after.in_zone(&zone), &horizon.in_zone(&zone), |slot| {
+                missed.push(Slot::from(slot))
+            })
+            .map_err(schedule_err)?;
+        use tkone_schedule::schedule::Next as N;
+        Ok(match next {
+            N::Due(slot) => Next { kind: "due", slot: Some(slot.into()), missed },
+            N::Done => Next { kind: "done", slot: None, missed },
+            N::NotFound => Next { kind: "not_found", slot: None, missed },
+        })
+    }
+
+    /// The slots it wants from `start` to `end` that the definition does not
+    /// produce: empty means it is a subset of the definition there.
+    fn uncovered(&self, start: Aware, end: Aware) -> PyResult<Vec<Slot>> {
+        let zone = self.definition.zone();
+        let slots = self.selector.uncovered(&self.definition, start.in_zone(&zone)..=end.in_zone(&zone));
+        Ok(slots.map_err(schedule_err)?.into_iter().map(Slot::from).collect())
+    }
+
+    /// The start of its window, and the anchor of its rules.
+    #[getter]
+    fn start(&self) -> DateTime<chrono_tz::Tz> {
+        *self.selector.start()
+    }
+
+    /// The end of its window, if any; a `count` is here.
+    #[getter]
+    fn until(&self) -> Option<DateTime<chrono_tz::Tz>> {
+        self.selector.until().copied()
+    }
+
+    /// The slots it wants, strictly after `after` or from the start, whether
+    /// or not the definition produces them (see `uncovered`).
+    #[pyo3(signature = (after=None))]
+    fn slots(&self, after: Option<Aware>) -> PyResult<Slots> {
+        read::slots(self.selector.schedule(), after)
+    }
+
+    /// The first `n` slots it wants, as a list (see `slots`).
+    #[pyo3(signature = (n, after=None))]
+    fn take(&self, n: usize, after: Option<Aware>) -> PyResult<Vec<Slot>> {
+        read::take(self.selector.schedule(), n, after)
+    }
+
+    /// The slots it wants from `start` to `end`, both included.
+    fn between(&self, start: Aware, end: Aware) -> PyResult<Slots> {
+        read::between(self.selector.schedule(), start, end)
+    }
+
+    /// Its periods, from one slot it wants to the next; see `Document.periods`.
+    #[pyo3(signature = (start=None, end=None))]
+    fn periods(&self, start: Option<Aware>, end: Option<Aware>) -> PyResult<Periods> {
+        read::periods(self.selector.schedule(), start, end)
+    }
+
+    /// See `Document.moved_before_start`.
+    fn moved_before_start(&self) -> PyResult<Vec<Slot>> {
+        read::moved_before_start(self.selector.schedule())
+    }
+
+    /// The document as JSON, with only the fields given.
+    fn to_json(&self) -> PyResult<String> {
+        to_json(&self.doc)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Selector({})", self.to_json().unwrap_or_default())
+    }
+}
+
+// ── Bundles ──────────────────────────────────────────────────────────────────
+
+/// Documents that refer to each other (`{collections.repayment}`), built
+/// together as a set: all of them, or none.
+///
+/// - `definitions`: `{name: doc}`.
+/// - `instances`: `{name: (doc, definition)}`, each `definition` a
+///   `Document` outside the set that the instance selects from.
+/// - `calendars`: as for `Document`.
+///
+/// References stay in the set, never loop, and a definition refers only to
+/// definitions. A reference to an instance follows the slots it is due at.
+/// `Bundle(instances=...)`: each name with its document and definition.
+type InstanceArgs<'py> = std::collections::BTreeMap<String, (Bound<'py, PyAny>, PyRef<'py, Document>)>;
+
+#[pyclass(module = "tkone.schedule", frozen)]
+struct Bundle {
+    docs: std::collections::BTreeMap<String, ScheduleDoc>,
+    bundle: tkone_schedule::schedule::Bundle<BusinessDays<tkone_calendar::Calendar>>,
+}
+
+#[pymethods]
+impl Bundle {
+    #[new]
+    #[pyo3(signature = (definitions=None, instances=None, calendars=vec![]))]
+    fn new(
+        definitions: Option<std::collections::BTreeMap<String, Bound<'_, PyAny>>>,
+        instances: Option<InstanceArgs<'_>>,
+        calendars: Vec<Calendar>,
+    ) -> PyResult<Self> {
+        let set = calendar_set(calendars)?;
+        let mut builder = tkone_schedule::schedule::Bundle::builder();
+        let mut docs = std::collections::BTreeMap::new();
+        for (name, doc) in definitions.unwrap_or_default() {
+            let doc = parse_doc(&doc)?;
+            builder = builder.definition(name.clone(), doc.schedule_builder(&set).map_err(schedule_err)?);
+            docs.insert(name, doc);
+        }
+        for (name, (doc, definition)) in instances.unwrap_or_default() {
+            let doc = parse_doc(&doc)?;
+            let selector = doc.selector_builder(&definition.schedule).map_err(schedule_err)?;
+            builder = builder.instance(name.clone(), &definition.schedule, selector);
+            docs.insert(name, doc);
+        }
+        Ok(Self { docs, bundle: builder.build().map_err(schedule_err)? })
+    }
+
+    /// The documents' names, in order.
+    #[getter]
+    fn names(&self) -> Vec<String> {
+        self.bundle.names().map(str::to_string).collect()
+    }
+
+    /// The definition called `name`, as a `Document`.
+    fn document(&self, name: &str) -> PyResult<Document> {
+        match self.bundle.member(name) {
+            Some(tkone_schedule::schedule::bundle::Member::Definition(schedule)) => {
+                Ok(Document { doc: self.docs[name].clone(), schedule: schedule.clone() })
+            }
+            Some(_) => Err(ScheduleError::new_err(format!("`{name}` is an instance: use `selector`"))),
+            None => Err(ScheduleError::new_err(format!("there is no document `{name}`"))),
+        }
+    }
+
+    /// The instance called `name`, as a `Selector`.
+    fn selector(&self, name: &str) -> PyResult<Selector> {
+        match self.bundle.instance(name) {
+            Some((selector, definition)) => Ok(Selector {
+                doc: self.docs[name].clone(),
+                selector: selector.clone(),
+                definition: definition.clone(),
+            }),
+            None if self.bundle.member(name).is_some() => {
+                Err(ScheduleError::new_err(format!("`{name}` is a definition: use `document`")))
+            }
+            None => Err(ScheduleError::new_err(format!("there is no document `{name}`"))),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Bundle({:?})", self.names())
     }
 }
 
@@ -611,11 +863,19 @@ struct Timeline(tkone_schedule::schedule::Timeline<String, BusinessDays<tkone_ca
 #[pymethods]
 impl Timeline {
     #[new]
-    fn new(lanes: Vec<(String, PyRef<'_, Document>)>) -> Self {
-        let timeline = lanes
-            .iter()
-            .fold(tkone_schedule::schedule::Timeline::new(), |t, (key, doc)| t.add(key.clone(), doc.schedule.clone()));
-        Self(timeline)
+    fn new(lanes: Vec<(String, Bound<'_, PyAny>)>) -> PyResult<Self> {
+        let mut timeline = tkone_schedule::schedule::Timeline::new();
+        for (key, lane) in lanes {
+            let schedule = if let Ok(doc) = lane.cast::<Document>() {
+                doc.get().schedule.clone()
+            } else if let Ok(selector) = lane.cast::<Selector>() {
+                selector.get().selector.schedule().clone()
+            } else {
+                return Err(ScheduleError::new_err(format!("`{key}`: a lane is a `Document` or a `Selector`")));
+            };
+            timeline = timeline.add(key, schedule);
+        }
+        Ok(Self(timeline))
     }
 
     /// The keys, in the order given.
@@ -656,6 +916,9 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Period>()?;
     m.add_class::<Periods>()?;
     m.add_class::<Timeline>()?;
+    m.add_class::<Selector>()?;
+    m.add_class::<Next>()?;
+    m.add_class::<Bundle>()?;
     m.add_class::<Moment>()?;
     m.add_class::<Entry>()?;
     m.add_class::<Moments>()?;

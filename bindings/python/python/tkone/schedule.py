@@ -20,21 +20,27 @@ Timeline = _native.Timeline
 Moment = _native.Moment
 Entry = _native.Entry
 Moments = _native.Moments
+Selector = _native.Selector
+Next = _native.Next
+Bundle = _native.Bundle
 ScheduleError = _native.ScheduleError
 describe = _native.describe
 
 __all__ = [
     "Boundary",
+    "Bundle",
     "Document",
     "Entry",
     "Moment",
     "Moments",
+    "Next",
     "Occurrence",
     "Occurrences",
     "Period",
     "Periods",
     "Schedule",
     "ScheduleError",
+    "Selector",
     "Slot",
     "Slots",
     "Source",

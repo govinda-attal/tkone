@@ -252,7 +252,9 @@
 //! Within a schedule, a rule can be derived from another rule's adjusted
 //! dates: `{payment}~2PT09:00:00` is two business days before each payment
 //! *as moved*, which no single spec can say (it has one adjustment). See
-//! `ScheduleBuilder::rule`.
+//! `ScheduleBuilder::rule`. Across schedules, `{collections.repayment}`
+//! refers to another schedule's rule; schedules that refer to each other are
+//! built together, as a `schedule::Bundle`.
 //!
 //! The iterator builders also take an end (`with_end`), a count
 //! (`with_count`) and exclusions (`with_exclusions`) for a single rule.

@@ -15,6 +15,7 @@ date quoted here.
 - [Definitions and instances](#definitions-and-instances)
 - [The definitions](#the-definitions)
 - [The instances](#the-instances)
+- [A set of documents](#a-set-of-documents)
 - [The whole life](#the-whole-life)
 - [A lifetime event: early repayment](#a-lifetime-event-early-repayment)
 - [Who does what](#who-does-what)
@@ -196,27 +197,20 @@ version: 1
 start: 2026-01-15T12:00:00
 until: 2031-01-15
 rules:
-  - { id: repayment, rule: YY-MM-15~MFT12:00:00, basis: true }
-  - { id: reminder, rule: "{repayment}~2PT09:00:00" }
-exclude:
-  dates: [2026-01-15]
+  - { id: reminder, rule: "{collections.repayment}~2PT09:00:00" }
 ```
 
 60 runs, two business days before each repayment: Thu 12 Feb 2026 (for
 Mon 16 Feb), Thu 12 Mar (for Mon 16 Mar), Mon 13 Apr (for Wed 15 Apr), …,
 Mon 13 Jan 2031 (for the last).
 
-The basis repeats the collections rule: an instance selects from one
-definition, and the repayments are `servicing`'s, not `notices`'. The
-application writes both documents from one loan record, and replaces both on
-a lifetime event.
-
-The basis starts at the drawdown, so its first slot is the drawdown itself.
-The exclusion drops the reminder derived from it: a derived slot's actual date
-is its basis slot's date, so excluding 15 January removes the reminder "for"
-the drawdown. Without the exclusion, that reminder would be due on
-13 January, before the start, and dropped anyway; `moved_before_start` would
-report it.
+`{collections.repayment}` is the `repayment` rule of the `collections`
+instance, in the same set (see [A set of documents](#a-set-of-documents)):
+its slots as that instance is due at them, adjusted on its definition's
+calendar. Only the `~2P` is the reminders' own, counted on `notices`'
+calendar. The repayment rule is written once, and the reminders follow any
+change to it in the next version of the set. There is no reminder for the
+drawdown, since the collections exclude it.
 
 ### 6. Statements
 
@@ -245,6 +239,28 @@ rules:
 
 One run: Wed 22 Jan 2031 12:00. The application computes the date at setup
 (five business days after maturity) and writes it as a literal.
+
+## A set of documents
+
+The seven instances are one **set**: what the application submits for loan
+L-1001, and what tempo accepts or refuses as a whole
+([D13](schedule-document.md#d13-documents-that-refer-to-each-other-form-a-set)).
+Within a set, a document's rule can refer to another document's,
+`{collections.repayment}`, and tempo checks when the set is submitted that:
+
+- every reference names a document of the set, and a rule of it with slots
+  of its own;
+- no documents refer to each other in a loop;
+- every instance's slots are its definition's.
+
+A lifetime event submits the whole set again as its next version. In Rust the
+set is a `Bundle`, built from the documents' `selector_builder`s, all at once
+or not at all; [the test](../crates/tkone-calendar/tests/loan_lifecycle.rs)
+builds it that way.
+
+The fixings keep a basis of their own (`boundary`) instead of referring to the
+collections: their first fixing derives from the drawdown, which the
+collections exclude.
 
 ## The whole life
 
@@ -289,8 +305,8 @@ Mon 16 Feb 2026 18:00  accrual      first day at period 2's rate
 ## A lifetime event: early repayment
 
 On Mon 6 Mar 2028 the borrower agrees to repay everything on Fri 10 Mar
-2028. The application recomputes the loan's documents and sends new
-versions
+2028. The application recomputes the loan's documents and submits the
+set's next version
 ([D12](schedule-document.md#d12-a-new-version-keeps-the-stored-next-due-unless-it-cant-stand)).
 
 ```yaml
@@ -315,7 +331,9 @@ rules:
 ```
 
 The other instances only change their `until`: accrual to `2028-03-10`,
-fixings and reminders to `2028-03-09`, statements to `2028-04-03`.
+fixings to `2028-03-09`, statements to `2028-04-03`. The reminders need no
+change of their own: they follow the collections, whose version 2 has no
+repayment after 15 February (its last reminder is Fri 11 Feb 2028).
 
 The first `version` field is the document format, always `1`. The document's
 own version, 2 here, is tempo's to keep.
@@ -327,7 +345,7 @@ What tempo holds on the morning of 6 March, and what D12 does with it:
 | collections | Wed 15 Mar 12:00 | `until` 10 Mar, a one-off on 10 Mar | recomputed (`recompute_pending`, proposed) | Fri 10 Mar 12:00, then done: 26 collections in all, 25 monthly and the early repayment |
 | accrual | Mon 6 Mar 18:00 | `until` 10 Mar | kept | to Fri 10 Mar 18:00, then done |
 | fixings | Mon 13 Mar 11:00 | `until` 9 Mar | dropped: the version has ended before it | done |
-| reminders | Mon 13 Mar 09:00 | `until` 9 Mar | dropped | done |
+| reminders | Mon 13 Mar 09:00 | none: they follow the collections | recomputed (`recompute_pending`): no repayment left to remind of | done |
 | statements | Mon 3 Apr 09:00 | `until` 3 Apr | kept: the final statement | done |
 | closure | Wed 22 Jan 2031 12:00 | a one-off on 17 Mar | recomputed | Fri 17 Mar 12:00, then done |
 
@@ -339,9 +357,9 @@ that computed it.
 | The application | Tempo |
 |---|---|
 | owns the loan's terms and its events | knows nothing about loans |
-| writes the instance documents at setup | checks each against its definition (`uncovered`) |
+| submits the loan's set of instance documents at setup | checks the set as a whole: references, loops, each instance against its definition (`uncovered`) |
 | computes one-off dates (the closure) | stores one next due per instance |
-| sends new versions on a lifetime event | keeps, drops or recomputes the stored due (D12) |
+| sends the set's next version on a lifetime event | keeps, drops or recomputes each stored due (D12) |
 | tests it all first in Rust: `Schedule`, `periods`, a [timeline](timeline.md), on [fixed calendars](timeline.md#testing-with-a-timeline) | fires, retries, catches up |
 
 ## Caveats
@@ -353,10 +371,10 @@ that computed it.
 - **Every slot must be the definition's.** A one-off at 12:30, or on a
   Saturday, is not a slot of `servicing`. `uncovered` reports it when the
   instance is registered, instead of when it is due.
-- **A basis is read on its document's calendar.** The reminders' basis is
-  evaluated on `notices`' calendar, the collections on `servicing`'s. Both
-  are `GBLO` here. If they differed, the basis repayments could differ from
-  the real ones.
+- **A basis is read on its own document's calendar.** The fixings' `boundary`
+  is evaluated on `rates`' calendar, not `servicing`'s. Both are `GBLO` here;
+  where they differ, refer to the other document instead, as the reminders
+  do: a reference is read on the referred document's calendar.
 - **`recompute_pending` is proposed**, as part of D12, and so is tempo's
   registration API. Everything else on this page works with today's
-  `ScheduleDoc`, derived rules included.
+  `ScheduleDoc` and `Bundle`, derived rules and references included.

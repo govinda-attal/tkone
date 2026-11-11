@@ -429,12 +429,12 @@ how to retry, overlap and catch up.
   instances with their rules. Tempo computes each next due lazily (D6) and
   keeps going for the life of the loan.
 - **Lifetime events are new versions.** A payment holiday, early repayment
-  or restructure: the application recomputes the rules and sends a new
-  version of the instance document (D12). Tempo recomputes from it.
-- **Nothing crosses documents.** Tempo never derives one document's dates
-  from another's. A rule may refer only to rules in its own document
-  ([derived rules](#rules-derived-from-other-rules)). Anything that
-  spans documents is application logic, computed with tkone-schedule
+  or restructure: the application recomputes the rules and submits the next
+  version of the loan's set of documents (D12, D13). Tempo recomputes from it.
+- **Nothing crosses a set.** A rule may refer to a rule of its own document,
+  or of another document in its set
+  ([derived rules](#rules-derived-from-other-rules), D13), never beyond.
+  Anything that spans sets is application logic, computed with tkone-schedule
   (`Schedule`, periods, a [timeline](timeline.md)) and registered as rules.
 
 ### D12. A new version keeps the stored next due, unless it can't stand
@@ -457,6 +457,47 @@ Calendar data is a version too: a holiday declared at short notice changes
 every document on that calendar. Tempo records the calendar data each due
 was computed with, which is how it detects the second case.
 
+
+### D13. Documents that refer to each other form a set
+
+A rule can refer to a rule of another document, `{collections.repayment}`,
+only within a **set**: the documents an application submits together, such
+as everything one loan runs. Tempo accepts a set as a whole or refuses it;
+there is no update of one document on its own.
+
+When a set is submitted, tempo checks that:
+
+1. **Every reference stays in the set,** and names a rule with slots of its
+   own: not a basis, and not itself derived (references are one level deep).
+2. **No documents refer to each other in a loop,** even through others
+   (`a → b → a` is refused, with the loop named).
+3. **A definition refers only to definitions.** Shared definitions, such as
+   the notice batches, never depend on an instance: they are a set of their
+   own, and instances select from them without referring to them.
+4. **Every instance's slots are its definition's** (`uncovered`), derived
+   ones included.
+
+And the references mean:
+
+5. **A reference follows the schedule, not execution.** A reminder derives
+   from the repayment rule's slots as scheduled, never from whether a
+   repayment run happened, so lazy computation (D6) stays deterministic.
+6. **A reference to an instance follows the slots it is due at:** those its
+   definition produces, not those it wants and misses. A reminder is never
+   derived from a repayment that cannot run.
+7. **The referred rule is read in its own document's context:** its zone,
+   its calendar, its exclusions and window. Only the derived rule's own
+   adjustment is counted on the referring document's calendar. A reference
+   to a London repayment from a Brussels fixing gives the repayment as London
+   adjusts it.
+8. **Versions are per set (D12).** The next version of a set is checked as a
+   whole, and D12 applies to every instance in it in one transaction: an
+   instance whose own document did not change can still have its stored due
+   recomputed, because what it refers to did.
+
+In Rust a set is a `Bundle`: schedules and instances added by name and built
+together, in dependency order, failing as a whole with the failing member
+named.
 ---
 
 ## Builder
@@ -503,9 +544,10 @@ Gaps in the earlier builders this closed:
 
 ## Rules derived from other rules
 
-Status: **built**, in `Schedule` (`rule`, `named_rule`, `basis_rule`) and in
-documents (`basis: true`). [A loan's life](loan-lifecycle.md) uses it for
-rate fixings and reminders.
+Status: **built**, in `Schedule` and `Selector` (`rule`, `named_rule`,
+`basis_rule`), in documents (`basis: true`), and across the documents of a
+set with `Bundle` (D13). [A loan's life](loan-lifecycle.md) uses a basis for
+its rate fixings and a reference for its reminders.
 
 ### The need
 
@@ -548,13 +590,16 @@ rule itself has to say "two business days before the repayment".
 This is a second, weaker language beside the spec. The offset is a
 `~nP` written differently, and the time is a `T…` written differently.
 
-### Rejected: references across documents
+### References across documents: within a set
 
-`{loan.repayment}~2PT11:00:00`, one document's rule referring to another
-document's. Rules would no longer mean anything without the documents they
-name; loading, validation and versioning (D12) would have to follow a graph
-of documents, one edge per instance; and it would make tempo derive domain
-dates, which belong to the application (D11).
+`{collections.repayment}~2PT09:00:00`, one document's rule referring to
+another document's. This was first rejected: rules would mean nothing without
+the documents they name, loading and versioning (D12) would have to follow a
+graph of documents, and loops would need checking. Sets (D13) answer each:
+references resolve within the set, the set is versioned and accepted as a
+whole, and loops are refused when it is submitted. A reference also does what
+a basis cannot: the rule is written once, and read on its own document's
+calendar.
 
 ### Design: a reference to a rule in the same document
 
@@ -583,8 +628,9 @@ rules:
 
 The repayment rule is then written in two documents: the repayment instance
 and the reminder instance. Both are written by the application from one loan
-record, and replaced together on a lifetime event (D11, D12). The
-application owns keeping them the same, as it owns the loan.
+record, and replaced together on a lifetime event (D11, D12). A reference to
+the repayment instance's own rule avoids the copy; see
+[references across documents](#references-across-documents-within-a-set).
 
 A reference within one document keeps everything else as it is:
 
@@ -630,10 +676,12 @@ A reference within one document keeps everything else as it is:
 
 ### What was built, and its limits
 
-- **Within one schedule or document.** A reference names a rule of the same
-  schedule. Anything that spans documents is the application's (D11).
-- **One level.** The referred rule must not itself be derived, so references
-  cannot loop.
+- **Within one schedule, or one set.** `{rule}` names a rule of the same
+  schedule; `{document.rule}` a rule of another schedule in its `Bundle`
+  (D13). Anything that spans sets is the application's (D11).
+- **One level.** The referred rule must not itself be derived, nor, in
+  another document, a basis. Documents must not refer to each other in a
+  loop.
 - **Any time spec, read from the basis slot's time.** After the reference
   come an optional adjustment and `T` with a time spec, read with the basis
   slot's time as an ordinary rule's is read with its start: `09:00:00`,
@@ -673,13 +721,16 @@ opens the first period instead of ending one. A start-exclusive option
 was considered and rejected: it fixes the first place and breaks the
 second.
 
-### Open question: the basis is read on its document's calendar
+### A basis or a reference
 
-In the reminder instance, the repayment's `~MF` is evaluated on the reminder
-definition's calendar. If the collections definition uses another one, the
-basis can differ from the real repayments. The application must use the same
-calendar, or tempo must check that the basis's calendar matches the
-definition it was copied from.
+A basis is read on its own document's calendar. A basis copied from another
+document (the repayment rule, in a reminder instance) can therefore disagree
+with the original when the two definitions' calendars differ: 1 January on a
+London calendar moves a repayment to the 2nd, on a weekends-only calendar it
+does not. A reference has no such copy: `{collections.repayment}` is the
+collections' own slots. Use a basis for a rule the document needs and no
+other document has (a loan's fixings derive from the period boundaries,
+drawdown included); refer to the other document when it has the rule.
 
 ## Deferred
 

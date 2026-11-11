@@ -9,7 +9,7 @@ use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 use tkone_calendar::{Calendar, Calendars};
 use tkone_schedule::schedule::document::{BusinessDays, ScheduleDoc};
-use tkone_schedule::schedule::{Next, Schedule, Selector, Timeline};
+use tkone_schedule::schedule::{Bundle, Next, Schedule, Selector, Timeline};
 
 const PAGE: &str = include_str!("../../../docs/loan-lifecycle.md");
 
@@ -55,26 +55,48 @@ impl Loan {
         Self { definitions, blocks }
     }
 
-    /// The instance labelled `key` (with its version, if any), with its
-    /// definition, after replacing `until` when `until` is given.
+    /// The instance labelled `key` (`L-1001/collections`, or with its
+    /// version, `L-1001/collections, version 2`), with its definition, after
+    /// replacing `until` when `until` is given. It is built in the loan's
+    /// bundle, with the other instances as the page gives them: the
+    /// reminders refer to the collections.
     fn instance(&self, key: &str, until: Option<&str>) -> (Selector<Bdp>, &Schedule<Bdp>) {
-        let (label, yaml) = self
-            .blocks
-            .iter()
-            .find(|(label, _)| label.strip_prefix("instance: ").and_then(|l| l.split(" (").next()) == Some(key))
-            .unwrap_or_else(|| panic!("no instance {key}"));
-        let name = label.rsplit("(definition: ").next().unwrap().trim_end_matches(')');
-        let definition = &self.definitions[name];
-        let yaml = match until {
-            Some(until) => yaml
-                .lines()
-                .map(|l| if l.starts_with("until:") { format!("until: {until}") } else { l.to_string() })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            None => yaml.clone(),
-        };
-        let selector = doc(&yaml).selector(definition).unwrap();
-        (selector, definition)
+        let (bundle, name, definition) = self.bundle(key, until);
+        (bundle.instance(&name).unwrap().0.clone(), definition)
+    }
+
+    /// The loan's bundle, with `key` as `instance` takes it; and the name
+    /// and definition of `key`'s instance in it.
+    fn bundle(&self, key: &str, until: Option<&str>) -> (Bundle<Bdp>, String, &Schedule<Bdp>) {
+        let base = key.split(", version").next().unwrap();
+        let mut bundle = Bundle::builder();
+        let mut wanted = None;
+        for (label, yaml) in &self.blocks {
+            let Some(rest) = label.strip_prefix("instance: ") else { continue };
+            let (this, definition) = rest.split_once(" (definition: ").unwrap();
+            let definition = &self.definitions[definition.trim_end_matches(')')];
+            let this_base = this.split(", version").next().unwrap();
+            // Version 1 of every instance, except the one asked for.
+            let chosen = if this_base == base { this == key } else { !this.contains(", version") };
+            if !chosen {
+                continue;
+            }
+            let yaml = match until {
+                Some(until) if this == key => yaml
+                    .lines()
+                    .map(|l| if l.starts_with("until:") { format!("until: {until}") } else { l.to_string() })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => yaml.clone(),
+            };
+            let name = this_base.rsplit('/').next().unwrap();
+            if this == key {
+                wanted = Some((name.to_string(), definition));
+            }
+            bundle = bundle.instance(name, definition, doc(&yaml).selector_builder(definition).unwrap());
+        }
+        let (name, definition) = wanted.unwrap_or_else(|| panic!("no instance {key}"));
+        (bundle.build().unwrap(), name, definition)
     }
 
     /// Every run of an instance, checked to be its definition's.
@@ -238,6 +260,13 @@ fn early_repayment() {
     let all: Vec<_> = v2.schedule().slots().unwrap().collect().unwrap();
     assert_eq!(all.len(), 26);
     assert_eq!(all.iter().filter(|s| s.sources[0].rule_id.as_deref() == Some("repayment")).count(), 25);
+
+    // The reminders follow the collections: with version 2 of the
+    // collections, and no change of their own, nothing is left to remind of.
+    let (set, _, _) = loan.bundle("L-1001/collections, version 2", None);
+    let (reminders, notices) = set.instance("reminders").unwrap();
+    assert_eq!(next(reminders, notices, morning), None);
+    assert_eq!(next(reminders, notices, london(2028, 2, 1, 0)).as_deref(), Some("Fri 11 Feb 2028 09:00"));
 
     // Closure: 22 January 2031 becomes 17 March 2028.
     let (v1, definition) = loan.instance("L-1001/closure", None);

@@ -943,3 +943,179 @@ fn a_selector_needs_its_definition() {
     let err = account.next_after(&elsewhere, &at(2026, 1, 1, 0, 0), &at(2026, 3, 1, 0, 0), |_| {}).unwrap_err();
     assert!(matches!(err, Error::InvalidSchedule(why) if why.contains("another time zone")));
 }
+
+// ---------------------------------------------------------------------------
+// Bundles: references across schedules
+// ---------------------------------------------------------------------------
+
+/// Weekends only: no holidays.
+fn weekends() -> Holidays {
+    Holidays(BTreeSet::new())
+}
+
+fn every_day(at_time: &str, bdp: Holidays) -> Schedule<Holidays> {
+    Schedule::builder(at(2025, 12, 1, 0, 0), bdp).rule(format!("YY-MM-DD~SBT{at_time}")).build().unwrap()
+}
+
+#[test]
+fn a_reference_reads_the_other_schedule_in_its_own_context() {
+    use crate::schedule::Bundle;
+    // Collections on London's holidays; notices on weekends only.
+    let servicing = every_day("12:00:00", Holidays::london());
+    let notices = every_day("09:00:00", weekends());
+    let start = at(2025, 12, 1, 0, 0);
+    let loan = Bundle::builder()
+        .instance("collections", &servicing, servicing.selector(start).named_rule("repayment", "YY-MM-01~NBT12:00:00"))
+        .instance(
+            "reminders",
+            &notices,
+            notices.selector(start).named_rule("reminder", "{collections.repayment}~2PT09:00:00"),
+        )
+        .build()
+        .unwrap();
+    // 1 January 2026 is a London holiday: repaid Friday 2 January, so the
+    // reminder is two (weekend-only) business days before that: Wed 31 Dec.
+    // A basis copy in the reminders would read 1 January on the notices'
+    // calendar, repay on Thursday 1 January, and remind on Tue 30 Dec.
+    let reminders: Vec<Slot> = loan
+        .schedule("reminders")
+        .unwrap()
+        .slots_between(at(2025, 12, 15, 0, 0)..=at(2026, 2, 15, 0, 0))
+        .unwrap()
+        .collect()
+        .unwrap();
+    assert_eq!(
+        reminders.iter().map(fmt).collect::<Vec<_>>(),
+        ["Wed 31 Dec 09:00 reminder", "Thu 29 Jan 09:00 reminder"]
+    );
+    assert_eq!(reminders[0].sources[0].basis, Some(at(2026, 1, 2, 12, 0)));
+    let copied = notices
+        .selector(start)
+        .basis_rule("repayment", "YY-MM-01~NBT12:00:00")
+        .named_rule("reminder", "{repayment}~2PT09:00:00")
+        .build()
+        .unwrap();
+    let first =
+        copied.schedule().slots_between(at(2025, 12, 15, 0, 0)..=at(2026, 1, 31, 0, 0)).unwrap().next().unwrap();
+    assert_eq!(first.map(|s| fmt(&s)).as_deref(), Some("Tue 30 Dec 09:00 reminder"));
+    // Every reminder is one of the notices definition's slots.
+    let (selector, definition) = loan.instance("reminders").unwrap();
+    assert!(selector.uncovered(definition, at(2025, 12, 1, 0, 0)..=at(2026, 12, 31, 0, 0)).unwrap().is_empty());
+    agrees(loan.schedule("reminders").unwrap(), 60);
+}
+
+#[test]
+fn a_reference_to_an_instance_follows_its_due_slots() {
+    use crate::schedule::Bundle;
+    // Servicing does not run on 15 January: that repayment is missed, and no
+    // reminder is derived from it.
+    let servicing = Schedule::builder(at(2026, 1, 1, 0, 0), weekends())
+        .rule("YY-MM-DD~SBT12:00:00")
+        .exclude_date(d(2026, 1, 15))
+        .build()
+        .unwrap();
+    let notices = every_day("09:00:00", weekends());
+    let start = at(2026, 1, 1, 0, 0);
+    let loan = Bundle::builder()
+        .instance("collections", &servicing, servicing.selector(start).named_rule("repayment", "YY-MM-15~NBT12:00:00"))
+        .instance(
+            "reminders",
+            &notices,
+            notices.selector(start).named_rule("reminder", "{collections.repayment}~1PT09:00:00"),
+        )
+        .build()
+        .unwrap();
+    assert_eq!(
+        first(loan.schedule("reminders").unwrap(), 2),
+        ["Fri 13 Feb 09:00 reminder", "Fri 13 Mar 09:00 reminder"]
+    );
+}
+
+#[test]
+fn definitions_refer_across_time_zones() {
+    use crate::schedule::Bundle;
+    let new_york = chrono_tz::America::New_York.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap();
+    let london = at(2026, 6, 1, 0, 0);
+    // New York closes at 16:00 (21:00 in London); London reports at 09:00 the
+    // next business day.
+    let markets = Bundle::builder()
+        .definition("close", Schedule::builder(new_york, weekends()).named_rule("close", "YY-MM-DD~SBT16:00:00"))
+        .definition("report", Schedule::builder(london, weekends()).named_rule("report", "{close.close}~1NT09:00:00"))
+        .build()
+        .unwrap();
+    // Fri 5 June's close is reported on Monday 8 June.
+    let reports: Vec<String> = markets
+        .schedule("report")
+        .unwrap()
+        .slots_between(at(2026, 6, 5, 0, 0)..=at(2026, 6, 9, 23, 0))
+        .unwrap()
+        .map(|s| Ok(fmt(&s)))
+        .collect()
+        .unwrap();
+    assert_eq!(reports, ["Fri 05 Jun 09:00 report", "Mon 08 Jun 09:00 report", "Tue 09 Jun 09:00 report"]);
+}
+
+#[test]
+fn a_bundle_is_checked_as_a_whole() {
+    use crate::schedule::Bundle;
+    let start = at(2026, 1, 1, 0, 0);
+    let def = |rules: &[(&str, &str)]| {
+        rules.iter().fold(Schedule::builder(start, weekends()), |b, (id, rule)| b.named_rule(*id, *rule))
+    };
+    let error = |bundle: crate::schedule::BundleBuilder<Holidays>| bundle.build().unwrap_err().to_string();
+    let notices = every_day("09:00:00", weekends());
+    // Not in a bundle at all.
+    let alone = def(&[("r", "{other.x}~1PT09:00:00")]).build().unwrap_err().to_string();
+    assert!(alone.contains("not in its bundle"), "{alone}");
+    // Unknown schedule, its own name, a loop, a definition on an instance.
+    assert!(error(Bundle::builder().definition("a", def(&[("r", "{b.x}~1PT09:00:00")]))).contains("no schedule `b`"));
+    assert!(error(Bundle::builder().definition("a", def(&[("x", "YY-MM-15T09:00:00"), ("r", "{a.x}~1PT09:00:00")])))
+        .contains("write its own rules as `{x}`"));
+    let looped = error(
+        Bundle::builder()
+            .definition("a", def(&[("x", "YY-MM-15T09:00:00"), ("r", "{b.y}~1PT09:00:00")]))
+            .definition("b", def(&[("y", "YY-MM-20T09:00:00"), ("s", "{a.x}~1PT09:00:00")])),
+    );
+    assert!(looped.contains("in a loop: a → b → a"), "{looped}");
+    let upward = error(
+        Bundle::builder()
+            .instance("i", &notices, notices.selector(start).named_rule("x", "YY-MM-15T09:00:00"))
+            .definition("d", def(&[("r", "{i.x}~1PT09:00:00")])),
+    );
+    assert!(upward.contains("definitions refer only to definitions"), "{upward}");
+    // The referred rule must have slots of its own.
+    let to = |rules: &[(&str, &str)], basis: bool| {
+        let mut b = Schedule::builder(start, weekends());
+        for (id, rule) in rules {
+            b = if basis { b.basis_rule(*id, *rule) } else { b.named_rule(*id, *rule) };
+        }
+        b
+    };
+    let derived = error(
+        Bundle::builder()
+            .definition("a", to(&[("x", "YY-MM-15T09:00:00"), ("y", "{x}~1PT09:00:00")], false))
+            .definition("b", def(&[("r", "{a.y}~1PT09:00:00")])),
+    );
+    assert!(derived.contains("`b`: rule `r` refers to `a.y`, which is itself derived"), "{derived}");
+    let missing = error(
+        Bundle::builder()
+            .definition("a", def(&[("x", "YY-MM-15T09:00:00")]))
+            .definition("b", def(&[("r", "{a.z}~1PT09:00:00")])),
+    );
+    assert!(missing.contains("which is not one of its rules"), "{missing}");
+    // Names.
+    assert!(error(Bundle::builder().definition("a.b", def(&[("x", "YY-MM-15T09:00:00")]))).contains("without `.`"));
+    assert!(error(
+        Bundle::builder()
+            .definition("a", def(&[("x", "YY-MM-15T09:00:00")]))
+            .definition("a", def(&[("x", "YY-MM-15T09:00:00")]))
+    )
+    .contains("added twice"));
+    // One failing schedule fails the bundle, named.
+    let bad = error(
+        Bundle::builder()
+            .definition("a", def(&[("x", "YY-MM-15T09:00:00")]))
+            .definition("b", def(&[("r", "YY-13-01T09:00:00")])),
+    );
+    assert!(bad.starts_with("invalid schedule: `b`:") || bad.contains("`b`: rule `r`"), "{bad}");
+}

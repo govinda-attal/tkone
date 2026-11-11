@@ -1,23 +1,27 @@
 //! Rules derived from another rule's slots: `{repayment}~2PT09:00:00`.
 //!
-//! Within a [`Schedule`](super::Schedule), a rule's date part can name
-//! another rule instead of a date pattern. Its dates are that rule's
-//! adjusted dates, then its own one adjustment applies. "Two business days
-//! before the repayment, after Modified Following" is written once, as
+//! A rule's date part can name another rule instead of a date pattern: one
+//! of the same schedule (`{repayment}`), or of another schedule in the same
+//! [`Bundle`](super::Bundle) (`{collections.repayment}`). Its dates are that
+//! rule's adjusted dates, then its own one adjustment applies. "Two business
+//! days before the repayment, after Modified Following" is written once, as
 //! two rules, without counting back from the unadjusted date.
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use chrono_tz::Tz;
 use fallible_iterator::FallibleIterator;
 
+use super::{Slot, Slots};
 use crate::biz_day::BizDayProcessor;
 use crate::datetime::SpecIterator;
 use crate::utils::resolve_local;
 use crate::{DstPolicy, Error, Occurrence, Result};
 
-/// A parsed `{id}[~adjustment]Ttime`.
+/// A parsed `{[document.]id}[~adjustment]Ttime`.
 #[derive(Debug, Clone)]
 pub(super) struct Reference {
+    /// The other schedule of the bundle the rule is in, if not this one.
+    pub doc: Option<String>,
     /// The rule referred to.
     pub id: String,
     /// The adjustment, as a date spec with every date (`YY-MM-DD~2P`).
@@ -36,9 +40,14 @@ impl Reference {
 
     fn parse_rest(rule: &str, rest: &str) -> Result<Self> {
         let invalid = |why: &str| Error::InvalidSchedule(format!("`{rule}`: {why}"));
-        let (id, rest) = rest.split_once('}').ok_or_else(|| invalid("a reference is `{id}`, closed by `}`"))?;
-        if id.is_empty() || id.contains(char::is_whitespace) {
-            return Err(invalid("a reference names a rule id"));
+        let (name, rest) = rest.split_once('}').ok_or_else(|| invalid("a reference is `{id}`, closed by `}`"))?;
+        let (doc, id) = match name.split_once('.') {
+            Some((doc, id)) => (Some(doc), id),
+            None => (None, name),
+        };
+        let bad = |part: &str| part.is_empty() || part.contains(char::is_whitespace);
+        if bad(id) || doc.is_some_and(bad) {
+            return Err(invalid("a reference names a rule id, or a document and a rule: `{collections.repayment}`"));
         }
         let (adjustment, time) = rest
             .split_once('T')
@@ -50,7 +59,7 @@ impl Reference {
             .parse::<crate::date::Spec>()
             .map_err(|e| invalid(&format!("the adjustment: {e}")))?;
         let time = time.parse::<crate::time::Spec>().map_err(|e| invalid(&format!("the time: {e}")))?;
-        Ok(Self { id: id.to_string(), adjustment, time })
+        Ok(Self { doc: doc.map(str::to_string), id: id.to_string(), adjustment, time })
     }
 
     /// How many business days later than its referred slot a derived slot
@@ -74,12 +83,73 @@ impl Reference {
 /// A derived occurrence, with the referred slot's instant.
 pub(super) type Derivation = (Occurrence<DateTime<Tz>>, DateTime<Tz>);
 
+/// Where a derived rule's referred slots come from.
+#[derive(Debug)]
+pub(super) enum Basis<B: BizDayProcessor> {
+    /// A rule of the same schedule: its occurrences.
+    Rule(Box<SpecIterator<Tz, B>>),
+    /// A rule of another schedule in the bundle: its slots.
+    Other(Box<Referred<B>>),
+}
+
+/// Another schedule's slots for one of its rules. For an instance, only
+/// those its definition produces: the slots it is due at, not those it
+/// wants and misses.
+#[derive(Debug)]
+pub(super) struct Referred<B: BizDayProcessor> {
+    pub slots: Slots<B>,
+    pub rule: String,
+    /// An instance's definition: its slots, and the one read ahead.
+    pub definition: Option<(Slots<B>, Option<Slot>)>,
+    /// Slots on a later date (in the derived rule's zone) cannot give a
+    /// derived slot within `until`: the search stops there.
+    pub last_date: Option<NaiveDate>,
+}
+
+impl<B: BizDayProcessor> Basis<B> {
+    /// The next referred instant, in `zone`.
+    fn next(&mut self, zone: &Tz) -> Result<Option<DateTime<Tz>>> {
+        let referred = match self {
+            Basis::Rule(rule) => return Ok(rule.next()?.map(|occurrence| *occurrence.observed())),
+            Basis::Other(referred) => referred,
+        };
+        while let Some(slot) = referred.slots.next()? {
+            let at = slot.at.with_timezone(zone);
+            if referred.last_date.is_some_and(|last| at.date_naive() > last) {
+                return Ok(None);
+            }
+            if !slot.sources.iter().any(|source| source.rule_id.as_deref() == Some(referred.rule.as_str())) {
+                continue;
+            }
+            let Some((produced, head)) = &mut referred.definition else {
+                return Ok(Some(at));
+            };
+            // Keep the instance's slot only if its definition produces it.
+            loop {
+                if head.is_none() {
+                    *head = produced.next()?;
+                    if head.is_none() {
+                        // The definition has ended: nothing more is due.
+                        return Ok(None);
+                    }
+                }
+                match head {
+                    Some(next) if next.at < slot.at => *head = None,
+                    Some(next) if next.at == slot.at => return Ok(Some(at)),
+                    _ => break,
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
 /// A derived rule's occurrences, from its referred rule's.
 #[derive(Debug)]
 pub(super) struct Derived<B: BizDayProcessor> {
     pub reference: Reference,
-    /// The referred rule's occurrences.
-    pub basis: SpecIterator<Tz, B>,
+    /// The referred rule's slots.
+    pub basis: Basis<B>,
     pub bdp: B,
     pub zone: Tz,
     pub policy: DstPolicy,
@@ -147,8 +217,7 @@ impl<B: BizDayProcessor> Derived<B> {
     /// Move to the next referred slot whose date the adjustment keeps
     /// (`~SB` drops some); `false` when there are none.
     fn next_day(&mut self) -> Result<bool> {
-        while let Some(basis) = self.basis.next()? {
-            let from = *basis.observed();
+        while let Some(from) = self.basis.next(&self.zone)? {
             let date = from.date_naive();
             let Some(adjusted) = crate::date::adjust_one(&self.reference.adjustment, from.naive_local(), &self.bdp)?
             else {

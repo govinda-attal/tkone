@@ -28,6 +28,7 @@
 //! # Ok::<(), tkone_schedule::Error>(())
 //! ```
 
+pub mod bundle;
 mod derived;
 #[cfg(feature = "serde")]
 pub mod document;
@@ -35,12 +36,14 @@ pub mod period;
 pub mod selector;
 pub mod timeline;
 
+pub use bundle::{Bundle, BundleBuilder};
 pub use period::{Boundary, Period, Periods};
 pub use selector::{Next, Selector, SelectorBuilder};
 pub use timeline::{Entry, Moment, Moments, Timeline};
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveTime};
 use chrono_tz::Tz;
@@ -91,14 +94,30 @@ pub enum ExcludeMatch {
 }
 
 #[derive(Debug, Clone)]
-struct Rule {
+struct Rule<B: BizDayProcessor> {
     id: Option<String>,
     spec: String,
     /// Referred to by derived rules; no slots of its own.
     basis: bool,
-    /// For a derived rule, the index of the rule it refers to, set by
-    /// `build`.
-    reference: Option<(usize, derived::Reference)>,
+    /// For a derived rule, the rule it refers to, set by `build`.
+    reference: Option<(Target<B>, derived::Reference)>,
+}
+
+/// The rule a derived rule refers to.
+#[derive(Debug, Clone)]
+enum Target<B: BizDayProcessor> {
+    /// A rule of the same schedule, by index.
+    Local(usize),
+    /// A rule of another schedule in the bundle.
+    Other(Arc<Referent<B>>),
+}
+
+/// Another schedule of a bundle, as a derived rule sees it: its slots, and
+/// for an instance, its definition (only the slots it produces are due).
+#[derive(Debug)]
+pub(crate) struct Referent<B: BizDayProcessor> {
+    pub schedule: Schedule<B>,
+    pub definition: Option<Schedule<B>>,
 }
 
 /// Rules anchored at a start, read in its time zone, on a business-day
@@ -112,7 +131,7 @@ pub struct Schedule<B: BizDayProcessor> {
     start: DateTime<Tz>,
     until: Option<DateTime<Tz>>,
     count: Option<usize>,
-    rules: Vec<Rule>,
+    rules: Vec<Rule<B>>,
     exclude_dates: BTreeSet<NaiveDate>,
     exclude_rules: Vec<String>,
     exclude_match: ExcludeMatch,
@@ -121,6 +140,8 @@ pub struct Schedule<B: BizDayProcessor> {
     reach: u32,
     /// The most business days any rule's adjustment moves a date earlier.
     back_reach: u32,
+    /// The other schedules of its bundle that its rules refer to, by name.
+    others: BTreeMap<String, Arc<Referent<B>>>,
 }
 
 /// Builds a [`Schedule`]; see [`Schedule::builder`].
@@ -146,6 +167,7 @@ impl<B: BizDayProcessor> Schedule<B> {
             options: Default::default(),
             reach: 0,
             back_reach: 0,
+            others: BTreeMap::new(),
         })
     }
 
@@ -280,15 +302,26 @@ impl<B: BizDayProcessor> Schedule<B> {
                         &from,
                         self.options,
                     )?)),
-                    Some((to, reference)) => RuleIter::Derived(Box::new(derived::Derived {
+                    Some((target, reference)) => RuleIter::Derived(Box::new(derived::Derived {
                         reference: reference.clone(),
-                        basis: SpecIterator::anchored(
-                            &self.rules[*to].spec,
-                            self.bdp.clone(),
-                            &self.start,
-                            &from,
-                            self.options,
-                        )?,
+                        basis: match target {
+                            Target::Local(to) => derived::Basis::Rule(Box::new(SpecIterator::anchored(
+                                &self.rules[*to].spec,
+                                self.bdp.clone(),
+                                &self.start,
+                                &from,
+                                self.options,
+                            )?)),
+                            Target::Other(referent) => derived::Basis::Other(Box::new(derived::Referred {
+                                slots: referent.schedule.slots_after(&from)?,
+                                rule: reference.id.clone(),
+                                definition: match &referent.definition {
+                                    Some(definition) => Some((definition.slots_after(&from)?, None)),
+                                    None => None,
+                                },
+                                last_date: self.last_actual(until.as_ref()),
+                            })),
+                        },
                         bdp: self.bdp.clone(),
                         zone: self.zone(),
                         policy: self.options.0,
@@ -467,7 +500,7 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
             return Err(invalid("`count` must be at least 1".into()));
         }
         let mut ids = BTreeSet::new();
-        let name = |n: usize, rule: &Rule| match &rule.id {
+        let name = |n: usize, rule: &Rule<B>| match &rule.id {
             Some(id) => format!("rule `{id}`"),
             None => format!("rule {}", n + 1),
         };
@@ -499,6 +532,35 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
                 }
                 Some(reference) => reference.map_err(|e| invalid(format!("{}: {e}", name(n, rule))))?,
             };
+            if let Some(doc) = &reference.doc {
+                let referent = schedule.others.get(doc).cloned().ok_or_else(|| {
+                    invalid(format!(
+                        "{} refers to `{doc}.{}`, but `{doc}` is not in its bundle: build the schedules that refer to \
+                         each other together, in a `Bundle`",
+                        name(n, rule),
+                        reference.id
+                    ))
+                })?;
+                let other =
+                    referent.schedule.rules.iter().find(|other| other.id.as_deref() == Some(reference.id.as_str()));
+                let what = match other {
+                    None => Some("which is not one of its rules"),
+                    Some(other) if other.basis => Some("which is a basis, with no slots to refer to"),
+                    Some(other) if other.reference.is_some() => {
+                        Some("which is itself derived; refer to the rule it derives from")
+                    }
+                    Some(_) => None,
+                };
+                if let Some(what) = what {
+                    return Err(invalid(format!("{} refers to `{doc}.{}`, {what}", name(n, rule), reference.id)));
+                }
+                // The other schedule's slots are observed instants: a derived
+                // slot is later than one by at most its own forward reach.
+                schedule.reach = schedule.reach.max(reference.forward_reach());
+                schedule.back_reach = schedule.back_reach.max(reference.backward_reach());
+                schedule.rules[n].reference = Some((Target::Other(referent), reference));
+                continue;
+            }
             let to =
                 schedule.rules.iter().position(|other| other.id.as_deref() == Some(reference.id.as_str())).ok_or_else(
                     || invalid(format!("{} refers to `{}`, which no rule is", name(n, rule), reference.id)),
@@ -517,7 +579,7 @@ impl<B: BizDayProcessor> ScheduleBuilder<B> {
             let basis = date_spec(&schedule.rules[to].spec)?;
             schedule.reach = schedule.reach.max(basis.forward_reach() + reference.forward_reach());
             schedule.back_reach = schedule.back_reach.max(reference.backward_reach());
-            schedule.rules[n].reference = Some((to, reference));
+            schedule.rules[n].reference = Some((Target::Local(to), reference));
         }
         for (n, rule) in schedule.rules.iter().enumerate() {
             if rule.basis && !referred[n] {

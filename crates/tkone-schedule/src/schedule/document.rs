@@ -303,6 +303,20 @@ impl ScheduleDoc {
     /// or fails the [`ScheduleBuilder`]'s checks; the
     /// resolver's error for an unknown calendar.
     pub fn schedule<R: CalendarResolver>(&self, calendars: &R) -> Result<Schedule<BusinessDays<R::Bdp>>> {
+        self.schedule_builder(calendars)?.build()
+    }
+
+    /// The builder [`schedule`](Self::schedule) builds: to add the
+    /// schedule to a [`Bundle`](crate::schedule::Bundle) with the others its
+    /// rules refer to (`{collections.repayment}`).
+    ///
+    /// # Errors
+    ///
+    /// As [`schedule`](Self::schedule), for the checks made before building.
+    pub fn schedule_builder<R: CalendarResolver>(
+        &self,
+        calendars: &R,
+    ) -> Result<ScheduleBuilder<BusinessDays<R::Bdp>>> {
         let invalid = |what: String| Error::InvalidSchedule(what);
         self.check_version()?;
         let zone: Tz = match &self.time_zone {
@@ -322,7 +336,7 @@ impl ScheduleDoc {
             .dst_policy(policy)
             .interval_mode(self.options.interval_mode.unwrap_or_default())
             .time_anchor(self.options.time_anchor.unwrap_or_default());
-        self.fill(builder, &zone, policy)?.build()
+        self.fill(builder, &zone, policy)
     }
 
     /// Read this document as an instance's selection from `definition`,
@@ -341,6 +355,20 @@ impl ScheduleDoc {
         &self,
         definition: &Schedule<BusinessDays<B>>,
     ) -> Result<Selector<BusinessDays<B>>> {
+        self.selector_builder(definition)?.build()
+    }
+
+    /// The builder [`selector`](Self::selector) builds: to add the instance
+    /// to a [`Bundle`](crate::schedule::Bundle) with the others its rules
+    /// refer to.
+    ///
+    /// # Errors
+    ///
+    /// As [`selector`](Self::selector), for the checks made before building.
+    pub fn selector_builder<B: BizDayProcessor>(
+        &self,
+        definition: &Schedule<BusinessDays<B>>,
+    ) -> Result<SelectorBuilder<BusinessDays<B>>> {
         self.check_version()?;
         let own = [
             ("time_zone", self.time_zone.is_some()),
@@ -358,7 +386,7 @@ impl ScheduleDoc {
         let zone = definition.zone();
         let policy = definition.options.0;
         let builder = definition.selector(self.start.first(&zone, policy)?);
-        SelectorBuilder(self.fill(builder.0, &zone, policy)?).build()
+        Ok(SelectorBuilder(self.fill(builder.0, &zone, policy)?))
     }
 
     fn check_version(&self) -> Result<()> {

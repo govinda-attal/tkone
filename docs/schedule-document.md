@@ -528,10 +528,10 @@ overlap (D6) and catch-up. To decide with tempo, if a real need shows up.
 A run names the rules it is for. tkone-trigger's `BusinessSchedule` fires one
 run per slot, and its `FireContext` carries the slot's `sources`
 (`ctx.sources()`, `ctx.is_for("capitalise")`), so the month end's one run
-accrues, then capitalises. Catching up with `CatchUp::Latest` skips older
-missed runs with their rules: where runs are for different rules, catch up
-with `CatchUp::All`. Tempo's runs are to carry their slot's sources the same
-way.
+accrues, then capitalises. Catching up with `CatchUp::Latest` fires the
+latest missed run once, carrying the older missed runs' sources before its
+own, so a missed month end is not lost; `CatchUp::All` runs each on its own.
+Tempo's runs are to carry their slot's sources the same way.
 ---
 
 ## Builder

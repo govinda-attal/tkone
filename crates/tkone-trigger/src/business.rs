@@ -123,10 +123,13 @@ pub enum CatchUp {
     /// Fire the most recent missed run once, now, and skip the older ones:
     /// a payment run that missed two days runs once. The default.
     ///
-    /// The skipped runs' rules are skipped with them: on a schedule whose
-    /// runs are for different rules (`accrue` daily, `capitalise` at the
-    /// month end), a missed month end is lost if a later daily run was
-    /// missed too. Use [`CatchUp::All`] there.
+    /// The run that fires carries the skipped runs' rules, oldest first,
+    /// before its own ([`TickContext::sources`](crate::TickContext::sources)):
+    /// on a schedule with `accrue` daily and `capitalise` at the month end,
+    /// Monday's catch-up after a missed Friday month end is for `accrue`
+    /// (Friday), `capitalise` (Friday) and `accrue` (Monday), each with its
+    /// actual time. The handler decides what to do with each; a missed month
+    /// end is not lost. Use [`CatchUp::All`] to run each missed run on its own.
     #[default]
     Latest,
     /// Fire every missed run, oldest first, now.
@@ -252,9 +255,12 @@ impl<B: BizDayProcessor, S: StateStore> ScheduleIter for BusinessSchedule<B, S> 
                 CatchUp::Skip => self.record(run.occurrence())?,
                 CatchUp::Latest => match self.pull()? {
                     // A later run is also past: this one is not the latest.
+                    // It is skipped, and its rules carried over to the one
+                    // that fires.
                     Some(next) if *next.occurrence().observed() < now => {
                         self.record(run.occurrence())?;
-                        self.pending = Some(next);
+                        let sources: Vec<_> = run.sources().iter().chain(next.sources()).cloned().collect();
+                        self.pending = Some(next.with_sources(sources));
                     }
                     next => {
                         self.pending = next;
@@ -432,15 +438,24 @@ mod tests {
     }
 
     #[test]
-    fn test_catching_up_the_latest_skips_the_rules_of_skipped_runs() {
+    fn test_catching_up_the_latest_carries_the_rules_of_skipped_runs() {
         fn monday_evening() -> DateTime<Utc> {
             Utc.with_ymd_and_hms(2026, 11, 2, 19, 0, 0).unwrap()
         }
         let mut store = MemoryStore::new();
         store.save("savings", DateTime::parse_from_rfc3339("2026-10-28T18:00:00+00:00").unwrap()).unwrap();
         let mut s = BusinessSchedule::with_clock(savings(), store, "savings", CatchUp::Latest, monday_evening).unwrap();
-        // Friday's capitalisation was skipped with Friday's run.
-        assert_eq!(rules(&s.try_next_context().unwrap().unwrap()), ("Mon 02 18:00".into(), vec!["accrue".into()]));
+        // Missed: Thursday, Friday (the month end) and Monday. Monday's run
+        // fires, for every missed rule, oldest first.
+        let ctx = s.try_next_context().unwrap().unwrap();
+        let missed: Vec<_> = ctx
+            .sources()
+            .iter()
+            .map(|s| format!("{} {}", s.rule_id.as_deref().unwrap(), s.actual.format("%a %d")))
+            .collect();
+        assert_eq!(ctx.occurrence().observed().format("%a %d %H:%M").to_string(), "Mon 02 18:00");
+        assert_eq!(missed, ["accrue Thu 29", "accrue Fri 30", "capitalise Sat 31", "accrue Mon 02"]);
+        assert!(ctx.is_for("capitalise"));
     }
 
     #[derive(Clone)]

@@ -73,7 +73,9 @@ run in no particular order. When the steps must run in order in production:
 - **Put them in one document,** as rules in the order of the steps. Rules
   that coincide are one slot whose sources are in rule order
   ([D4](schedule-document.md#d4-slots-are-unique-by-observed-instant)): one
-  run, whose handler does `accrue`, then `capitalise`.
+  run, whose handler does `accrue`, then `capitalise`. The run says which
+  rules it is for: in tkone-trigger, `ctx.is_for("capitalise")` is true only
+  at the month end.
 - **Or chain them in the application:** the first step's completion starts
   the second (an event, not a clock).
 

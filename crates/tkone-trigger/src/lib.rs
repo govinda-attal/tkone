@@ -23,6 +23,12 @@
 //! order between them. When steps must run in order, register one job that
 //! does them in order, or start the second from the first's completion.
 //!
+//! A [`BusinessSchedule`] whose rules coincide fires once, and the context
+//! names every rule the run is for ([`TickContext::sources`],
+//! [`FireContext::is_for`]): on a schedule with `accrue` every business day
+//! and `capitalise` at the month end, the month end's one run is for both, so
+//! one job accrues and then capitalises.
+//!
 //! ## Time zones and starts
 //!
 //! [`time_schedule`] builds the iterator for a spec. Times are read on the
@@ -59,6 +65,7 @@ use std::sync::Arc;
 use chrono::{DateTime, TimeZone, Utc};
 use fallible_iterator::FallibleIterator;
 pub use inventory;
+use tkone_schedule::schedule::Source;
 use tkone_schedule::{Error, Occurrence};
 #[doc(hidden)]
 pub use tokio as __tokio;
@@ -201,26 +208,68 @@ pub trait TickContext: Send + 'static {
     /// since no business-day adjustment is applied. A [`BusinessSchedule`]'s
     /// can be adjusted (`~NB` moved it to the next business day).
     fn occurrence(&self) -> &Occurrence<DateTime<Utc>>;
+
+    /// The rules this tick is for, in rule order, each with its actual time
+    /// (and, for a derived rule, its basis): the [`Slot::sources`] of a
+    /// [`BusinessSchedule`]'s run. Rules that coincide are one run, so a
+    /// handler reads here which of them are due: a month end's run is for
+    /// both `accrue` and `capitalise`. Empty for time specs, which have no
+    /// rules.
+    ///
+    /// [`Slot::sources`]: tkone_schedule::schedule::Slot::sources
+    fn sources(&self) -> &[Source] {
+        &[]
+    }
 }
 
 /// Concrete tick context passed to every callback and error handler.
 ///
-/// Carries the [`Occurrence<DateTime<Utc>>`] for the current tick.
-/// Clone is cheap — the inner `DateTime` values are `Copy`.
+/// Carries the [`Occurrence<DateTime<Utc>>`] for the current tick and, for a
+/// [`BusinessSchedule`], the rules it is for ([`TickContext::sources`]).
+/// Clone is cheap: the sources are shared.
 #[derive(Clone, Debug)]
 pub struct FireContext {
     occurrence: Occurrence<DateTime<Utc>>,
+    sources: Arc<[Source]>,
 }
 
 impl FireContext {
+    /// A context for `occurrence`, with no sources.
     pub fn new(occurrence: Occurrence<DateTime<Utc>>) -> Self {
-        Self { occurrence }
+        Self { occurrence, sources: Arc::new([]) }
+    }
+
+    /// The same context, for the rules `sources`.
+    pub fn with_sources(mut self, sources: impl Into<Arc<[Source]>>) -> Self {
+        self.sources = sources.into();
+        self
+    }
+
+    /// Whether this tick is for the rule with id `id`.
+    ///
+    /// ```rust
+    /// # use tkone_trigger::{FireContext, TickContext};
+    /// # async fn capitalise() {}
+    /// async fn end_of_day(ctx: FireContext) -> Result<(), String> {
+    ///     // accrue every business day; capitalise too at the month end.
+    ///     if ctx.is_for("capitalise") {
+    ///         capitalise().await;
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn is_for(&self, id: &str) -> bool {
+        self.sources.iter().any(|source| source.rule_id.as_deref() == Some(id))
     }
 }
 
 impl TickContext for FireContext {
     fn occurrence(&self) -> &Occurrence<DateTime<Utc>> {
         &self.occurrence
+    }
+
+    fn sources(&self) -> &[Source] {
+        &self.sources
     }
 }
 
@@ -281,6 +330,13 @@ pub trait ScheduleIter: Send + 'static {
     /// ending. [`Scheduler::try_run`] uses it.
     fn try_next_fire(&mut self) -> Result<Option<Occurrence<DateTime<Utc>>>, Error> {
         Ok(self.next_fire())
+    }
+
+    /// The next tick's context: its occurrence, and the rules it is for.
+    /// [`Scheduler::try_run`] uses it. By default, the occurrence from
+    /// [`try_next_fire`](Self::try_next_fire) with no sources.
+    fn try_next_context(&mut self) -> Result<Option<FireContext>, Error> {
+        Ok(self.try_next_fire()?.map(FireContext::new))
     }
 
     /// Called after every callback for `occurrence` has finished, so the
@@ -442,8 +498,8 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
             self.fire_callbacks(ctx).await;
         }
 
-        while let Some(nr) = self.iter.try_next_fire()? {
-            let fire_at = *nr.observed();
+        while let Some(ctx) = self.iter.try_next_context()? {
+            let fire_at = *ctx.occurrence().observed();
             let delay = fire_at - Utc::now();
             if delay > chrono::Duration::zero() {
                 let sleep = delay.to_std().unwrap_or_default();
@@ -457,9 +513,8 @@ impl<I: ScheduleIter, E: Send + 'static> Scheduler<I, E> {
                 break;
             }
 
-            let ctx = FireContext::new(nr.clone());
-            self.fire_callbacks(ctx).await;
-            self.iter.fired(&nr)?;
+            self.fire_callbacks(ctx.clone()).await;
+            self.iter.fired(ctx.occurrence())?;
         }
         Ok(())
     }

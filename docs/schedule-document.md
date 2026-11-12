@@ -525,10 +525,13 @@ execution, not the schedule, which references deliberately do not touch
 fail when accrue fails?), retries (does a retry at 18:20 move capitalise?),
 overlap (D6) and catch-up. To decide with tempo, if a real need shows up.
 
-Gap: tkone-trigger's `BusinessSchedule` fires one run per slot, but passes the
-handler an `Occurrence`, not the slot's `sources`. A handler cannot yet see
-which rules a run is for, so the one-document form needs `FireContext` to
-carry them.
+A run names the rules it is for. tkone-trigger's `BusinessSchedule` fires one
+run per slot, and its `FireContext` carries the slot's `sources`
+(`ctx.sources()`, `ctx.is_for("capitalise")`), so the month end's one run
+accrues, then capitalises. Catching up with `CatchUp::Latest` skips older
+missed runs with their rules: where runs are for different rules, catch up
+with `CatchUp::All`. Tempo's runs are to carry their slot's sources the same
+way.
 ---
 
 ## Builder

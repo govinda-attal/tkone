@@ -25,6 +25,12 @@ Every job registered for a tick is spawned as its own task: there is no
 order between them. When steps must run in order, register one job that
 does them in order, or start the second from the first's completion.
 
+A [`BusinessSchedule`] whose rules coincide fires once, and the context
+names every rule the run is for ([`TickContext::sources`],
+[`FireContext::is_for`]): on a schedule with `accrue` every business day
+and `capitalise` at the month end, the month end's one run is for both, so
+one job accrues and then capitalises.
+
 ## Time zones and starts
 
 [`time_schedule`] builds the iterator for a spec. Times are read on the

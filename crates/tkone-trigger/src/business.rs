@@ -21,7 +21,7 @@ use tkone_schedule::biz_day::BizDayProcessor;
 use tkone_schedule::schedule::{Schedule, Slot, Slots};
 use tkone_schedule::{Error, Occurrence};
 
-use crate::ScheduleIter;
+use crate::{FireContext, ScheduleIter, TickContext};
 
 // ── State stores ─────────────────────────────────────────────────────────────
 
@@ -122,6 +122,11 @@ impl StateStore for FileStore {
 pub enum CatchUp {
     /// Fire the most recent missed run once, now, and skip the older ones:
     /// a payment run that missed two days runs once. The default.
+    ///
+    /// The skipped runs' rules are skipped with them: on a schedule whose
+    /// runs are for different rules (`accrue` daily, `capitalise` at the
+    /// month end), a missed month end is lost if a later daily run was
+    /// missed too. Use [`CatchUp::All`] there.
     #[default]
     Latest,
     /// Fire every missed run, oldest first, now.
@@ -157,20 +162,21 @@ pub struct BusinessSchedule<B: BizDayProcessor, S: StateStore> {
     key: String,
     catch_up: CatchUp,
     /// A run read ahead while deciding [`CatchUp::Latest`].
-    pending: Option<Occurrence<DateTime<Utc>>>,
+    pending: Option<FireContext>,
     now: fn() -> DateTime<Utc>,
 }
 
 /// A slot as a run: its time, moved from its first rule's actual time when an
-/// adjustment moved it.
-fn to_run(slot: Slot) -> Occurrence<DateTime<Utc>> {
+/// adjustment moved it, and the rules it is for.
+fn to_run(slot: Slot) -> FireContext {
     let at = slot.at.with_timezone(&Utc);
     let actual = slot.sources.first().map_or(at, |source| source.actual.with_timezone(&Utc));
-    match actual.cmp(&at) {
+    let occurrence = match actual.cmp(&at) {
         std::cmp::Ordering::Equal => Occurrence::Exact(at),
         std::cmp::Ordering::Less => Occurrence::AdjustedLater(actual, at),
         std::cmp::Ordering::Greater => Occurrence::AdjustedEarlier(actual, at),
-    }
+    };
+    FireContext::new(occurrence).with_sources(slot.sources)
 }
 
 impl<B: BizDayProcessor, S: StateStore> BusinessSchedule<B, S> {
@@ -208,7 +214,7 @@ impl<B: BizDayProcessor, S: StateStore> BusinessSchedule<B, S> {
         Ok(Self { slots, zone, store, key, catch_up, pending: None, now })
     }
 
-    fn pull(&mut self) -> Result<Option<Occurrence<DateTime<Utc>>>, Error> {
+    fn pull(&mut self) -> Result<Option<FireContext>, Error> {
         if let Some(o) = self.pending.take() {
             return Ok(Some(o));
         }
@@ -229,21 +235,25 @@ impl<B: BizDayProcessor, S: StateStore> ScheduleIter for BusinessSchedule<B, S> 
     }
 
     fn try_next_fire(&mut self) -> Result<Option<Occurrence<DateTime<Utc>>>, Error> {
+        Ok(self.try_next_context()?.map(|ctx| ctx.occurrence().clone()))
+    }
+
+    fn try_next_context(&mut self) -> Result<Option<FireContext>, Error> {
         loop {
             let Some(run) = self.pull()? else {
                 return Ok(None);
             };
             let now = (self.now)();
-            if *run.observed() >= now {
+            if *run.occurrence().observed() >= now {
                 return Ok(Some(run));
             }
             match self.catch_up {
                 CatchUp::All => return Ok(Some(run)),
-                CatchUp::Skip => self.record(&run)?,
+                CatchUp::Skip => self.record(run.occurrence())?,
                 CatchUp::Latest => match self.pull()? {
                     // A later run is also past: this one is not the latest.
-                    Some(next) if *next.observed() < now => {
-                        self.record(&run)?;
+                    Some(next) if *next.occurrence().observed() < now => {
+                        self.record(run.occurrence())?;
                         self.pending = Some(next);
                     }
                     next => {
@@ -370,6 +380,67 @@ mod tests {
         // and is fired once; then Monday's run.
         assert_eq!(fmt(&s.try_next_fire().unwrap().unwrap()), "Fri 11-27 21:30");
         assert_eq!(fmt(&s.try_next_fire().unwrap().unwrap()), "Mon 11-30 21:30");
+    }
+
+    /// `accrue` every London business day at 18:00, `capitalise` at the
+    /// month end; ends Monday 2 November 2026.
+    fn savings() -> Schedule<WeekendSkipper> {
+        let london = chrono_tz::Europe::London;
+        let start = london.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let until = london.with_ymd_and_hms(2026, 11, 2, 23, 59, 59).unwrap();
+        Schedule::builder(start, WeekendSkipper::new())
+            .named_rule("accrue", "YY-MM-DD~SBT18:00:00")
+            .named_rule("capitalise", "YY-MM-L~PBT18:00:00")
+            .until(until)
+            .build()
+            .unwrap()
+    }
+
+    fn rules(ctx: &FireContext) -> (String, Vec<String>) {
+        let at = ctx.occurrence().observed().format("%a %d %H:%M").to_string();
+        (at, ctx.sources().iter().filter_map(|s| s.rule_id.clone()).collect())
+    }
+
+    #[tokio::test]
+    async fn test_a_run_names_the_rules_it_is_for() {
+        use crate::Scheduler;
+        let mut store = MemoryStore::new();
+        store.save("savings", DateTime::parse_from_rfc3339("2026-10-28T18:00:00+00:00").unwrap()).unwrap();
+        let s = BusinessSchedule::new(savings(), store, "savings", CatchUp::All).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut scheduler = Scheduler::new(s, |_: FireContext, _: String| async {});
+        let log = seen.clone();
+        scheduler.add(move |ctx: FireContext| {
+            let log = log.clone();
+            async move {
+                log.lock().unwrap().push((rules(&ctx), ctx.is_for("capitalise")));
+                Ok(())
+            }
+        });
+        scheduler.try_run().await.unwrap();
+        // 31 October 2026 is a Saturday: the month end is Friday the 30th,
+        // one run for both rules, in rule order.
+        let run = |at: &str, ids: &[&str]| (at.to_string(), ids.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                (run("Thu 29 18:00", &["accrue"]), false),
+                (run("Fri 30 18:00", &["accrue", "capitalise"]), true),
+                (run("Mon 02 18:00", &["accrue"]), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_catching_up_the_latest_skips_the_rules_of_skipped_runs() {
+        fn monday_evening() -> DateTime<Utc> {
+            Utc.with_ymd_and_hms(2026, 11, 2, 19, 0, 0).unwrap()
+        }
+        let mut store = MemoryStore::new();
+        store.save("savings", DateTime::parse_from_rfc3339("2026-10-28T18:00:00+00:00").unwrap()).unwrap();
+        let mut s = BusinessSchedule::with_clock(savings(), store, "savings", CatchUp::Latest, monday_evening).unwrap();
+        // Friday's capitalisation was skipped with Friday's run.
+        assert_eq!(rules(&s.try_next_context().unwrap().unwrap()), ("Mon 02 18:00".into(), vec!["accrue".into()]));
     }
 
     #[derive(Clone)]

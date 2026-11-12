@@ -71,6 +71,24 @@ for slot in doc.slots():
 # 2026-03-31 → 2026-03-31
 ```
 
+When rules coincide, one slot is for all of them, and `slot.is_for(rule_id)`
+says which: a handler that accrues every business day capitalises too when
+the slot is for `capitalise`.
+
+```python
+savings = Document({
+    "version": 1, "time_zone": "Europe/London", "calendar": "WEEKENDS",
+    "start": "2026-05-28",
+    "rules": [{"id": "accrue", "rule": "YY-MM-DD~SBT18:00:00"},
+              {"id": "capitalise", "rule": "YY-MM-L~PBT18:00:00"}],
+})
+for slot in savings.take(3):
+    print(slot.at.strftime("%a %d"), [s.rule_id for s in slot.sources], slot.is_for("capitalise"))
+# Thu 28 ['accrue'] False
+# Fri 29 ['accrue', 'capitalise'] True
+# Mon 01 ['accrue'] False
+```
+
 ### Testing with schedules
 
 To check a loan's interest and repayments, step through its **periods**. Each

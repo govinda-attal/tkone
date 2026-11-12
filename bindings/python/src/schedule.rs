@@ -341,6 +341,12 @@ impl Slot {
         let ids: Vec<_> = self.sources.iter().map(|s| s.rule_id.as_deref().unwrap_or("-")).collect();
         format!("Slot({}, {})", self.at.to_rfc3339(), ids.join(","))
     }
+
+    /// Whether the rule with id `rule_id` produced this slot: a month end's
+    /// one slot is for both `accrue` and `capitalise`.
+    fn is_for(&self, rule_id: &str) -> bool {
+        self.sources.iter().any(|s| s.rule_id.as_deref() == Some(rule_id))
+    }
 }
 
 impl From<tkone_schedule::schedule::Slot> for Slot {

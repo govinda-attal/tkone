@@ -144,3 +144,24 @@ def test_any_aware_datetime():
     ]
     with pytest.raises(ScheduleError, match="no time zone"):
         s.take(1, after=dt.datetime(2026, 1, 1))
+
+
+def test_a_slot_says_which_rules_it_is_for():
+    savings = Document(
+        {
+            "version": 1,
+            "time_zone": "Europe/London",
+            "calendar": "WEEKENDS",
+            "start": "2026-05-28",
+            "rules": [
+                {"id": "accrue", "rule": "YY-MM-DD~SBT18:00:00"},
+                {"id": "capitalise", "rule": "YY-MM-L~PBT18:00:00"},
+            ],
+        }
+    )
+    # 31 May 2026 is a Sunday: Friday the 29th is the month end, one slot for both.
+    slots = savings.take(3)
+    assert [s.strftime("%a %d") for s in (slot.at for slot in slots)] == ["Thu 28", "Fri 29", "Mon 01"]
+    assert [slot.is_for("capitalise") for slot in slots] == [False, True, False]
+    assert all(slot.is_for("accrue") for slot in slots)
+    assert not slots[1].is_for("nope")

@@ -67,6 +67,32 @@ pub struct Slot {
     pub sources: Vec<Source>,
 }
 
+impl Slot {
+    /// Whether the rule with id `id` produced this slot: on a schedule with
+    /// `accrue` every business day and `capitalise` at the month end, the
+    /// month end's one slot is for both.
+    ///
+    /// ```rust
+    /// use chrono::TimeZone;
+    /// use fallible_iterator::FallibleIterator;
+    /// use tkone_schedule::biz_day::WeekendSkipper;
+    /// use tkone_schedule::schedule::Schedule;
+    ///
+    /// let start = chrono_tz::Europe::London.with_ymd_and_hms(2026, 5, 29, 0, 0, 0).unwrap();
+    /// let savings = Schedule::builder(start, WeekendSkipper::new())
+    ///     .named_rule("accrue", "YY-MM-DD~SBT18:00:00")
+    ///     .named_rule("capitalise", "YY-MM-L~PBT18:00:00")
+    ///     .build()?;
+    /// // 31 May 2026 is a Sunday: Friday the 29th is the month end.
+    /// let friday = savings.slots()?.next()?.unwrap();
+    /// assert!(friday.is_for("accrue") && friday.is_for("capitalise"));
+    /// # Ok::<(), tkone_schedule::Error>(())
+    /// ```
+    pub fn is_for(&self, id: &str) -> bool {
+        self.sources.iter().any(|source| source.rule_id.as_deref() == Some(id))
+    }
+}
+
 /// A rule's part in a [`Slot`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {

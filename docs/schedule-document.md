@@ -532,6 +532,54 @@ accrues, then capitalises. Catching up with `CatchUp::Latest` fires the
 latest missed run once, carrying the older missed runs' sources before its
 own, so a missed month end is not lost; `CatchUp::All` runs each on its own.
 Tempo's runs are to carry their slot's sources the same way.
+
+### D15. Catch-up is per instance
+
+After an outage, tempo finds dues in the past. What it does with them is
+decided per instance, never for the definition, because instances select
+different slots: an instance due only at the month end selects Friday's slot,
+not Monday's, so collapsing the definition's missed occurrences to Monday's
+would leave it nothing to run.
+
+- **Definition occurrences are not skipped.** Tempo processes each missed
+  occurrence in order, as it would have (D6), and works out which instances
+  are due in it (D8). Only then does each instance's policy decide its runs.
+- **Each instance has a catch-up policy,** chosen when it is defined, beside
+  its overlap policy (D6). It is execution, so it lives on the instance
+  record, not in the schedule document:
+
+  | Policy | Its missed dues |
+  |---|---|
+  | `ALL` | a run for each, oldest first |
+  | `LATEST` | one run, for the latest, carrying the earlier dues' sources before its own (as tkone-trigger's `CatchUp::Latest`) |
+  | `SKIP` | each recorded as skipped, visibly, as in D6 |
+
+- **Late can mean wrong.** An accrual is still right on Monday. A reminder due
+  Wednesday 27 May is not, if it only goes out on 2 June, after the 29 May
+  repayment, and neither is a fixing that would read today's rate. An instance
+  may set `stale_after` (a duration such as `PT12H`, or zero): a due that much
+  older than the time its run would be created is recorded as skipped as
+  stale, whatever the policy. Without it, a due is never stale.
+- **A run acts on its due, not on now.** Its payload is its slot: the due
+  instant and the sources, each with its actual time and basis. Friday's
+  accrual uses Friday's balance and rate, even if it runs on Monday. Delivery
+  is at least once, so a run is keyed by instance, version and due, and its
+  handler is idempotent on that key: a crash during catch-up runs it again.
+- **One instance's missed runs run one at a time, oldest first,** each after
+  the previous one completes, whatever its overlap policy: Friday's
+  capitalisation is done before Monday's accrual starts. Across instances
+  there is no order (D14).
+- **Catch-up never cascades.** A reference follows the schedule, never what has
+  run (D13), so a reminder's due does not wait for the repayment it refers to
+  to have run, and one instance catching up holds up no other.
+- **A due belongs to the version in effect at it (D12).** Missed dues before a
+  new version's `effective_from` are the old version's, and are caught up as
+  its own.
+
+tkone-trigger's `BusinessSchedule` is one schedule with one policy, so the
+per-instance question does not arise there. It has `ALL`, `LATEST` and `SKIP`
+as `CatchUp`, but not `stale_after`.
+
 ---
 
 ## Builder

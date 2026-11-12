@@ -498,6 +498,37 @@ And the references mean:
 In Rust a set is a `Bundle`: schedules and instances added by name and built
 together, in dependency order, failing as a whole with the failing member
 named.
+
+### D14. Schedules do not order runs across documents
+
+Two documents due at one instant give two runs, in no particular order:
+tempo's claimers run them in parallel, and tkone-trigger spawns each job of a
+tick as its own task. A [timeline](timeline.md)'s order within a moment is
+for code that steps through it (a test, a simulation, a batch loop), not a
+promise of a scheduler.
+
+- **Steps that must run in order at one instant are rules of one document,**
+  in the order of the steps. Rules that coincide are one slot whose sources
+  are in rule order (D4), so there is one run, and its handler does them in
+  that order. The order is declared in the document, and a run cannot finish
+  one step without the other. This is how end-of-day batches are run: one
+  job, ordered steps.
+- **Steps that must be separate runs are chained by the application:** the
+  first's completion starts the second, as an event (the
+  [outbox and inbox](outbox-inbox-design.md)), not a clock.
+- **Not done:** staggering times (capitalise at 18:05), which holds only
+  while the first step reliably finishes in time.
+
+Deferred: a run dependency within a set (`after: accrue`). It orders
+execution, not the schedule, which references deliberately do not touch
+(D13, rule 5), and it needs rules for failure (does capitalise wait, skip or
+fail when accrue fails?), retries (does a retry at 18:20 move capitalise?),
+overlap (D6) and catch-up. To decide with tempo, if a real need shows up.
+
+Gap: tkone-trigger's `BusinessSchedule` fires one run per slot, but passes the
+handler an `Occurrence`, not the slot's `sources`. A handler cannot yet see
+which rules a run is for, so the one-document form needs `FireContext` to
+carry them.
 ---
 
 ## Builder

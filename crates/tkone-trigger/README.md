@@ -19,6 +19,12 @@ and inferred from the arguments to [`Scheduler::new`].
 | `"[00-11,14-23]:30M:00"` | Every 30 minutes, except 12:00–13:59 |
 | `"09-16:15M:00"` | Every 15 minutes from 09:00 to 16:45 |
 
+## Jobs due at the same time run concurrently
+
+Every job registered for a tick is spawned as its own task: there is no
+order between them. When steps must run in order, register one job that
+does them in order, or start the second from the first's completion.
+
 ## Time zones and starts
 
 [`time_schedule`] builds the iterator for a spec. Times are read on the

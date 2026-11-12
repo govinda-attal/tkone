@@ -5,9 +5,16 @@
 //! accrual and its month-end capitalisation. Each keeps its own start, time
 //! zone, calendar, exclusions and end. Read over a range, the timeline
 //! yields [`Moment`]s in time order: one instant with every schedule that
-//! has a slot at it, in the order the schedules were added. That order is
-//! the order to process them in: whether the day's accrual comes before the
-//! month's capitalisation is declared, not left to chance.
+//! has a slot at it, in the order the schedules were added. Code that steps
+//! through the timeline processes them in that order: whether the day's
+//! accrual comes before the month's capitalisation is declared, not left to
+//! chance.
+//!
+//! That order is for whoever steps through the timeline. A scheduler does
+//! not keep it: tkone-trigger runs one tick's jobs concurrently, and tempo
+//! runs each document's slots as runs of their own. Steps that must run in
+//! order at one instant belong in one schedule, as rules in that order: they
+//! are then one slot, whose sources are in rule order, run once.
 //!
 //! Each [`Entry`] also gives [`since`](Entry::since), the boundary of its
 //! schedule's slot before it (or the schedule's start): the period it

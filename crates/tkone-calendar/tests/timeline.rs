@@ -167,3 +167,21 @@ fn cross_border_payments() {
     let batch = |d: &str| batches.iter().find(|(day, _)| day == d).unwrap().1;
     assert_eq!((batch("31 Aug"), batch("01 Sep"), batch("08 Sep")), (0, 1, 2));
 }
+
+#[test]
+fn ordered_steps_are_rules_of_one_document() {
+    // The two steps as rules of one schedule: at the month end they are one
+    // slot, one run, with its sources in rule order.
+    let open = London.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap();
+    let account = Schedule::builder(open, calendar("GBLO"))
+        .named_rule("accrue", "YY-MM-DD~SBT18:00:00")
+        .named_rule("capitalise", "YY-MM-L~PBT18:00:00")
+        .build()
+        .unwrap();
+    let month_end = London.with_ymd_and_hms(2026, 5, 29, 18, 0, 0).unwrap();
+    let slot = account.slots_between(month_end..=month_end).unwrap().next().unwrap().unwrap();
+    let steps: Vec<_> = slot.sources.iter().map(|s| s.rule_id.as_deref().unwrap()).collect();
+    assert_eq!(steps, ["accrue", "capitalise"]);
+    // 31 May 2026 is a Sunday: the capitalisation's own date.
+    assert_eq!(slot.sources[1].actual.date_naive(), chrono::NaiveDate::from_ymd_opt(2026, 5, 31).unwrap());
+}

@@ -58,11 +58,26 @@ timeline.
 ### Order within a moment
 
 When lanes coincide, entries come **in the order their schedules were
-added**. That order is the processing order, and it is yours to declare: at
-a month end, should the day's accrual come before the capitalisation? Add
-`accrue` first, and it always does. A plain merge would leave this to
-chance, and that is where bugs that appear only "on month ends that fall on a
-Friday" come from.
+added**. Code that steps through a timeline (a test, a simulation, a batch
+loop) processes them in that order, and it is yours to declare: at a month
+end, should the day's accrual come before the capitalisation? Add `accrue`
+first, and it always does. A plain merge would leave this to chance, and that
+is where bugs that appear only "on month ends that fall on a Friday" come
+from.
+
+**This is an order for whoever steps through the timeline, not a promise of
+a scheduler.** tkone-trigger runs the jobs of one tick concurrently, and tempo
+runs each document's slot as its own run, so two schedules due at one instant
+run in no particular order. When the steps must run in order in production:
+
+- **Put them in one document,** as rules in the order of the steps. Rules
+  that coincide are one slot whose sources are in rule order
+  ([D4](schedule-document.md#d4-slots-are-unique-by-observed-instant)): one
+  run, whose handler does `accrue`, then `capitalise`.
+- **Or chain them in the application:** the first step's completion starts
+  the second (an event, not a clock).
+
+See [D14](schedule-document.md#d14-schedules-do-not-order-runs-across-documents).
 
 ### Identity
 
@@ -234,6 +249,9 @@ What the timeline makes visible:
 - **Order on a shared moment.** On Friday 29 May both `accrue` and
   `capitalise` are at 18:00. They are one moment, and `accrue` comes first
   because it was added first. The day's interest is in the month's total.
+  That holds for code stepping through the timeline. In production, write
+  the two as rules of one document instead: they are then one slot at 18:00,
+  sources `[accrue, capitalise]`, run once, in that order (D14).
 - **`since` is the period capitalised.** The capitalise entry's `since` is
   the account's opening (its first capitalisation). The accruals from then
   to this moment are what it adds: 19, since May 2026 has 21 weekdays and

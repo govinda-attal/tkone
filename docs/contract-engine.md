@@ -16,7 +16,7 @@ version, and sometimes by account. They should be:
   without writing to the database themselves;
 - **fast,** because the data they need is computed before they run;
 - **versioned and auditable:** which code, with which values, decided this
-  posting, and the same answer on replay;
+  entry, and the same answer on replay;
 - **scheduled** by tempo, with the account's own dates.
 
 The paradigm is a *smart contract* without a blockchain. A contract is a pure
@@ -80,7 +80,8 @@ core
 ├── party       Party (person or organisation), PartyRole, contact points
 ├── account     Account, AccountPartyRole (holder, joint holder, guarantor),
 │               status, product binding
-├── ledger      LedgerAccount (chart of accounts), Posting, balance addresses
+├── ledger      LedgerAccount (chart of accounts), Booking, Entry, Hold,
+│               balance addresses
 └── reference   currencies, calendars, rate indices, rate cards, FX
 deposits  ── extends core::Account ──►  DepositTerms (notice period, access)
 lending   ── extends core::Account ──►  LoanTerms (principal, term)
@@ -99,8 +100,17 @@ mod core {
     #[relation(Account <-> Party)]
     struct AccountPartyRole { #[effective] role: Role }
 
+    /// Entries that net to zero, booked together: the unit a hook returns.
+    #[fact(key = booking_id)]
+    struct Booking { booking_id: BookingId, reverses: Option<BookingId>, entries: Vec<Entry> }
+
+    /// One leg: an amount to one balance of one account.
     #[fact(key = account_id)]
-    struct Posting { account_id: AccountId, address: BalanceAddress, amount: Money }
+    struct Entry { account_id: AccountId, address: BalanceAddress, amount: Money, side: Side }
+
+    /// Authorised, not booked: reduces the available balance; not an entry.
+    #[effective(key = account_id)]
+    struct Hold { hold_id: HoldId, address: BalanceAddress, amount: Money }
 }
 
 #[model(name = "deposits", version = "3.1.0", requires = "core@^1.4")]
@@ -148,13 +158,29 @@ standards are sources of terms and codes, not schemas: their abbreviated
 message names (`Acct`, `Amt`, `Dt`) and request and response structures are
 not a storage model.
 
+The ledger's words, chosen so each means one thing:
+
+| Term | Means | IFX |
+|---|---|---|
+| **Entry** | one leg: an amount, debit or credit, to one balance of one account, with a value date and a booking date | a transaction record (`BankAcctTrnRec`): one line of an account's statement |
+| **Booking** | entries that net to zero, booked together at one booking time: what a hook returns, and what C11 commits | none: IFX shows an account's side only |
+| **Reversal** | a booking that undoes another, and names it | — |
+| **Hold** | an amount authorised but not booked: it reduces the available balance, and is not an entry | — |
+| **Balance address** | account, balance type, currency: what an entry moves | — |
+| booking date, value date | when it was booked; when it counts | `PostedDt`, `EffDt` (to confirm against the spec's text) |
+
+"Transaction" is not used in the model: it means one account's line in IFX, a
+database transaction to the engine, and to a customer something that may only
+be authorised. "Journal" is the instance's commit log (C12), never an
+accounting term.
+
 ### Filters
 
 Filters appear in three places, always declared, never ad hoc:
 
 1. **What an extension or view covers:** `DepositTerms` exists where the
    product line is deposits; a view of accounts in arrears holds only those.
-2. **What a hook fetches:** postings since the last capitalisation, balances
+2. **What a hook fetches:** entries since the last capitalisation, balances
    of one type, as of the due (the manifest's `requires`).
 3. **Who may see what:** see [Entitlements](#entitlements).
 
@@ -183,13 +209,13 @@ needed: the balance on 1 June as known now drives the correction; as known on
 
 | Kind | Declared as | Examples | Time | Changes by |
 |---|---|---|---|---|
-| **Facts** | `#[fact]` | postings, operations, actions, hook calls | value time and booking time | never: appended; a correction is a reversal and a new fact |
+| **Facts** | `#[fact]` | bookings and their entries, operations, actions, hook calls | value time and booking time | never: appended; a correction is a reversal and a new fact |
 | **Effective attributes** | `#[effective]` | status, rate, limits, roles, product binding | valid from and to, recorded at | a new version, future-dated or backdated |
 | **Series** | `#[series]` | index fixings, FX, calendars | per date, versioned when restated | new points, restatements |
 | **Fixed attributes** | plain fields | ids, `opened_on` | recorded at | never |
 | **Derived views** | `#[view]` | balances, accrued interest, arrears | follow their sources | the engine |
 
-Balances are not samples: they are a step function of postings, kept as
+Balances are not samples: they are a step function of entries, kept as
 checkpoints (a closing balance per value date) and folded forward from the
 nearest one.
 
@@ -215,7 +241,7 @@ the time, and Monday's call must see Friday's commit (D15).
 
 A fact whose valid time is before results already computed makes them wrong.
 The engine calls the instance's **`correction` hook** with the facts that
-moved the past; it returns adjustments (an interest correction posting) as
+moved the past; it returns adjustments (an interest correction booking) as
 new facts. History is never rewritten, and nothing re-runs (C14).
 
 ---
@@ -233,7 +259,7 @@ Values shared across products are **reference data**, not parameters:
 
 Parameters refer to reference data: `rate = card("easy-saver", tier(balance))
 + margin`, or `index("SONIA") + margin`. Ledger accounts are the bank's: a
-product maps its postings to them with an **accounting mapping** ("interest
+product maps its entries to them with an **accounting mapping** ("interest
 expense to 5100"), a definition or implementation parameter. A customer's
 `Account` and a `LedgerAccount` are different things: an account's balances
 are addressed by account, balance type and currency, and the mapping rolls
@@ -286,7 +312,7 @@ mod easy_saver {
     #[hook(upgrade)]           fn upgrade;            // C9
     #[hook(correction)]        fn correct;            // C14: backdated facts
 
-    permits! { Posting, Transition(Active -> Dormant | Closed), Notify, ScheduleChange }
+    permits! { Book, Hold, Transition(Active -> Dormant | Closed), Notify, ScheduleChange }
 
     schedules! { "end-of-day.yaml" }                  // a tempo definition document
 }
@@ -315,7 +341,7 @@ requires:                     # per hook: what to fetch before it runs
   end_of_day:
     - view: AccountState
     - balances: { as_of: due }
-    - postings: { since: last(capitalise), until: due }
+    - entries: { since: last(capitalise), until: due }
   check_withdrawal:
     - view: AccountState
 ```
@@ -343,7 +369,7 @@ One operation on one instance:
    instantiation is microseconds; the cost is in moving the inputs, which is
    why they are prepared and small.
 5. **Validate** the returned actions: permitted by the definition, valid
-   against the model's invariants (a posting balances; a transition is
+   against the model's invariants (a booking's entries net to zero; a transition is
    allowed from the current state).
 6. **Commit** per instance: one conditional append to the instance's
    journal, the actions with "only if the instance is still at version n"
@@ -370,7 +396,8 @@ The set of actions is the platform's, closed, and versioned with the engine:
 
 | Action | What the engine writes |
 |---|---|
-| `Posting` | balanced ledger entries; balances views |
+| `Book` | a booking: entries that net to zero, or a reversal of one; balances views |
+| `Hold`, `Release` | a hold on an available balance, and its release |
 | `Transition` | the entity's status, if the model allows it from the current one |
 | `SetParameter` | an instance override, effective from a date |
 | `ScheduleChange` | a new version of the instance's tempo set (D12, D13) |
@@ -460,7 +487,7 @@ same inputs, same actions: that gives audit, replay and simulation.
 
 ### C4. Views are derived, never written
 
-Views are projections of entities and postings, maintained by the engine
+Views are projections of entities and entries, maintained by the engine
 from actions. Each view declares its consistency: `with-instance` views are
 written in the commit; `eventual` views are projected from the outbox.
 
@@ -515,8 +542,8 @@ fit (a model version not applied, a parameter missing), never at call time.
 
 ### C11. The ledger is part of the core
 
-Money moves only as balanced postings. Balances are views of postings.
-An operation across accounts (a transfer) is one posting batch, committed by
+Money moves only as bookings: entries that net to zero. Balances are views of
+entries. An operation across accounts (a transfer) is one booking, committed by
 the engine across the instances it touches. That is the one exception to C6's
 one instance per commit, and it goes through the ledger, not through hooks
 writing to each other.
@@ -563,7 +590,7 @@ words, with the vocabulary and codes of IFX and ISO 20022.
 | `tkone-store` | The storage trait, journals and projections; Postgres first |
 | `tkone-contract` | Definitions: operations, hooks, parameters, actions, `permits!`; their WIT worlds |
 | `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`; the manifest |
-| `tkone-ledger` | Postings, balances, invariants |
+| `tkone-ledger` | Bookings, entries, holds, balances, invariants |
 | `tkone-engine` | Registries, OCI loading and verification, the pipeline, commits, projections |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |
 | engine server (app) | APIs: registries, lifecycle (C7), bindings, operations, bulk |
@@ -577,7 +604,7 @@ and cargo-component, `oci-client` and wasm-pkg-tools, sigstore-rs, sqlx; CEL
 
 An engine over an in-memory store, stepped by a [timeline](timeline.md) of the
 instance's schedules: open an account, deposit, run ten years of end-of-day
-hooks, and assert on postings. It runs the real component (C3), so it is how
+hooks, and assert on bookings. It runs the real component (C3), so it is how
 a product is tested before it goes `live`, and how a change is shown to
 differ from the version before.
 
@@ -589,7 +616,7 @@ differ from the version before.
 - **WIT and model evolution.** WIT records are strict; a minor model version
   that adds a field needs a rule for components built against the version
   before.
-- **Limits.** How much a hook may fetch (`postings since last capitalise` on
+- **Limits.** How much a hook may fetch (`entries since last capitalise` on
   a ten-year account) and how long it may run.
 - **Hooks across instances** beyond read-only inputs and ledger batches
   (C5, C11): wait for a real product that needs them.

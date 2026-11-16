@@ -191,6 +191,54 @@ filtered views over core types, but never a filter that changes what a core
 entity means: the deposits model has a view of deposit accounts; it cannot
 make `core::Account` mean one.
 
+### Applying models
+
+A model reaches a database as a **schema**, not as a crate:
+
+```text
+model crate ──build──► schema (JSON, by digest) ──publish──► registry (OCI)
+                                                        │
+          tkone model plan deposits@3.2.0 ◄─────────────┘
+            diff against the applied version
+            → check the semver bump; classify each change
+            → a plan: DDL per store, backfills, view rebuilds
+          approve (maker and checker)
+          tkone model apply → run the plan → record it applied
+```
+
+- **The schema.** The macros describe the model as data: entities, fields
+  and their kinds of time, relations, extensions, views, keys and filters.
+  `tkone model export` writes it as JSON and publishes it by digest, like an
+  implementation. Applying needs no Rust toolchain, and a database is always
+  traceable to the schema it was applied from.
+- **Plan, then apply.** The plan shows each store's DDL, the backfills and
+  the view rebuilds before anything runs. Applying is an administration
+  [entitlement](#entitlements), approved by a second person.
+- **The version is checked, not trusted.** A new field (optional or with a
+  default), entity or view is a minor change; removing, retyping or
+  re-keying is major. A plan whose version understates its changes is
+  refused.
+- **Additive changes apply directly.** A new view is backfilled by projecting
+  the journals from their checkpoints, and serves reads once it has caught
+  up.
+- **Breaking changes expand, then contract.** The new shape is added beside
+  the old; the engine writes both while both model versions are in use;
+  existing data is backfilled; implementations move to definitions on the
+  new version (C9); the old shape is dropped only when the registry shows no
+  `live` or `deprecated` implementation depends on it (C7, C10).
+- **Facts are never migrated in place.** A field new to a fact is absent on
+  older ones (`Option` to a hook); a change of meaning is a new effective
+  version, not an update. ScyllaDB cannot change a primary key: there, a
+  re-keying is always a new table and a backfill.
+
+The engine is **driven by applied schemas**, as a database is by its catalogue:
+they tell it how actions map to tables and how to resolve a hook's
+`requires`. Contracts are loaded at run time and models are applied without
+redeploying it, so it cannot be compiled against them (C16). The generated
+Rust types are for contract SDKs and applications. The ledger's invariants
+(a booking's entries net to zero) are the exception: compiled code in
+`tkone-ledger`.
+
 ---
 
 ## Time
@@ -246,24 +294,72 @@ new facts. History is never rewritten, and nothing re-runs (C14).
 
 ---
 
-## Reference data and parameters
+## Values: constants, code sets, parameters and reference data
 
-Values shared across products are **reference data**, not parameters:
+Where a value lives follows from **who changes it, how often, and whether a
+change needs approval** (C17):
+
+| What | Examples | Lives in | Changed by | Through |
+|---|---|---|---|---|
+| **Constants** | an algorithm's constants, a rounding step fixed by the product's design | the definition's or implementation's code | developers | a new version |
+| **Closed code sets** (the engine relies on them) | balance types, account statuses, booking sides | enums in the model, with their IFX and ISO 20022 codes | a model version | `model apply` |
+| **Open code sets** (banks add to them) | product lines, fee types, branch codes | reference data | operations | the API, maker and checker |
+| **Definition defaults** | a default notice period, a default rate | `#[parameter(default)]` in the definition | product owners | registering a version |
+| **Implementation values** | its rate card, calendar, accounting mapping | the signed manifest | implementers | publishing a version |
+| **Instance overrides** | a negotiated rate, a waived fee | the database, effective | operations | the API, maker and checker |
+| **Reference data** | indices, FX, rate cards, tariffs, the chart of accounts, calendars | the database, bitemporal | feeds, treasury, finance | the API, feeds, bulk loads; maker and checker |
+
+If someone in the business could ever want to change a value, it is not a
+constant: day counts, rates, ledger account numbers and grace periods are
+parameters or reference data, however rarely they change. And there is no
+global "settings" table: every value has a declared type, an owner, a level
+and a kind of time.
+
+### Reference data
+
+Values shared across products are reference data, not parameters:
 
 | | Examples | Owned by | Time |
 |---|---|---|---|
-| **Market reference data** | SONIA, the base rate, FX, calendars | the market, a provider | series, restated in place |
-| **Bank reference data** | rate cards (treasury's tiered rates), fee tariffs | treasury, pricing | effective, versioned |
-| **Accounting reference data** | the chart of accounts (ledger accounts) | finance | effective |
-| **Parameters** | a margin, a notice period, a negotiated rate | definition, implementation, instance (C8) | effective |
+| **Market** | SONIA, the base rate, FX, calendars | the market, a provider | series, restated in place |
+| **Bank** | rate cards (treasury's tiered rates), fee tariffs | treasury, pricing | effective, versioned |
+| **Accounting** | the chart of accounts (ledger accounts) | finance | effective |
 
-Parameters refer to reference data: `rate = card("easy-saver", tier(balance))
-+ margin`, or `index("SONIA") + margin`. Ledger accounts are the bank's: a
-product maps its entries to them with an **accounting mapping** ("interest
-expense to 5100"), a definition or implementation parameter. A customer's
-`Account` and a `LedgerAccount` are different things: an account's balances
-are addressed by account, balance type and currency, and the mapping rolls
-them up into ledger accounts.
+Its shapes are declared in the core model (`#[series]`, `#[effective]`); its
+values are data, set at run time through three channels in all:
+
+1. **Code**, reviewed as a pull request and released by version: schemas,
+   enums, defaults.
+2. **Artifacts**, released by promotion (C7): implementation values in the
+   signed manifest.
+3. **The API and feeds**, effective-dated, approved by a second person and
+   audited, with no redeploy: reference data and overrides.
+   `tkone reference load rates.yaml` seeds from a reviewed file through the
+   same API. Simulations use fixtures in memory, as `Calendar::fixed` does
+   for calendars.
+
+### Referring to reference data
+
+Parameters refer to reference data **by a logical key**, resolved by the
+engine as of the due, never by copying its values:
+
+```rust
+#[parameter(level = "implementation", default = "card:easy-saver")]
+const RATES: Ref<RateCard>;           // rate = RATES.tier(balance) + margin
+#[parameter(level = "implementation")]
+const ACCOUNTS: AccountingMapping;    // "interest_expense" → a ledger account
+```
+
+- **The snapshot says which version.** The resolved values a hook receives
+  carry their versions, so replay and audit show "Friday's accrual used rate
+  card version 12, tier 2".
+- **Contracts name no ledger accounts.** A booking names logical accounts
+  (`interest_expense`); the accounting mapping, per legal entity, turns them
+  into ledger accounts. Finance can restructure the chart of accounts without
+  a contract version.
+- **A customer's `Account` and a `LedgerAccount` are different things.** An
+  account's balances are addressed by account, balance type and currency;
+  the mapping rolls them up into ledger accounts.
 
 ---
 
@@ -579,6 +675,24 @@ its entities with facets and define their own views over it, filtered as they
 need; they never change what a core entity means. Names are full English
 words, with the vocabulary and codes of IFX and ISO 20022.
 
+### C16. Models are applied as published schemas; the engine is driven by them
+
+A model crate exports a schema, published by digest; `tkone model plan` and
+`apply` take a database from one applied version to the next, with the
+semver bump checked and breaking changes expanded, then contracted once no
+implementation depends on the old shape ([Applying
+models](#applying-models)). The engine reads the applied schemas, so models
+are applied and contracts loaded without redeploying it.
+
+### C17. Values live where their owner changes them
+
+Constants in code; closed code sets in the model; defaults in definitions;
+implementation values in the signed manifest; overrides and reference data in
+the database, effective-dated, set through the API with maker and checker
+([Values](#values-constants-code-sets-parameters-and-reference-data)).
+Contracts refer to reference data and ledger accounts by logical key, resolved
+as of the due, and each resolved value carries its version.
+
 ---
 
 ## Crates and apps
@@ -594,7 +708,7 @@ words, with the vocabulary and codes of IFX and ISO 20022.
 | `tkone-engine` | Registries, OCI loading and verification, the pipeline, commits, projections |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |
 | engine server (app) | APIs: registries, lifecycle (C7), bindings, operations, bulk |
-| `tkone` CLI (app) | `model apply`, `contract publish`, `promote`, `deprecate`, `archive`, `simulate` |
+| `tkone` CLI (app) | `model export`, `plan`, `apply`; `contract publish`, `promote`, `deprecate`, `archive`; `reference load`; `simulate` |
 
 Existing crates to build on: wasmtime (components, pooling, fuel), wit-bindgen
 and cargo-component, `oci-client` and wasm-pkg-tools, sigstore-rs, sqlx; CEL

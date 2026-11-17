@@ -202,8 +202,9 @@ struct Entry {
 - **Entitlements read the classes.** Masking, and who may read
   `personal(special)` at all, are policies over classes, not lists of
   fields ([entitlements](contract-engine.md#entitlements)).
-- **Hooks see personal data only when they declare it.** A manifest's
-  `requires` names each personal field it needs; anything else is withheld.
+- **Hooks see personal data only when they declare it.** A hook's
+  `#[requires]` names each personal field it needs
+  (`personal(Party.legal_name)`); anything else is withheld.
   Few hooks need a name; a sanctions check might.
 
 A replay of an erased subject's calls cannot reproduce their personal inputs.
@@ -261,13 +262,12 @@ struct AccountPartyRole { #[effective] role: Role }
 struct Booking { booking_id: BookingId, #[bounded(max = 1000)] entries: Vec<Entry> }
 ```
 
-```yaml
-requires:
-  end_of_day:
-    - entries: { since: last(capitalise), until: due, max: 2000 }
+```rust
+#[requires(entries(since = last(Rule::Capitalise), until = due, max = 2000))]
+fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome { /* … */ }
 ```
 
-- **A `requires` without a bound is refused at registration.** Bounds come
+- **A `#[requires]` without a bound is refused at build and registration.** Bounds come
   from the model (`max`), or from a window and an explicit `max`.
 - **A call whose inputs exceed their bound is not made.** It goes to an
   operator with the reason; nothing is truncated silently.

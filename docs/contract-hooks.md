@@ -77,9 +77,11 @@ An implementation, with the SDK:
 
 ```rust
 use tkone_contract_sdk::prelude::*;
-use easy_saver::{Action, Event, Params, Withdraw, WithdrawRefused, input}; // generated
+use easy_saver::{Action, Event, Params, Rule, Withdraw, WithdrawRefused, input}; // generated
 
+#[implementation(of = "easy-saver@2.1.0")]
 impl easy_saver::Contract for Saver {
+    #[requires(view(AccountState))]
     fn withdraw(op: Withdraw, input: input::Withdraw, p: Params)
         -> Result<Outcome, WithdrawRefused>
     {
@@ -94,12 +96,13 @@ impl easy_saver::Contract for Saver {
         }))
     }
 
+    #[requires(view(AccountState), balances(as_of = due))]
     fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome {
         let mut out = Outcome::new();
-        if run.is_for("accrue") {
+        if run.is_for(Rule::Accrue) {
             out = out.book(accrual(&input.balances, p.RATE, run.due()));
         }
-        if run.is_for("capitalise") {
+        if run.is_for(Rule::Capitalise) {
             let interest = input.balances.accrued.round(p.ROUNDING);
             out = out
                 .book(capitalisation(interest))

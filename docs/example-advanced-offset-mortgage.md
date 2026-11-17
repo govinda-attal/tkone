@@ -61,8 +61,11 @@ mod lending {
         #[effective] term_end: NaiveDate,
         #[effective] repayment_day: u8,
         #[effective] repayment: RepaymentType,          // Repayment | InterestOnly
-        property: PropertyRef,
     }
+
+    /// What secures it: a facet of its own, so other loans need not have one.
+    #[extends(core::Account, when = "product_line = 'mortgages'")]
+    struct Security { property: PropertyRef, #[effective] valuation: Money }
 
     /// Savings accounts whose balances offset this mortgage's interest.
     /// A savings account offsets at most one mortgage: a claim, like a unique
@@ -87,7 +90,7 @@ mod lending {
     struct LoanBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
 
     #[view(key = account_id, consistency = "with-instance",
-           from = core::Entry, filter = "code.family == 'MDOP' && value_date >= state.year_start",
+           from = core::Entry, filter = "code == 'LOAN_OVERPAYMENT' && value_date >= state.year_start",
            fold = sum(amount))]
     struct OverpaidThisYear { account_id: AccountId, amount: Money }
 
@@ -111,7 +114,7 @@ $ tkone model export lending        # writes model.lock, publishes the schema by
 $ tkone model plan lending@1.0.0
 lending (new) 1.0.0                        requires core@^1.5 (applied: 1.5.0) ✔
   + balances   Principal, Accrued (scale 12), Due, Fees, Incoming
-  + facet      LoanTerms on core::Account
+  + facets     LoanTerms, Security on core::Account
   + relation   OffsetLink (max 5 per mortgage; offset unique; claims table)
   + entity     PaymentHoliday
   + actions    LinkOffset, UnlinkOffset, StartPaymentHoliday, EndPaymentHoliday
@@ -234,8 +237,19 @@ mod offset_tracker {
         ScheduleChange,
     }
 
-    schedules! { "mortgage-accrue.yaml", "mortgage-instalment.yaml",
-                 "mortgage-anniversary.yaml", "mortgage-milestone.yaml" }
+    schedules! {
+        time_zone: "Europe/London",
+        calendar: "GBLO",
+        start: 2026-01-01,
+        /// Interest, each business evening.
+        accrue:      "YY-MM-DD~SBT18:00:00",
+        /// Instalments fall due in the morning; each mortgage selects its day.
+        instalment:  "YY-MM-DD~SBT09:00:00",
+        /// The overpayment allowance resets on the opening date each year.
+        anniversary: "YY-MM-DD~SBT09:00:00",
+        /// One-off dates: the tracker period's end.
+        milestone:   "YY-MM-DD~SBT09:00:00",
+    }
 }
 ```
 
@@ -261,78 +275,45 @@ The savings product knows nothing about mortgages. The mortgage reads it.
 
 ### Schedules
 
-Tempo definitions, shared by every offset tracker
-([schedule documents](schedule-document.md)):
-
-```yaml
-# mortgage-accrue.yaml: interest, each business evening
-version: 1
-time_zone: Europe/London
-calendar: GBLO
-start: 2026-01-01
-rules:
-  - id: accrue
-    rule: YY-MM-DD~SBT18:00:00
-
-# mortgage-instalment.yaml: instalments fall due in the morning; each mortgage picks its day
-version: 1
-time_zone: Europe/London
-calendar: GBLO
-start: 2026-01-01
-rules:
-  - id: instalment
-    rule: YY-MM-DD~SBT09:00:00
-```
-
-`mortgage-anniversary.yaml` and `mortgage-milestone.yaml` are the same shape,
-with rules `anniversary` and `milestone`. Each mortgage selects from them
-with its own dates when it opens (step 7).
+Each named rule in `schedules!` is a tempo definition shared by every offset
+tracker, checked when the crate compiles; registering the definition hands
+tempo its documents ([schedules](contract-engine.md#schedules)). The SDK
+generates `Rule` (`Accrue`, `Instalment`, `Anniversary`, `Milestone`) for
+`run.is_for`, and `Schedules`, from which each mortgage selects with its own
+dates when it opens (step 7).
 
 ## 5. Implementation
 
-### The manifest
-
-```yaml
-implements: offset-tracker@1.0.0
-values:
-  ROUNDING: HalfUp
-requires:
-  scheduled:
-    - view: LoanState
-    - balances: { as_of: due }
-    - linked:                        # other instances: read-only inputs (C5)
-        via: OffsetLink
-        read: balances.available
-        as_of: due
-        settled: true                # wait until their journals and inboxes pass the due
-        max: 5
-    - series: { ref: BASE, as_of: due }
-    - holidays: { active_at: due }
-  credited:
-    - view: LoanState
-  link_offset:
-    - view: LoanState
-    - account: { from: op.offset, read: [status, holders] }    # resolved locator; eventual
-  quote_redemption:
-    - view: LoanState
-    - series: { ref: BASE, as_of: q.on }
-```
-
-The `linked` input is the only place this product reads another account, and
-it declares exactly how: which relation, which field, as of when, how
-settled, how many.
-
 ### The code
+
+Each hook says what it needs with `#[requires]`: the engine fetches exactly
+that before the call, so the code does no I/O, and the input type each hook
+receives is generated from it. `cargo component build` writes the manifest
+the engine reads from these attributes
+([implementations](contract-engine.md#implementations)).
+
+The `linked` input on `scheduled` is the only place this product reads
+another account, and it declares exactly how: which relation, which field,
+as of when, how settled, how many.
 
 ```rust
 use tkone_contract_sdk::prelude::*;
 use offset_tracker::{Action, Event, Params, input, *};      // generated
 
+#[implementation(of = "offset-tracker@1.0.0", values(ROUNDING = "HalfUp"))]
 impl offset_tracker::Contract for OffsetTracker {
+    #[requires(
+        view(LoanState),
+        balances(as_of = due),
+        linked(via = OffsetLink, read = balances.available, as_of = due,
+               settled, max = 5),          // other accounts: read-only, complete to the due (C5)
+        series(BASE, as_of = due),
+        effective(PaymentHoliday, active_at = due, as = holidays),
+    )]
     fn scheduled(run: Run, input: input::Scheduled, p: Params) -> Outcome {
         let mut out = Outcome::new();
 
-        if run.is_for("accrue") {
+        if run.is_for(Rule::Accrue) {
             let offset: Money = input.linked.iter().map(|a| a.available).sum();
             let principal = input.balances.principal;
             let charged_on = (principal - offset).max(Money::zero(principal.currency()));
@@ -349,7 +330,7 @@ impl offset_tracker::Contract for OffsetTracker {
             }
         }
 
-        if run.is_for("instalment") && input.holidays.is_empty() {
+        if run.is_for(Rule::Instalment) && input.holidays.is_empty() {
             let interest = input.balances.accrued.round(p.ROUNDING);
             let capital = instalment_capital(&input.state, &p, interest);   // annuity, product code
             out = out
@@ -362,7 +343,7 @@ impl offset_tracker::Contract for OffsetTracker {
                 .emit(Event::InstalmentDue { amount: interest + capital, due_on: run.due().date() });
         }
 
-        if run.is_for("milestone") {                 // the tracker period ends
+        if run.is_for(Rule::Milestone) {             // the tracker period ends
             out = out.emit(Event::TrackerPeriodEnded { reverts_to: standard_variable(&input) });
         }
         out
@@ -371,6 +352,7 @@ impl offset_tracker::Contract for OffsetTracker {
     /// Money arrived: a direct debit, a transfer, a lump sum. Never refused:
     /// allocated to what is due first, then overpayment, with a charge beyond
     /// the allowance in the tracker period.
+    #[requires(view(LoanState))]
     fn credited(c: Credit, input: input::Credited, p: Params) -> Outcome {
         let s = &input.state;
         let to_due = c.amount.min(s.due);
@@ -393,6 +375,8 @@ impl offset_tracker::Contract for OffsetTracker {
         out.emit(Event::PaymentAllocated { to_due, overpaid: over, charge: erc })
     }
 
+    #[requires(view(LoanState),
+               account(from = op.offset, read = [status, holders]))]   // resolved locator; eventual
     fn link_offset(op: LinkOffset, input: input::LinkOffset, p: Params)
         -> Result<Outcome, LinkRefused>
     {
@@ -407,7 +391,8 @@ impl offset_tracker::Contract for OffsetTracker {
         Outcome::new().book(adjustment(recomputed - input.accrued_for(&facts.days)))
     }
 
-    // take_payment_holiday, redeem, quote_redemption, open, upgrade, close …
+    // take_payment_holiday, redeem, open, upgrade, close …
+    // quote_redemption: #[requires(view(LoanState), series(BASE, as_of = q.on))]
 }
 ```
 
@@ -465,33 +450,23 @@ The engine, in one commit on the new instance:
    range ([models 9](contract-models.md#9-identities-are-typed-and-survive-merges)).
 3. **Runs `open`**, which books the drawdown: debit `Principal` £200,000,
    credit `mortgage_drawdown`.
-4. **Registers the instance's tempo set** (D11, D13), selecting from the
-   definitions with its own dates:
+4. **Registers the instance's tempo set** (D11, D13), which `open` returned
+   as a `ScheduleChange`, selecting from the definitions with its own dates:
 
-```yaml
-# accrue: from opening to the term's end
-version: 1
-start: 2026-12-01T00:00:00
-until: 2051-12-15
-rules: [ { rule: YY-MM-DD~SBT18:00:00 } ]
----
-# instalment: the 15th, the next business day if not one
-version: 1
-start: 2027-01-15T00:00:00
-until: 2051-12-15
-rules: [ { rule: YY-MM-15~NBT09:00:00 } ]
----
-# anniversary: allowance resets on the opening date each year
-version: 1
-start: 2027-12-01T00:00:00
-rules: [ { rule: YY-12-01~NBT09:00:00 } ]
----
-# milestone: the tracker period's end
-version: 1
-start: 2028-12-01T00:00:00
-count: 1
-rules: [ { rule: YY-12-01~NBT09:00:00 } ]
+```rust
+// in `open`
+let t = &o.terms;
+let schedules = Schedules::new()
+    .accrue(Select::between(o.opened_on, t.term_end))
+    .instalment(Select::between(o.opened_on.next_month_on(t.repayment_day), t.term_end)
+        .rule(rule!("YY-MM-{day:02}~NBT09:00:00", day = t.repayment_day)))
+    .anniversary(Select::yearly_from(o.opened_on.add_years(1)))     // YY-12-01~NBT09:00:00
+    .milestone(Select::once_on(p.TRACKER_END));
 ```
+
+   `rule!` checks its template against the grammar when the crate compiles;
+   the day is filled in at run time, and tempo checks at commit that every
+   selection falls on slots its definition produces.
 
 Then `link_offset` with the customer's savings account, by its IBAN.
 
@@ -548,7 +523,7 @@ correction  acc_01JD… (offset-tracker)   because acc_01JE… (offset-saver) mo
 |---|---|---|
 | Base rate moves | a new point in `boe-base` | treasury |
 | A customer's margin is renegotiated | `SetParameter MARGIN`, effective from a date | operations, maker and checker |
-| A payment holiday | `take_payment_holiday`: the model's invariant checks the six-month allowance; the hook returns `StartPaymentHoliday` and a `ScheduleChange` that excludes the months from the instalment document (D12) | the customer, through a channel |
+| A payment holiday | `take_payment_holiday`: the model's invariant checks the six-month allowance; the hook returns `StartPaymentHoliday` and a `ScheduleChange` whose instalment selection excludes those months (D12) | the customer, through a channel |
 | A bug fix | `offset-tracker` implementation 1.0.1, published and promoted; new accounts get it; existing ones move by `tkone contract upgrade --from sha256:7c1e… --to sha256:91ab…` (C9) | product, risk |
 | A new rule (offset capped at 80% of the balance) | definition `offset-tracker@1.1.0` adds `OFFSET_CAP`; implementation 1.1.0; upgrade in bulk, each account's `upgrade` hook sets its value | product, risk |
 | The tracker period ends | `TrackerPeriodEnded` reaches the channel; the customer picks a new product; `upgrade` to its definition's implementation, which rebinds and replaces the tempo set | customer, adviser |
@@ -562,7 +537,7 @@ correction  acc_01JD… (offset-tracker)   because acc_01JE… (offset-saver) mo
 An invariant (a CEL rule on a declared action, or the ledger's checks) reads
 **one instance**. That limits where rules live, not what a product can
 compute: interest, allowances, charges and allocation are hook code, in
-Rust, with every input the manifest declares. The question is only how a
+Rust, with every input its `#[requires]` declares. The question is only how a
 rule that involves several accounts is kept. This product has four such
 rules, and each has a home:
 

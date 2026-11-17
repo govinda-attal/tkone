@@ -138,9 +138,18 @@ mod fixed_12m {
         Book,
         Transition(Pending -> Active | Closed, Active -> Closed),
         SetPayTo,
+        ScheduleChange,
     }
 
-    schedules! { "deposit-accrue.yaml", "deposit-milestone.yaml" }
+    schedules! {
+        time_zone: "Europe/London",
+        calendar: "GBLO",
+        start: 2026-01-01,
+        /// Interest, each business evening.
+        accrue:    "YY-MM-DD~SBT18:00:00",
+        /// One-off dates each deposit selects: its funding deadline, its maturity.
+        milestone: "YY-MM-DD~SBT09:00:00",
+    }
 }
 ```
 
@@ -153,57 +162,38 @@ mod fixed_12m {
 - **`permits!`** lists the only actions the code may return; anything else
   does not compile ([actions](contract-hooks.md#actions)).
 
-The schedules are tempo definitions, shared by every fixed deposit:
+- **`schedules!`** declares the product's schedules, in Rust like everything
+  else. Each named rule becomes a tempo definition shared by every fixed
+  deposit. The rules are written in tkone-schedule's grammar and parsed when
+  the crate compiles, so a mistyped rule is a compile error. Registering the
+  definition hands tempo its documents; nobody writes them by hand
+  ([schedules](contract-engine.md#schedules)).
 
-```yaml
-# deposit-accrue.yaml
-version: 1
-time_zone: Europe/London
-calendar: GBLO
-start: 2026-01-01
-rules:
-  - id: accrue
-    rule: YY-MM-DD~SBT18:00:00
+From `schedules!` the SDK generates two things the code uses:
 
-# deposit-milestone.yaml: one-off dates each deposit selects
-version: 1
-time_zone: Europe/London
-calendar: GBLO
-start: 2026-01-01
-rules:
-  - id: milestone
-    rule: YY-MM-DD~SBT09:00:00
+```rust
+pub enum Rule { Accrue, Milestone }       // what a run is for: run.is_for(Rule::Accrue)
+pub struct Schedules { /* … */ }          // an account's own selection: .accrue(…), .milestone(…)
 ```
 
 ## 4. Implementation
 
-### The manifest
-
-What each hook needs, fetched before it runs, so the code does no I/O
-([implementations](contract-engine.md#implementations)):
-
-```yaml
-implements: fixed-12m@1.0.0
-requires:
-  credited:
-    - view: DepositBalances
-  scheduled:
-    - view: DepositBalances
-    - account: { from: terms.pay_to, read: [status] }   # to pay out at maturity
-  change_pay_to:
-    - account: { from: op.pay_to, read: [status, holders] }
-  quote_maturity:
-    - view: DepositBalances
-```
-
 ### The code
+
+Each hook says what it needs with `#[requires]`: the engine fetches exactly
+that before the call, so the code does no I/O, and the input type each hook
+receives is generated from it. `cargo component build` writes the manifest
+the engine reads from these attributes
+([implementations](contract-engine.md#implementations)).
 
 ```rust
 use tkone_contract_sdk::prelude::*;
 use fixed_12m::{Action, Event, Params, input, *};         // generated from the definition
 
+#[implementation(of = "fixed-12m@1.0.0")]
 impl fixed_12m::Contract for Fixed12m {
     /// Money arrived. Accept it inside the window and under the maximum.
+    #[requires(view(DepositBalances))]
     fn credited(c: Credit, input: input::Credited, p: Params) -> Result<Outcome, CreditRefused> {
         if c.value_date > input.opened_on + Days(p.FUNDING_DAYS) {
             return Err(CreditRefused::FundingClosed);
@@ -220,11 +210,13 @@ impl fixed_12m::Contract for Fixed12m {
         Ok(out)
     }
 
+    #[requires(view(DepositBalances),
+               account(from = terms.pay_to, read = [status]))]     // to pay out at maturity
     fn scheduled(run: Run, input: input::Scheduled, p: Params) -> Outcome {
         let b = &input.balances;
         let mut out = Outcome::new();
 
-        if run.is_for("accrue") {
+        if run.is_for(Rule::Accrue) {
             for day in run.days_since_last() {                // a Friday run covers the weekend
                 let daily = b.principal * p.RATE.daily(DayCount::Act365Fixed);
                 out = out.book(booking! {
@@ -236,12 +228,12 @@ impl fixed_12m::Contract for Fixed12m {
             }
         }
 
-        if run.is_for("milestone") && input.status == Status::Pending {
+        if run.is_for(Rule::Milestone) && input.status == Status::Pending {
             // the funding window closed with nothing in it
             out = out.act(Action::Transition(Closed));
         }
 
-        if run.is_for("milestone") && run.due().date() == input.terms.matures_on {
+        if run.is_for(Rule::Milestone) && run.due().date() == input.terms.matures_on {
             let interest = b.accrued.round(p.ROUNDING);
             let pay_to = input.account.id;                    // the nominated account
             out = out
@@ -257,6 +249,7 @@ impl fixed_12m::Contract for Fixed12m {
         out
     }
 
+    #[requires(account(from = op.pay_to, read = [status, holders]))]
     fn change_pay_to(op: ChangePayTo, input: input::ChangePayTo, p: Params)
         -> Result<Outcome, ChangeRefused>
     {
@@ -266,6 +259,7 @@ impl fixed_12m::Contract for Fixed12m {
         Ok(Outcome::new().act(Action::SetPayTo(input.account.id)))
     }
 
+    #[requires(view(DepositBalances))]
     fn quote_maturity(_: QuoteMaturity, input: input::QuoteMaturity, p: Params)
         -> Result<MaturityQuote, Never>
     {
@@ -277,8 +271,14 @@ impl fixed_12m::Contract for Fixed12m {
                            on: input.terms.matures_on })
     }
 
+    /// Nothing to book until funded; start the deposit's own schedules.
     fn open(o: Opening, input: input::Open, p: Params) -> Result<Outcome, OpenRefused> {
-        Ok(Outcome::new())                                    // nothing to book until funded
+        let deadline = o.opened_on + Days(p.FUNDING_DAYS);
+        let schedules = Schedules::new()
+            .accrue(Select::between(o.opened_on, o.matures_on))
+            .milestone(Select::once_on(deadline))             // or the next business day
+            .milestone(Select::once_on(o.matures_on));
+        Ok(Outcome::new().act(Action::ScheduleChange(schedules)))
     }
 }
 ```
@@ -335,29 +335,20 @@ POST /instances
 ```
 
 In one commit, the engine binds the account to the live implementation,
-issues its identifiers, runs `open`, and gives tempo the account's own
-schedule: accrue from today to maturity, and two milestones, the funding
-deadline and maturity.
+issues its identifiers, and runs `open`, which returns the account's own
+schedules as a `ScheduleChange`: accrue from today to maturity, and two
+milestones, the funding deadline and maturity. They become its tempo set.
+Every type here is declared in the [core domain](core-domain.md).
 
-```yaml
-# accrue
-version: 1
-start: 2026-12-01T00:00:00
-until: 2027-12-01
-rules: [ { rule: YY-MM-DD~SBT18:00:00 } ]
----
-# milestone: the funding deadline, 15 Dec or the next business day
-version: 1
-start: 2026-12-15T00:00:00
-count: 1
-rules: [ { rule: YY-12-15~NBT09:00:00 } ]
----
-# milestone: maturity
-version: 1
-start: 2027-12-01T00:00:00
-count: 1
-rules: [ { rule: YY-12-01~NBT09:00:00 } ]
-```
+| Selection in `open` | Tempo receives |
+|---|---|
+| `.accrue(Select::between(1 Dec 2026, 1 Dec 2027))` | the `accrue` rule, from opening until maturity |
+| `.milestone(Select::once_on(15 Dec 2026))` | `YY-12-15~NBT09:00:00`, once |
+| `.milestone(Select::once_on(1 Dec 2027))` | `YY-12-01~NBT09:00:00`, once |
+
+Tempo checks that each selection falls on slots its definition produces; a
+selection that does not is refused at commit, and shows up in simulation
+long before production.
 
 ## 7. Its life
 
@@ -398,6 +389,6 @@ Each is in the [advanced example](example-advanced-offset-mortgage.md):
 | definition, parameters, `permits!` | [definitions](contract-engine.md#definitions) |
 | operations, queries, rejections, events | [hooks, outcomes and events](contract-hooks.md) |
 | guarded credits, returns, deliveries | [hot accounts](hot-accounts.md) |
-| manifest and `requires` | [implementations](contract-engine.md#implementations) |
+| `#[implementation]`, `#[requires]`, the generated manifest | [implementations](contract-engine.md#implementations) |
 | schedules | [schedule documents](schedule-document.md) |
 | publish, promote, the default | [C7](contract-engine.md#c7-implementation-versions-four-states-and-a-default) |

@@ -13,9 +13,11 @@ accounts](hot-accounts.md) (how the ledger avoids serialising busy accounts).
 
 **Start with an example,** each one product from its model to its customers,
 in the order the work is done: a [fixed-term deposit](example-fixed-deposit.md)
-first, then an [offset mortgage](example-advanced-offset-mortgage.md), which
-reads other accounts and runs for twenty-five years. This document and its
-companions explain each piece they use.
+first, then a [personal loan](example-personal-loan.md), then an [offset
+mortgage](example-advanced-offset-mortgage.md), which reads other accounts and
+runs for twenty-five years. The [core domain](core-domain.md) declares every
+model the three use, in one place. This document and its companions explain
+each piece they use.
 
 ## Motivation
 
@@ -217,7 +219,7 @@ Filters appear in three places, always declared, never ad hoc:
 1. **What an extension or view covers:** `DepositTerms` exists where the
    product line is deposits; a view of accounts in arrears holds only those.
 2. **What a hook fetches:** entries since the last capitalisation, balances
-   of one type, as of the due (the manifest's `requires`).
+   of one type, as of the due (a hook's `#[requires]`).
 3. **Who may see what:** see [Entitlements](#entitlements).
 
 In a store designed per read, a filter on a column that is not a key is a
@@ -461,14 +463,72 @@ mod easy_saver {                                     //   their rejections and e
 
     permits! { Book, Reverse, Hold, Release, Transition(Active -> Dormant | Closed), ScheduleChange }
 
-    schedules! { "end-of-day.yaml" }                  // a tempo definition document
+    schedules! {                                      // tempo definitions, below
+        time_zone: "Europe/London",
+        calendar: "GBLO",
+        start: 2026-01-01,
+        accrue:     "YY-MM-DD~SBT18:00:00",
+        capitalise: "YY-MM-L~PBT18:00:00",
+    }
 }
 ```
 
 Registering a definition persists its version, parameters and defaults, and
-its schedule documents as tempo definitions. It never runs. What each hook
+gives tempo its schedules as tempo definitions. It never runs. What each hook
 receives and returns, the shape of every action, and events:
 [hooks, outcomes and events](contract-hooks.md).
+
+### Schedules
+
+Schedules are declared in Rust, beside the rest of the definition. Tempo's
+documents (YAML or JSON) are tempo's own format: the engine generates them;
+nobody writes them for a product.
+
+```rust
+schedules! {
+    time_zone: "Europe/London",      // every rule is read in it
+    calendar: "GBLO",                // business days, for ~SB, ~NB, ~PB
+    start: 2026-01-01,
+    /// Interest, each business evening.
+    accrue:     "YY-MM-DD~SBT18:00:00",
+    /// Interest paid on the last business day of the month.
+    capitalise: "YY-MM-L~PBT18:00:00",
+}
+```
+
+- **One language for rules.** The rule strings are tkone-schedule's grammar,
+  the same as everywhere else; a second, field-by-field way to say "the 15th,
+  next business day, at nine" was rejected for tempo
+  ([schedule documents](schedule-document.md#rejected-explicit-fields)) and is
+  not reintroduced here. The macro parses each rule when the crate compiles,
+  so a mistyped rule is a compile error, not a registration failure.
+- **Each named rule is a tempo definition,** shared by every account on the
+  product, under the definition's name and version (`easy-saver@2.1/accrue`).
+  A rule that others derive from is declared with `basis`; a derived rule
+  refers to it by name (`reminder: "{instalment}~2PT09:00:00"`), in one set
+  (D13).
+- **Generated for the code:** a `Rule` enum, so a run is tested with
+  `run.is_for(Rule::Capitalise)` rather than a string; and a `Schedules`
+  builder with one method per rule, so an account's selection cannot name a
+  schedule the product does not have.
+
+An account's own schedules are chosen by its contract, usually in `open`,
+and returned as a `ScheduleChange` (D11):
+
+```rust
+let schedules = Schedules::new()
+    .accrue(Select::between(o.opened_on, term_end))          // the rule as declared
+    .capitalise(Select::from(o.opened_on))
+    .instalment(Select::between(first_due, last_due)         // the account's own rule
+        .rule(rule!("YY-MM-{day:02}~NBT09:00:00", day = o.repayment_day)));
+```
+
+`rule!` checks its template against the grammar at compile time; the values
+are filled in at run time. Tempo checks at commit that every selection falls
+on slots its definition produces, so a selection that cannot fire is refused,
+and shows up in simulation first. Implementations may declare schedules of
+their own with the same macro in their crate
+([implementations](#implementations)).
 
 ### Operation schemas
 
@@ -575,27 +635,47 @@ WIT world, published to an OCI registry, signed, and registered by digest.
 It is built with `tkone-contract-sdk` for `wasm32-wasip2`, or in another
 language that targets components (componentize-py for Python).
 
-It ships a **manifest**, read by the engine without running the code:
+Everything the engine needs to know about it is declared on the code:
 
-```yaml
-implements: easy-saver@2.1.0
-values:                       # its own parameter values, over the defaults
-  CALENDAR: GBLO
-schedules: [bonus-review.yaml] # schedules of its own, as tempo definitions
-requires:                     # per hook: what to fetch before it runs
-  end_of_day:
-    - view: AccountState
-    - balances: { as_of: due }
-    - entries: { since: last(capitalise), until: due }
-  withdraw:
-    - view: AccountState
+```rust
+#[implementation(of = "easy-saver@2.1.0", values(CALENDAR = "GBLO"))]   // its own values
+impl easy_saver::Contract for Saver {
+    #[requires(view(AccountState),
+               balances(as_of = due),
+               entries(since = last(Rule::Capitalise), until = due, max = 2000))]
+    fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome { /* … */ }
+
+    #[requires(view(AccountState))]
+    fn withdraw(op: Withdraw, input: input::Withdraw, p: Params)
+        -> Result<Outcome, WithdrawRefused> { /* … */ }
+}
+
+schedules! {                                  // its own schedules, beside the definition's
+    time_zone: "Europe/London", calendar: "GBLO", start: 2026-01-01,
+    bonus_review: "YY-MM-L~PBT09:00:00",
+}
 ```
 
-The `requires` section is what makes hooks fast: the engine fetches exactly
-that, in bulk, before the call, and the hook does no I/O at all (C3). It is
-also the only way a hook reads another instance: `linked` names the
-relation, the field, the time, whether it must be settled, and a bound
-([offset mortgage example](example-advanced-offset-mortgage.md#5-implementation), C29).
+| Input | Fetches |
+|---|---|
+| `view(V)` | a view of this instance, as of its last commit |
+| `balances(as_of = due)` | its balances at a time |
+| `entries(since, until, max)` | its entries in a window, bounded (C21) |
+| `series(PARAM, as_of)`, `effective(T, active_at)` | reference data, effective records |
+| `account(from, read)` | a few fields of one other account, named by the payload or the terms; eventual |
+| `linked(via, read, as_of, settled, max)` | other accounts through a relation; `settled` waits until they have passed the time (C5, C29) |
+| `personal(Field)` | a personal field, withheld unless named (C19) |
+
+`#[requires]` is what makes hooks fast: the engine fetches exactly that, in
+bulk, before the call, and the hook does no I/O at all (C3). Each hook's
+input type is generated from it, so the code cannot read what it did not
+declare. It is also the only way a hook reads another instance
+([offset mortgage example](example-advanced-offset-mortgage.md#5-implementation)).
+
+`cargo component build` writes the **manifest** from these attributes and
+`schedules!`: what it implements, its values, its schedules, each hook's
+inputs. It travels with the component, is signed with it, and is what the
+engine reads at registration without running any code. Nobody edits it.
 
 ---
 
@@ -676,9 +756,9 @@ envelope: [hooks, outcomes and events](contract-hooks.md).
 
 | Contract side | Tempo side |
 |---|---|
-| A definition's or implementation's schedule documents | tempo **definitions** (shared, product-wide) |
-| Opening an account | its **instances**: selections with the account's dates (D11) |
-| A due run | an engine call of the `scheduled` hook, with the slot's sources: `is_for("capitalise")` |
+| A definition's or implementation's `schedules!` | tempo **definitions** (shared, product-wide), generated |
+| Opening an account | its **instances**: `Schedules` selections with the account's dates, returned by `open` (D11) |
+| A due run | an engine call of the `scheduled` hook, with the slot's sources: `run.is_for(Rule::Capitalise)` |
 | A missed run | the instance's catch-up policy, `stale_after` (D15) |
 | `ScheduleChange`, an upgrade | the next version of the account's set (D12, D13) |
 | Parameters as of the due | the run acts on its due, not on now (D15) |
@@ -972,6 +1052,18 @@ result is a declared selection of `with-instance` views, and computed answers
 are queries, which return values and never actions
 ([hooks, outcomes and events](contract-hooks.md)).
 
+### C30. Schedules and inputs are declared in Rust; documents are generated
+
+A definition declares its schedules with `schedules!`, in tkone-schedule's
+rule grammar, parsed at compile time; registration generates the tempo
+definitions. Accounts select from them with a generated `Schedules` builder,
+returned as a `ScheduleChange`; runs are tested against a generated `Rule`
+enum. An implementation declares its values with `#[implementation]` and
+each hook's inputs with `#[requires]`, from which its input types are
+generated; the build writes the manifest the engine reads. Nobody writes
+tempo's documents or a manifest for a product ([schedules](#schedules),
+[implementations](#implementations)).
+
 ### C28. Actions are declared by models on kernel primitives; extensions are rare
 
 The engine's own set is a few primitives that mirror storage: append a fact,
@@ -996,7 +1088,7 @@ recorded reads; **claims** for uniqueness across instances (`unique` on a
 relation, as for identifiers); **facilities**, an instance of its own for a
 shared limit, which guards it; and only then an extension with a commit
 across partitions. Product logic is not limited by this: it is hook code,
-over whatever inputs the manifest declares
+over whatever inputs its `#[requires]` declares
 ([offset mortgage example](example-advanced-offset-mortgage.md#across-instances-what-this-product-needs-and-what-it-does-not)).
 
 ---
@@ -1008,8 +1100,8 @@ over whatever inputs the manifest declares
 | `tkone-model`, `tkone-model-macros` | `#[model]`, `#[entity]`, `#[extends]`, `#[fact]`, `#[effective]`, `#[series]`, `#[view]`, `#[personal]`, `#[identifiers]`; `model.lock`; the schema; compatibility checks; DDL diff; WIT generation |
 | `tkone-core` | The core model: party, account, ledger, reference data; the vocabulary |
 | `tkone-store` | The storage trait, journals and projections; Postgres first |
-| `tkone-contract` | Interfaces and definitions: operations, queries, rejections, events, hooks, parameters; `Outcome`, `Action`, `permits!`; their schemas, WIT worlds and OpenAPI |
-| `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`; the manifest |
+| `tkone-contract` | Interfaces and definitions: operations, queries, rejections, events, hooks, parameters, `schedules!`; `Outcome`, `Action`, `permits!`; their schemas, WIT worlds and OpenAPI; tempo definitions generated from `schedules!` |
+| `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`: `#[implementation]`, `#[requires]`, generated input types; the manifest, generated at build |
 | `tkone-ledger` | The first extension (C28): `ledger.book`, `ledger.reverse`; homes, inboxes, guarded credits and returns, checkpoints, reconciliation (C22); `Money`, `Rate`, rounding |
 | `tkone-engine` | Kernel primitives and the `Extension` trait; registries, OCI loading and verification, the pipeline, CEL invariants, commits, projections |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |

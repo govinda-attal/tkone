@@ -64,6 +64,7 @@ mod core {
         #[personal(special)] date_of_birth: Option<NaiveDate>,
         #[personal] #[effective] address: Option<PostalAddress>,
         #[personal(search = "exact")] #[effective] email: Option<Email>,
+        #[personal] #[effective] tax_residency: Option<Country>,  // required by some products' profiles
         #[effective] merged_into: Option<PartyId>,   // a merge is a redirect
     }
 

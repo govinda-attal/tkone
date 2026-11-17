@@ -8,8 +8,11 @@ running their schedules. The code sketches are illustrative, not APIs.
 Companion documents: [models](contract-models.md) (the rules every model
 follows, with what an author writes for each, and the forms of views),
 [hooks, outcomes and events](contract-hooks.md) (what a hook receives and
-returns, every action's shape, events, results and queries) and [hot
-accounts](hot-accounts.md) (how the ledger avoids serialising busy accounts).
+returns, every action's shape, events, results and queries), [hot
+accounts](hot-accounts.md) (how the ledger avoids serialising busy accounts)
+and [extending the base](extending-the-base.md) (how a bank adds fields,
+operations, events and behaviour to the models and products the platform
+ships, without forking them).
 
 **Start with an example,** each one product from its model to its customers,
 in the order the work is done: a [fixed-term deposit](example-fixed-deposit.md)
@@ -722,6 +725,7 @@ mod deposit_account {
 
     /// Returns the state after the change, from with-instance views.
     #[operation(returns = { available: AccountState.available, holds: AccountState.holds })]
+    #[accepts_facets]                    // adopters may attach typed input (extending-the-base.md)
     struct Withdraw { amount: Money, channel: Channel }
 
     /// An answer computed by the product, not stored: no actions.
@@ -1283,6 +1287,23 @@ across partitions. Product logic is not limited by this: it is hook code,
 over whatever inputs its `#[requires]` declares
 ([offset mortgage example](example-advanced-offset-mortgage.md#across-instances-what-this-product-needs-and-what-it-does-not)).
 
+### C33 to C39. Extending the base
+
+How adopters extend the models, interfaces and products the platform ships
+is decided in [extending the base](extending-the-base.md#decisions), with an
+example for each:
+
+- **C33.** Namespaces have owners; adopters depend on the base, never the
+  reverse; forks are explicit.
+- **C34.** Adopters extend data with facets, open code sets and profiles.
+- **C35.** New operations and events come in the adopter's own interfaces.
+- **C36.** Operation facets carry adopter input on base operations, and
+  change nothing in base code.
+- **C37.** Behaviour is reused by library, never overridden.
+- **C38.** The base declares its extension points; what is undeclared is
+  closed.
+- **C39.** What runs is a distribution, upgraded and checked as one.
+
 ---
 
 ## Crates and apps
@@ -1296,6 +1317,7 @@ over whatever inputs its `#[requires]` declares
 | `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`: `#[implementation]`, `#[requires]`, generated input types; the manifest, generated at build |
 | `tkone-ledger` | The first extension (C28): `ledger.book`, `ledger.reverse`; homes, inboxes, guarded credits and returns, checkpoints, reconciliation (C22); `Money`, `Rate`, rounding |
 | `tkone-engine` | Kernel primitives and the `Extension` trait; registries, OCI loading and verification, the pipeline, CEL invariants, commits, projections |
+| `tkone-products-*` | The base's products as crates of pure functions, beside their components, for adopters to reuse (C37) |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |
 | engine server (app) | APIs: registries, lifecycle (C7), bindings, operations, bulk |
 | `tkone` CLI (app) | `model export`, `check`, `plan`, `apply`; `journal show`; `party merge`; `contract describe`, `publish`, `promote`, `deprecate`, `archive`; `reference load`; `simulate` |

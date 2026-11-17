@@ -585,7 +585,8 @@ Worth having; none is expensive to add once data exists:
 - **No model extension without code in v1.** Tenants and banks extend the
   core with facets in model crates. Fields added at run time become
   entity-attribute-value tables, which every other rule here (ids, classes,
-  bounds, exact types) would have to be rebuilt for.
+  bounds, exact types) would have to be rebuilt for. How a bank extends the
+  models the platform ships: [extending the base](extending-the-base.md).
 - **Nothing is deleted.** Entities close and are archived; facts are reversed.
   The one exception is erasure, by key (rule 4).
 - **The core stays small:** party, account, ledger, reference data (C15).

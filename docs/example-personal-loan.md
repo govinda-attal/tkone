@@ -99,11 +99,16 @@ $ tkone reference load reference/accounting-loans-uk.yaml
 #[identifiers(issue = ["loan-number"])]
 #[ledger(guard = "debits", credits_to = "Incoming")]   // payments land in Incoming; `credited` allocates
 mod personal_loan {
+    approval_roles! {
+        /// Approves a restructured instalment.
+        collections,
+    }
+
     #[parameter(kind = "commercial", levels(instance(required)))]    // fixed at offer
     #[range(min = "0.029", max = "0.299")]
     const RATE: Rate;
     #[parameter(kind = "commercial",                                  // set by `open`; changed
-                levels(instance(approve(by = "collections"))))]       //   only in a restructure
+                levels(instance(approve(by = collections))))]       //   only in a restructure
     #[invariant("value.currency == account.currency")]
     const INSTALMENT: Money;
     #[parameter(kind = "commercial", levels(definition(default = "12.00 GBP")))]

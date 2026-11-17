@@ -417,7 +417,7 @@ else here ("condition" is a predicate, "term" is a loan's duration, an
 #[parameter(kind = "commercial",
             levels(definition(default = "0.0075"),
                    instance(within = "default ± 0.005",
-                            approve(when = "abs(new - old) > 0.0025", by = "pricing-senior"))))]
+                            approve(when = "abs(new - old) > 0.0025", by = pricing_senior))))]
 #[range(min = "0", max = "0.05")]
 #[invariant("BASE.current + value <= CAP", reject = "above-cap")]
 const MARGIN: Rate;
@@ -468,7 +468,7 @@ reference data, and the parameter is a `Ref<T>` saying which
 | Field | `#[range]`, `#[bounded]`, `#[one_of]`, `#[len]` | each field, alone | `until_year` is 1 to 40 |
 | Value | `#[invariant]` on the type | the value as a whole | bands ascending; the first tier starts at zero |
 | Context | `#[invariant]` on the parameter | against other parameters and the instance | the margin keeps the rate under the cap; the currency is the account's |
-| Level | `levels(…)` | who may set it, within what, with whose approval | an instance may vary ±0.50% from the default; a larger change needs a senior approver |
+| Level | `levels(…)` | who may set it, within what, with whose approval | an instance may vary ±0.50% from the default; a larger change needs a senior approver ([approval roles](#approval-roles)) |
 
 Defaults are checked against all five when a definition or implementation
 is registered, so a bad default never reaches `live`. An override, through
@@ -532,6 +532,69 @@ and API. A contract does not see who called, unless a definition makes an
 attribute of the caller an input (a channel: branch or online). Entitlements
 are attributes and policies over the model (party roles, the account's legal
 entity), so they are declared next to it, not coded in hooks.
+
+### Approval roles
+
+Contracts and models need approvals: a margin change beyond a limit, a
+restructured instalment, promotion to `live`, a breaking model change. But
+who approves is the bank's organisation, which differs by bank, legal entity
+and year. So the two are kept apart:
+
+- **Code names abstract roles.** A definition, a model or the platform
+  declares the roles its approvals need, with what each is for. Nothing in
+  code names a person, a team or a directory group.
+- **Each bank maps them.** An approval policy, per legal entity, says which
+  groups hold each role and how many approvers it takes. It is data, set
+  through the API with maker and checker, effective-dated like reference
+  data; reorganising a team changes the policy, never a contract.
+
+```rust
+// in a definition: the roles its approvals name
+approval_roles! {
+    /// Approves a margin renegotiated beyond the instance limit.
+    pricing_senior,
+    /// Approves a restructured instalment.
+    collections,
+}
+
+#[parameter(kind = "commercial",
+            levels(instance(required,
+                   approve(when = "abs(new - old) > 0.0025", by = pricing_senior))))]
+const MARGIN: Rate;
+```
+
+```yaml
+# policy/approvals-bank-uk.yaml: loaded through the API, maker and checker
+legal_entity: bank-uk
+effective_from: 2026-12-01
+roles:
+  offset-tracker.pricing_senior: { groups: [pricing-managers], approvers: 1 }
+  personal-loan.collections:     { groups: [collections-leads], approvers: 1 }
+  platform.product_owner:        { groups: [product-owners], approvers: 1 }
+  platform.risk:                 { groups: [credit-risk], approvers: 2 }
+  platform.model_owner:          { groups: [architecture], approvers: 1 }
+```
+
+| Declared by | Roles | Approve |
+|---|---|---|
+| the platform | `product_owner`, `risk`, `model_owner` | promotion to `live` (C7), `model apply`, `--allow-breaking` |
+| a model | its own, if its actions need approval | a declared action with `approve(…)` |
+| a definition | its own (`pricing_senior`, `collections`) | parameter changes, operations with `approve(…)` |
+
+- **Checked at registration.** Every role an `approve` names must be
+  declared, as `by = pricing_senior` is an identifier, not a string. And an
+  implementation is not promoted to `live` in a legal entity whose policy
+  leaves one of its roles unmapped: an approval nobody can give is found
+  before an account needs it.
+- **Never the maker.** The engine refuses an approval from the person who
+  asked, whatever the policy says; `approvers: 2` means two people, neither
+  the maker.
+- **An approval is a request with a life:** pending, approved, rejected or
+  expired. The change takes effect only once approved, from the date it asked
+  for; if that date has passed by then, it is a backdated change and goes to
+  the correction hook (C14).
+- **Recorded with the change:** who asked, who approved, under which version
+  of the policy, so audit reads one record.
 
 ---
 
@@ -1182,6 +1245,17 @@ what and with whose approval; its kind (`commercial` or `operational`)
 decides whether a change notifies customers. An override replaces the whole
 value, effective-dated ([parameters](#parameters)).
 
+### C32. Approvals name abstract roles; each bank maps them
+
+Definitions, models and the platform declare the approval roles they need,
+by name and purpose; `approve(by = …)` refers to one. Each legal entity's
+approval policy, effective-dated data set with maker and checker, maps roles
+to groups and approver counts. Registration checks every named role is
+declared, and promotion to `live` checks the legal entity maps them all. The
+engine never accepts the maker as an approver, and records the request, the
+approvers and the policy version with the change
+([approval roles](#approval-roles)).
+
 ### C28. Actions are declared by models on kernel primitives; extensions are rare
 
 The engine's own set is a few primitives that mirror storage: append a fact,
@@ -1258,8 +1332,9 @@ differ from the version before.
   to pass the due, and what a run does when one is behind (C5, C29).
 - **Corrections far back.** A fact backdated by months: how much the
   correction hook is given, and whether a limit sends it to an operator.
-- **Entitlement policies:** roles and attributes in the model, or an
-  external policy engine called by the engine.
+- **Evaluating entitlement policies:** built-in rules over roles and the
+  model's attributes, or an external policy engine called by the engine.
+  Approval roles (C32) are mapped the same way in either case.
 
 ## First slice
 

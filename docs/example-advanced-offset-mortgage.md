@@ -208,9 +208,14 @@ mod loan_account {
 #[ledger(guard = "debits",                // credits (repayments) arrive delivered; never refused
          credits_to = "Incoming")]         //   and land in Incoming, for `credited` to allocate
 mod offset_tracker {
+    approval_roles! {
+        /// Approves a margin renegotiated by more than 0.25%.
+        pricing_senior,
+    }
+
     #[parameter(kind = "commercial",                       // set at offer; renegotiated
                 levels(instance(required,                  //   with a senior's approval
-                       approve(when = "abs(new - old) > 0.0025", by = "pricing-senior"))))]
+                       approve(when = "abs(new - old) > 0.0025", by = pricing_senior))))]
     #[range(min = "0", max = "0.05")]
     const MARGIN: Rate;
     #[parameter(kind = "commercial", levels(instance(required)))]

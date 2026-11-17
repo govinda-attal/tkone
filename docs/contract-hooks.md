@@ -165,11 +165,12 @@ mod core {
     struct Hold { account_id: AccountId, balance: BalanceType, amount: Money,
                   until: Option<NaiveDate>, reason: HoldReason }
 
-    #[state_machine(Account.status)]
-    transitions! { Pending -> Active, Active -> Dormant | Closed, Dormant -> Active | Closed }
+    #[state_machine(Account.status, initial = "Pending")]
+    transitions! { Pending -> Active | Closed, Active -> Dormant | Closed, Dormant -> Active | Closed }
 
-    #[action(set = "SetParameter", on = "instance parameters")]
-    #[invariant("value >= parameter.min && value <= parameter.max")]
+    /// Validated against the parameter's own declaration: type, ranges,
+    /// invariants and levels (C31).
+    #[action(set = "SetParameter", validate = "parameter")]
     struct ParameterOverride;
 
     #[fact(key = booking_id)]
@@ -321,7 +322,7 @@ ledger, monitoring for financial crime, the data warehouse. Two kinds:
 
 | | Declared by | Emitted | Examples |
 |---|---|---|---|
-| **Action events** | the model or extension that declares the action | by the engine, for every committed action, whatever the contract does | `ledger.booking-committed`, `core.hold-created`, `core.hold-ended`, `core.account-status-changed`, `metering.usage-recorded`; and the engine's own: `ScheduleChanged`, `InstanceUpgraded`, `IdentifierIssued`, `PartyMerged`, `SubjectErased` |
+| **Action events** | the model or extension that declares the action | by the engine, for every committed action, whatever the contract does | `ledger.booking-committed`, `core.hold-created`, `core.hold-ended`, `core.account-status-changed`, `metering.usage-recorded`; and the engine's own: `TermsChanged` (a `commercial` parameter changed), `ScheduleChanged`, `InstanceUpgraded`, `IdentifierIssued`, `PartyMerged`, `SubjectErased` |
 | **Domain events** | an interface or definition, `#[event]` | by a hook, `.emit(…)` | `InterestCapitalised`, `NoticeGiven`, `BonusRateLost` |
 
 Downstream systems that must not miss anything (the general ledger,

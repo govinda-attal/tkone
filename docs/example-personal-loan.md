@@ -99,19 +99,24 @@ $ tkone reference load reference/accounting-loans-uk.yaml
 #[identifiers(issue = ["loan-number"])]
 #[ledger(guard = "debits", credits_to = "Incoming")]   // payments land in Incoming; `credited` allocates
 mod personal_loan {
-    #[parameter(level = "instance", min = "0.029", max = "0.299")]
-    const RATE: Rate;                                  // fixed at offer
-    #[parameter(level = "instance")]
-    const INSTALMENT: Money;                           // computed and set by `open`
-    #[parameter(level = "definition", default = "12.00 GBP")]
+    #[parameter(kind = "commercial", levels(instance(required)))]    // fixed at offer
+    #[range(min = "0.029", max = "0.299")]
+    const RATE: Rate;
+    #[parameter(kind = "commercial",                                  // set by `open`; changed
+                levels(instance(approve(by = "collections"))))]       //   only in a restructure
+    #[invariant("value.currency == account.currency")]
+    const INSTALMENT: Money;
+    #[parameter(kind = "commercial", levels(definition(default = "12.00 GBP")))]
     const LATE_FEE: Money;
-    #[parameter(level = "definition", default = "3")]
-    const DEFAULT_AFTER: u8;                           // missed instalments
-    #[parameter(level = "definition", default = "28")]
+    #[parameter(kind = "commercial", levels(definition(default = "3")))]
+    #[range(min = 2, max = 6)]
+    const DEFAULT_AFTER: u8;                                          // missed instalments
+    #[parameter(kind = "commercial", levels(definition(default = "28")))]
+    #[range(min = 0, max = 58)]
     const SETTLEMENT_DAYS: u16;
-    #[parameter(level = "implementation", default = "loans-uk")]
+    #[parameter(kind = "operational", levels(implementation(default = "loans-uk")))]
     const ACCOUNTS: AccountingMapping;
-    #[parameter(level = "implementation", default = "HalfUp")]
+    #[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
     const ROUNDING: Rounding;
 
     /// What it costs to settle the loan on a date.

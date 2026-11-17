@@ -208,19 +208,25 @@ mod loan_account {
 #[ledger(guard = "debits",                // credits (repayments) arrive delivered; never refused
          credits_to = "Incoming")]         //   and land in Incoming, for `credited` to allocate
 mod offset_tracker {
-    #[parameter(level = "instance", min = "0", max = "0.05")]
-    const MARGIN: Rate;                                     // set at offer
-    #[parameter(level = "instance")]
+    #[parameter(kind = "commercial",                       // set at offer; renegotiated
+                levels(instance(required,                  //   with a senior's approval
+                       approve(when = "abs(new - old) > 0.0025", by = "pricing-senior"))))]
+    #[range(min = "0", max = "0.05")]
+    const MARGIN: Rate;
+    #[parameter(kind = "commercial", levels(instance(required)))]
+    #[invariant("value > account.opened_on")]
     const TRACKER_END: NaiveDate;
-    #[parameter(level = "implementation", default = "series:boe-base")]
-    const BASE: Ref<RateSeries>;
-    #[parameter(level = "definition", default = "0.10")]
+    #[parameter(kind = "commercial", levels(implementation(default = "series:boe-base")))]
+    const BASE: Ref<RateSeries>;                            // the rate it tracks
+    #[parameter(kind = "commercial", levels(definition(default = "0.10")))]
+    #[range(min = "0", max = "0.25")]
     const OVERPAYMENT_ALLOWANCE: Rate;                      // of the balance at the year's start
-    #[parameter(level = "definition", default = "0.02")]
-    const ERC: Rate;                                        // early repayment charge, in the tracker period
-    #[parameter(level = "implementation", default = "mortgages-uk")]
+    #[parameter(kind = "commercial", levels(definition(default = r#"{ bands: [
+        { until_year: 1, rate: "0.02" }, { until_year: 2, rate: "0.01" } ] }"#)))]
+    const ERC: ErcSchedule;                                 // early repayment charge, by year
+    #[parameter(kind = "operational", levels(implementation(default = "mortgages-uk")))]
     const ACCOUNTS: AccountingMapping;
-    #[parameter(level = "implementation", default = "HalfUp")]
+    #[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
     const ROUNDING: Rounding;
 
     #[hook(activation)] fn open;                            // drawdown
@@ -359,9 +365,9 @@ impl offset_tracker::Contract for OffsetTracker {
         let over = c.amount - to_due;
         let allowance = (s.balance_at_year_start * p.OVERPAYMENT_ALLOWANCE).round(p.ROUNDING);
         let free = (allowance - s.overpaid_this_year).max(Money::zero(c.amount.currency()));
-        let erc = if c.value_date < p.TRACKER_END {
-            ((over - free).max(Money::zero(c.amount.currency())) * p.ERC).round(p.ROUNDING)
-        } else { Money::zero(c.amount.currency()) };
+        let charged = (over - free).max(Money::zero(c.amount.currency()));
+        let rate = p.ERC.rate_for(s.loan_year(c.value_date));   // zero after the last band
+        let erc = (charged * rate).round(p.ROUNDING);
 
         // from Incoming: to Due first, the rest to Principal
         let mut out = Outcome::new().book(allocation(c, to_due, over));

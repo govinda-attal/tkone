@@ -146,9 +146,10 @@ mod core {
     }
 
     /// An instance's override of a parameter, effective from a date (C8).
+    /// Validated against the parameter's own declaration: its type, ranges,
+    /// invariants and level rules (C31). The value is the whole value.
     #[effective(key = (account_id, name))]
-    #[action(set = "SetParameter")]
-    #[invariant("value >= parameter.min && value <= parameter.max", reject = "out-of-bounds")]
+    #[action(set = "SetParameter", validate = "parameter")]
     struct ParameterOverride { account_id: AccountId, name: ParameterName, value: ParameterValue }
 
     // ────────────────────────── Reference data ─────────────────────────
@@ -266,6 +267,17 @@ mod deposits {
            compose = [core::AccountState],
            derive = { accrued: "core::Balances[Accrued]" })]
     struct SavingsState;
+
+    /// Tiered interest, shared by savings products: each tier's rate applies
+    /// to the balance within it.
+    #[parameter_type]
+    #[invariant("tiers[0].from == zero(currency)", reject = "first-tier-not-zero")]
+    #[invariant("tiers.all(i, t, i == 0 || t.from > tiers[i-1].from)", reject = "tiers-not-ascending")]
+    #[invariant("tiers.all(t, t.from.currency == currency)")]
+    struct RateTiers { currency: Currency, #[bounded(max = 20)] tiers: Vec<Tier> }
+
+    #[parameter_type]
+    struct Tier { from: Money, #[range(min = "0", max = "0.15")] rate: Rate }
 }
 ```
 
@@ -357,6 +369,19 @@ mod lending {
 
     #[view(key = offset_id, consistency = "eventual", from = OffsetLink)]
     struct OffsetOf { offset_id: AccountId, mortgage_id: AccountId }
+
+    /// Early repayment charge by year of the loan, shared by loan products.
+    #[parameter_type]
+    #[invariant("size(bands) > 0")]
+    #[invariant("bands.all(i, b, i == 0 || b.until_year > bands[i-1].until_year)",
+                reject = "bands-not-ascending")]
+    struct ErcSchedule { #[bounded(max = 10)] bands: Vec<ErcBand> }
+
+    #[parameter_type]
+    struct ErcBand {
+        #[range(min = 1, max = 40)] until_year: u8,
+        #[range(min = "0", max = "0.10")] rate: Rate,
+    }
 }
 ```
 
@@ -389,6 +414,21 @@ mod lending {
 | `fixed-12m@1` | `term-deposits` | — | debits and credits; `Principal` | `Book`, `Transition`, `SetPayTo`, `ScheduleChange` |
 | `personal-loan@1` | `lending` | — | debits; `Incoming` | `Book`, `SetParameter`, `Transition` (status, collection), `ScheduleChange` |
 | `offset-tracker@1` | `lending` | `loan-account@1` | debits; `Incoming` | `Book`, `Reverse`, `LinkOffset`, `UnlinkOffset`, `StartPaymentHoliday`, `EndPaymentHoliday`, `Transition`, `ScheduleChange` |
+
+## Parameter types
+
+Parameters are declared by each definition; the types several products share
+are declared in their domain's model ([parameters](contract-engine.md#parameters)):
+
+| Type | Model | Used by | Shape |
+|---|---|---|---|
+| `RateTiers` | `deposits` | savings products with tiered rates | currency; up to 20 tiers, ascending from zero |
+| `ErcSchedule` | `lending` | `offset-tracker`, any loan with early repayment charges | up to 10 bands of (until year, rate), ascending |
+| `Ref<RateSeries>`, `Ref<RateCard>` | `core` (reference data) | trackers, products priced from a card | which series or card; its values are treasury's |
+| `AccountingMapping` | `core` (reference data) | every product | which mapping; its entries are finance's |
+
+Every other parameter in the examples is a scalar (`Rate`, `Money`, a count,
+a date, `Rounding`), with its limits declared beside it.
 
 ## What is deliberately not in the core
 

@@ -102,15 +102,18 @@ hooks the code must provide, which actions it may take, and its schedules
 #[ledger(guard = "debits-and-credits",      // credits must be accepted: the funding window
          credits_to = "Principal")]         // and, once accepted, count as principal
 mod fixed_12m {
-    #[parameter(level = "instance", min = "0", max = "0.10")]
-    const RATE: Rate;                                   // fixed when the deposit is opened
-    #[parameter(level = "definition", default = "14")]
+    #[parameter(kind = "commercial", levels(instance(required)))]   // fixed when opened
+    #[range(min = "0", max = "0.10")]
+    const RATE: Rate;
+    #[parameter(kind = "commercial", levels(definition(default = "14")))]
+    #[range(min = 1, max = 30)]
     const FUNDING_DAYS: u16;
-    #[parameter(level = "definition", default = "1000.00 GBP")]
+    #[parameter(kind = "commercial", levels(definition(default = "1000.00 GBP")))]
     const MINIMUM: Money;
-    #[parameter(level = "definition", default = "1000000.00 GBP")]
+    #[parameter(kind = "commercial", levels(definition(default = "1000000.00 GBP")))]
+    #[invariant("value > MINIMUM", reject = "maximum-below-minimum")]
     const MAXIMUM: Money;
-    #[parameter(level = "implementation", default = "HalfEven")]
+    #[parameter(kind = "operational", levels(implementation(default = "HalfEven")))]
     const ROUNDING: Rounding;
 
     /// The customer may change where the money goes at maturity.
@@ -153,6 +156,11 @@ mod fixed_12m {
 }
 ```
 
+- **Parameters** are typed, with where each may be set (`levels`), its limits
+  (`#[range]`, `#[invariant]`) and its kind: `commercial` values are the
+  customer's terms, `operational` ones are not
+  ([parameters](contract-engine.md#parameters)). The rate has no default:
+  every deposit is given one when it opens.
 - **Operations** (`ChangePayTo`) and the **query** (`QuoteMaturity`) are what
   channels call. Each is handled by a hook of the same name
   ([hooks](contract-hooks.md)).

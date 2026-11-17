@@ -347,7 +347,7 @@ change needs approval** (C17):
 | **Constants** | an algorithm's constants, a rounding step fixed by the product's design | the definition's or implementation's code | developers | a new version |
 | **Closed code sets** (the engine relies on them) | balance types, account statuses, booking sides | enums in the model, with their IFX and ISO 20022 codes | a model version | `model apply` |
 | **Open code sets** (banks add to them) | product lines, fee types, branch codes | reference data | operations | the API, maker and checker |
-| **Definition defaults** | a default notice period, a default rate | `#[parameter(default)]` in the definition | product owners | registering a version |
+| **Definition defaults** | a default notice period, a default rate | `#[parameter(levels(definition(default)))]` in the definition | product owners | registering a version |
 | **Implementation values** | its rate card, calendar, accounting mapping | the signed manifest | implementers | publishing a version |
 | **Instance overrides** | a negotiated rate, a waived fee | the database, effective | operations | the API, maker and checker |
 | **Reference data** | indices, FX, rate cards, tariffs, the chart of accounts, calendars | the database, bitemporal | feeds, treasury, finance | the API, feeds, bulk loads; maker and checker |
@@ -387,9 +387,9 @@ Parameters refer to reference data **by a logical key**, resolved by the
 engine as of the due, never by copying its values:
 
 ```rust
-#[parameter(level = "implementation", default = "card:easy-saver")]
+#[parameter(kind = "commercial", levels(implementation(default = "card:easy-saver"), instance()))]
 const RATES: Ref<RateCard>;           // rate = RATES.tier(balance) + margin
-#[parameter(level = "implementation")]
+#[parameter(kind = "operational", levels(implementation(required)))]
 const ACCOUNTS: AccountingMapping;    // "interest_expense" → a ledger account
 ```
 
@@ -403,6 +403,112 @@ const ACCOUNTS: AccountingMapping;    // "interest_expense" → a ledger account
 - **A customer's `Account` and a `LedgerAccount` are different things.** An
   account's balances are addressed by account, balance type and currency;
   the mapping rolls them up into ledger accounts.
+
+### Parameters
+
+A **parameter** is a value a product defines, usually with a default, that
+may be set at other levels within the product's limits: a rate, a margin, a
+fee, an allowance, an early repayment charge schedule, a calendar. The word
+is the one core banking uses for this; the alternatives each mean something
+else here ("condition" is a predicate, "term" is a loan's duration, an
+"attribute" is a model field, a "setting" sounds free to change).
+
+```rust
+#[parameter(kind = "commercial",
+            levels(definition(default = "0.0075"),
+                   instance(within = "default ± 0.005",
+                            approve(when = "abs(new - old) > 0.0025", by = "pricing-senior"))))]
+#[range(min = "0", max = "0.05")]
+#[invariant("BASE.current + value <= CAP", reject = "above-cap")]
+const MARGIN: Rate;
+
+#[parameter(kind = "commercial", levels(definition(default = r#"{ bands: [
+    { until_year: 1, rate: "0.02" }, { until_year: 2, rate: "0.01" } ] }"#)))]
+const ERC: ErcSchedule;
+
+#[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
+const ROUNDING: Rounding;
+```
+
+**Any value type, built from model types.** A parameter's type may be a
+scalar, a record, an enum with data, a bounded list, an `Option`, or a
+`Ref<T>` to reference data, with the model's exact types (`Money`, `Rate`,
+`Decimal<S>`, dates, durations, code sets). The model's rules apply, because
+an override set in 2026 is read in 2050: no floats, bounded lists, stable
+field ids, growth rather than breaking ([models](contract-models.md)). No
+personal data: a parameter describes a product or an agreed term, not a
+person.
+
+```rust
+/// Early repayment charge by year of the loan.
+#[parameter_type]
+#[invariant("size(bands) > 0")]
+#[invariant("bands.all(i, b, i == 0 || b.until_year > bands[i-1].until_year)",
+            reject = "bands-not-ascending")]
+struct ErcSchedule { #[bounded(max = 10)] bands: Vec<ErcBand> }
+
+#[parameter_type]
+struct ErcBand {
+    #[range(min = 1, max = 40)] until_year: u8,
+    #[range(min = "0", max = "0.10")] rate: Rate,
+}
+```
+
+**Declared where it is reused.** A type one product uses is declared in its
+definition crate; one a domain's products share (`RateTiers`, `ErcSchedule`)
+in the domain's model; values someone else owns for many products are
+reference data, and the parameter is a `Ref<T>` saying which
+([referring to reference data](#referring-to-reference-data)).
+
+**Validated in five layers, each declared once:**
+
+| Layer | Declared as | Checks | Example |
+|---|---|---|---|
+| Type | the Rust type | shape, exact types | a rate is not text |
+| Field | `#[range]`, `#[bounded]`, `#[one_of]`, `#[len]` | each field, alone | `until_year` is 1 to 40 |
+| Value | `#[invariant]` on the type | the value as a whole | bands ascending; the first tier starts at zero |
+| Context | `#[invariant]` on the parameter | against other parameters and the instance | the margin keeps the rate under the cap; the currency is the account's |
+| Level | `levels(…)` | who may set it, within what, with whose approval | an instance may vary ±0.50% from the default; a larger change needs a senior approver |
+
+Defaults are checked against all five when a definition or implementation
+is registered, so a bad default never reaches `live`. An override, through
+the API or a hook's `SetParameter`, is checked against all five when it is
+set; an `approve` rule turns it into a maker-and-checker request. Nothing is
+checked when a value is resolved for a call: it was checked when written.
+
+**Levels.** A parameter lists the levels it may be set at; a value resolves
+instance, then implementation, then definition, as of the due (C8).
+`instance(required)` means every account must be given one when it opens
+(a fixed deposit's rate). A parameter with no `instance` level cannot be
+overridden per account.
+
+**Kinds.** Values with different owners and legal weight are declared
+apart:
+
+| Kind | Examples | A change |
+|---|---|---|
+| `commercial` | rates, margins, fees, allowances, charges, the series a tracker follows | needs the approvals its levels declare, and emits `TermsChanged`, which statements and customer notices listen for |
+| `operational` | rounding, calendars, accounting mappings | is an implementation or finance matter; no customer notice |
+
+**Opinions:**
+
+- **An override replaces the whole value.** One tier is never merged into a
+  default's tiers: the value in force must be readable from one record. If
+  parts change independently, they are two parameters.
+- **Values are effective-dated whole.** "ERC schedule, version 3, from 1
+  July" is one version; replay uses the version in force at the due.
+- **Hooks get typed values:** a generated `Params` (`p.ERC.rate_for(year)`),
+  never text to parse.
+- **The schema drives the tools.** Parameter types are published in the
+  definition's schema; the back-office form for a margin or a product's ERC
+  schedule is generated from it, with the same validation.
+
+**A parameter, or a facet field?** Both can be agreed per account. A **facet
+field** is a fact of the account with no product default, set when it opens:
+term end, repayment day, the property. A **parameter** is a value the
+product defines, which an account may override within the product's limits:
+margin, fees, allowance. If there is a product-level default, it is a
+parameter.
 
 ---
 
@@ -438,9 +544,10 @@ return.
 #[definition(name = "easy-saver", version = "2.1.0", model = "deposits@^3.1",
              implements = ["deposit-account@^1"])]   // Deposit, Withdraw, QuoteWithdrawal,
 mod easy_saver {                                     //   their rejections and events
-    #[parameter(level = "instance", default = "0.0325", min = "0", max = "0.15")]
+    #[parameter(kind = "commercial", levels(definition(default = "0.0325"), instance()))]
+    #[range(min = "0", max = "0.15")]
     const RATE: Rate;
-    #[parameter(level = "implementation", default = "GBLO")]
+    #[parameter(kind = "operational", levels(implementation(default = "GBLO")))]
     const CALENDAR: CalendarCode;
 
     /// The product's own operation, beyond the interface.
@@ -885,7 +992,8 @@ A value is resolved as instance override, else implementation value, else
 definition default, as of the call's due. A rate change on 1 July is a new
 value effective from 1 July: a catch-up accrual for 30 June uses June's rate.
 Values shared across products (rate cards, indices, the chart of accounts)
-are reference data, which parameters refer to.
+are reference data, which parameters refer to. Each parameter is a typed value, validated
+when it is set, never when it is read (C31).
 
 ### C9. Moving an instance to a new version is an upgrade
 
@@ -1063,6 +1171,16 @@ each hook's inputs with `#[requires]`, from which its input types are
 generated; the build writes the manifest the engine reads. Nobody writes
 tempo's documents or a manifest for a product ([schedules](#schedules),
 [implementations](#implementations)).
+
+### C31. Parameters are typed values with declared validation, levels and a kind
+
+A parameter may be any value type built from model types (records, enums,
+bounded lists, references), under the model's rules. It is validated in five
+declared layers (type, field, value, context, level) when a default is
+registered or an override is set. Its levels say where it may be set, within
+what and with whose approval; its kind (`commercial` or `operational`)
+decides whether a change notifies customers. An override replaces the whole
+value, effective-dated ([parameters](#parameters)).
 
 ### C28. Actions are declared by models on kernel primitives; extensions are rare
 

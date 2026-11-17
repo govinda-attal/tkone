@@ -5,6 +5,18 @@ and apps that would run a core banking product (a savings account, a loan) as
 versioned contracts over versioned models, with [tempo](schedule-document.md)
 running their schedules. The code sketches are illustrative, not APIs.
 
+Companion documents: [models](contract-models.md) (the rules every model
+follows, with what an author writes for each, and the forms of views),
+[hooks, outcomes and events](contract-hooks.md) (what a hook receives and
+returns, every action's shape, events, results and queries) and [hot
+accounts](hot-accounts.md) (how the ledger avoids serialising busy accounts).
+
+**Start with an example,** each one product from its model to its customers,
+in the order the work is done: a [fixed-term deposit](example-fixed-deposit.md)
+first, then an [offset mortgage](example-advanced-offset-mortgage.md), which
+reads other accounts and runs for twenty-five years. This document and its
+companions explain each piece they use.
+
 ## Motivation
 
 A banking product is mostly rules about an account's life: what may be
@@ -88,7 +100,7 @@ lending   ── extends core::Account ──►  LoanTerms (principal, term)
 ```
 
 ```rust
-#[model(name = "core", version = "1.4.0")]
+#[model(name = "core", version = "1.4.0", extensions = ["ledger@^1"])]
 mod core {
     #[entity(key = party_id)]
     struct Party { party_id: PartyId, kind: PartyKind, #[effective] name: Name }
@@ -96,12 +108,18 @@ mod core {
     #[entity(key = account_id)]
     struct Account { account_id: AccountId, opened_on: NaiveDate, #[effective] status: Status }
 
+    /// The statuses an account moves through; `Transition` follows it.
+    #[state_machine(Account.status)]
+    transitions! { Pending -> Active, Active -> Dormant | Closed, Dormant -> Active | Closed }
+
     /// Parties and accounts are many to many, each in a role.
     #[relation(Account <-> Party)]
     struct AccountPartyRole { #[effective] role: Role }
 
-    /// Entries that net to zero, booked together: the unit a hook returns.
+    /// Entries that net to zero, booked together. Booking is the ledger
+    /// extension's action: its meaning needs code.
     #[fact(key = booking_id)]
+    #[action(extension = "ledger.book", reverse = "ledger.reverse")]
     struct Booking { booking_id: BookingId, reverses: Option<BookingId>, entries: Vec<Entry> }
 
     /// One leg: an amount to one balance of one account.
@@ -109,7 +127,10 @@ mod core {
     struct Entry { account_id: AccountId, address: BalanceAddress, amount: Money, side: Side }
 
     /// Authorised, not booked: reduces the available balance; not an entry.
+    /// A declared action: a kernel primitive and its invariants.
     #[effective(key = account_id)]
+    #[action(create = "Hold", end = "Release")]
+    #[invariant("amount <= state.available", reject = "hold-exceeds-available")]
     struct Hold { hold_id: HoldId, address: BalanceAddress, amount: Money }
 }
 
@@ -135,16 +156,31 @@ mod deposits {
 - **One account, whatever it carries.** A deposit's terms are a facet of the
   core account, so the account keeps one identity, one status history and
   one list of parties.
+- **A model declares its actions,** not only its data: which kernel
+  primitive each is (append a fact, set an attribute, create or end an
+  entity, transition a state), with invariants the engine checks at commit.
+  Meanings that need code (the ledger) come from an extension the model
+  requires. The engine knows no domain; banking is the core model and the
+  ledger extension ([actions](contract-hooks.md#actions), C28).
 - **One source, two outputs.** A model crate generates the Rust types the
   engine uses and the WIT types implementations see, so the two cannot
   drift.
 - **Apply.** `tkone model apply deposits@3.1.0` checks that the core range it
   requires is applied, diffs against the applied version, emits and runs DDL,
-  and records the version. Changes follow semver: adding a field or view is
-  minor, removing or retyping is major and needs a migration. A major core
-  version moves every domain, which is why the core stays small.
-- **Views are derived, never written by contracts** (C4). The engine maintains
-  each from the actions that change its sources.
+  and records the version. Models grow rather than break: fields are added
+  and deprecated, never removed or retyped in place, and a breaking change is
+  an approved exception ([models](contract-models.md#2-models-grow-they-do-not-break)).
+  A major core version moves every domain, which is why the core stays small.
+- **Views are derived, never written by contracts** (C4). Each is declared in
+  one of four forms (re-key, latest, fold, compose), and the engine maintains
+  it from the actions that change its sources
+  ([views](contract-models.md#views-four-forms-no-code), C26).
+- **Rules every model follows,** from its first version, because they cannot
+  be added once data exists: stable field ids, growth instead of breaking,
+  compatibility per kind, personal data classified and erasable, exact
+  numbers, bounded collections, unserialised hot accounts, a schema named on
+  every record, typed identities that survive merges. Each, with what its
+  author writes: [models](contract-models.md).
 
 ### Names
 
@@ -196,7 +232,7 @@ make `core::Account` mean one.
 A model reaches a database as a **schema**, not as a crate:
 
 ```text
-model crate ──build──► schema (JSON, by digest) ──publish──► registry (OCI)
+model crate ──build──► schema (canonical JSON, by digest) ──publish──► registry (OCI)
                                                         │
           tkone model plan deposits@3.2.0 ◄─────────────┘
             diff against the applied version
@@ -208,16 +244,20 @@ model crate ──build──► schema (JSON, by digest) ──publish──►
 
 - **The schema.** The macros describe the model as data: entities, fields
   and their kinds of time, relations, extensions, views, keys and filters.
-  `tkone model export` writes it as JSON and publishes it by digest, like an
-  implementation. Applying needs no Rust toolchain, and a database is always
-  traceable to the schema it was applied from.
+  `tkone model export` writes it as canonical JSON (RFC 8785), with each
+  field's stable id from `model.lock`, and publishes it by digest, like an
+  implementation ([the schema](contract-models.md#the-schema)). Applying
+  needs no Rust toolchain, and a database is always traceable to the schema
+  it was applied from.
 - **Plan, then apply.** The plan shows each store's DDL, the backfills and
   the view rebuilds before anything runs. Applying is an administration
   [entitlement](#entitlements), approved by a second person.
 - **The version is checked, not trusted.** A new field (optional or with a
-  default), entity or view is a minor change; removing, retyping or
-  re-keying is major. A plan whose version understates its changes is
-  refused.
+  default), entity or view, or a deprecation, is a minor change; removing,
+  retyping or re-keying is major, allowed only with an approved
+  `--allow-breaking`. A plan whose version understates its changes is
+  refused, and so is one that breaks the compatibility its kinds need
+  ([compatibility](contract-models.md#3-compatibility-is-checked-per-kind)).
 - **Additive changes apply directly.** A new view is backfilled by projecting
   the journals from their checkpoints, and serves reads once it has caught
   up.
@@ -235,9 +275,10 @@ The engine is **driven by applied schemas**, as a database is by its catalogue:
 they tell it how actions map to tables and how to resolve a hook's
 `requires`. Contracts are loaded at run time and models are applied without
 redeploying it, so it cannot be compiled against them (C16). The generated
-Rust types are for contract SDKs and applications. The ledger's invariants
-(a booking's entries net to zero) are the exception: compiled code in
-`tkone-ledger`.
+Rust types are for contract SDKs and applications. Extensions are the
+exception: the ledger's meaning (a booking's entries net to zero, deliveries,
+guarded balances) is compiled code in `tkone-ledger`, built into the engine
+and required by the models that use it (C28).
 
 ---
 
@@ -372,7 +413,9 @@ Who may do and see what, decided by the engine, never by contracts:
   limit; a customer may withdraw from accounts where they hold a role.
 - **Data:** which instances and fields a caller may read: rows filtered by
   legal entity, brand or jurisdiction; fields such as a party's tax id masked
-  for most roles.
+  for most roles. Masking follows the model's classes (`personal`,
+  `personal(special)`), not lists of fields
+  ([personal data](contract-models.md#4-personal-data-is-classified-and-can-be-erased)).
 - **Lifecycle:** who may register, approve and promote a contract version
   (C7), and who may set which parameters (a rate on one account).
 
@@ -390,32 +433,138 @@ A definition is a product's contract: what an implementation must do and may
 return.
 
 ```rust
-#[definition(name = "easy-saver", version = "2.0.0", model = "deposits@^3.1")]
-mod easy_saver {
+#[definition(name = "easy-saver", version = "2.1.0", model = "deposits@^3.1",
+             implements = ["deposit-account@^1"])]   // Deposit, Withdraw, QuoteWithdrawal,
+mod easy_saver {                                     //   their rejections and events
     #[parameter(level = "instance", default = "0.0325", min = "0", max = "0.15")]
-    const RATE: Decimal;
+    const RATE: Rate;
     #[parameter(level = "implementation", default = "GBLO")]
     const CALENDAR: CalendarCode;
 
-    #[operation] fn deposit(amount: Money);
-    #[operation] fn withdraw(amount: Money);
+    /// The product's own operation, beyond the interface.
+    #[operation] struct SwitchProduct { to: ProductCode, from: NaiveDate }
+    #[rejections(SwitchProduct)] enum SwitchRefused { NotEligible }
+    #[event] struct BonusRateLost { from: NaiveDate }
 
-    #[hook(pre = "withdraw")]  fn check_withdrawal;   // may reject
-    #[hook(post = "deposit")]  fn after_deposit;
+    // Every operation, from the interface or the definition, is handled by one
+    // hook named after it, which acts or refuses:
+    //   deposit, withdraw, switch_product      -> Result<Outcome, Rejection>
+    //   quote_withdrawal (a query)             -> Result<WithdrawalQuote, Rejection>
+    // Lifecycle hooks are declared:
     #[hook(scheduled)]         fn end_of_day;         // tempo runs
+    #[hook(credited)]          fn credited;           // a delivered credit landed (C22)
     #[hook(activation)]        fn open;
     #[hook(closure)]           fn close;
     #[hook(upgrade)]           fn upgrade;            // C9
-    #[hook(correction)]        fn correct;            // C14: backdated facts
+    #[hook(correction, permits = [Book, Reverse])]
+                               fn correct;            // C14: backdated facts
 
-    permits! { Book, Hold, Transition(Active -> Dormant | Closed), Notify, ScheduleChange }
+    permits! { Book, Reverse, Hold, Release, Transition(Active -> Dormant | Closed), ScheduleChange }
 
     schedules! { "end-of-day.yaml" }                  // a tempo definition document
 }
 ```
 
 Registering a definition persists its version, parameters and defaults, and
-its schedule documents as tempo definitions. It never runs.
+its schedule documents as tempo definitions. It never runs. What each hook
+receives and returns, the shape of every action, and events:
+[hooks, outcomes and events](contract-hooks.md).
+
+### Operation schemas
+
+A model's schema describes what is stored. Callers need the other half: what
+they may send, what they get back when it is refused, and what events they
+may receive. Those are declared as types too, and published as a schema the
+same way (C25).
+
+Operations shared by a family of products are an **interface**, so a channel
+can withdraw from any deposit account without knowing its product:
+
+```rust
+#[interface(name = "deposit-account", version = "1.0.0", model = "deposits@^3.1")]
+mod deposit_account {
+    #[operation]
+    struct Deposit {
+        amount: Money,
+        channel: Channel,
+        #[personal(subject = "payer")] reference: Option<Text>,
+    }
+
+    /// Returns the state after the change, from with-instance views.
+    #[operation(returns = { available: AccountState.available, holds: AccountState.holds })]
+    struct Withdraw { amount: Money, channel: Channel }
+
+    /// An answer computed by the product, not stored: no actions.
+    #[query(returns = WithdrawalQuote)]
+    struct QuoteWithdrawal { amount: Money, on: NaiveDate }
+
+    /// Why a withdrawal is refused: declared, so a channel can act on it.
+    #[rejections(Withdraw)]
+    enum WithdrawRefused {
+        InsufficientFunds { available: Money },
+        NoticeRequired { earliest: NaiveDate },
+        Blocked,
+    }
+
+    #[event]
+    struct InterestCapitalised { amount: Money, period: DateRange }
+}
+
+// easy-saver@2.1.0, above, implements it.
+```
+
+One declaration, four outputs:
+
+| Output | For | Example |
+|---|---|---|
+| The schema (canonical JSON, by digest) | the registry, `plan` checks, audit | `deposit-account@sha256:…` |
+| WIT | implementations | `withdraw: func(op: withdraw, input: withdraw-input, params: params) -> result<outcome, withdraw-refused>` |
+| OpenAPI | the engine server's API | `POST /accounts/{account}/operations/withdraw` |
+| Client types | channels, in Rust, TypeScript, Python | `client.withdraw(account, { amount, channel })` |
+
+```text
+POST /accounts/iban:GB33BUKB20201555555555/operations/withdraw
+Tkone-Interface: deposit-account@^1
+Idempotency-Key: 7f9c2e…
+{ "amount": { "minor": "50000", "currency": "GBP" }, "channel": "online" }
+
+422 Unprocessable
+{ "rejected": "notice-required", "earliest": "2026-12-16" }
+
+200 OK
+{ "instance_version": 1843, "bookings": ["bkg_01JD…"],
+  "result": { "available": { "minor": "120000", "currency": "GBP" }, "holds": [] } }
+```
+
+```text
+$ tkone contract describe deposit-account@1
+deposit-account 1.0.0                       model deposits@^3.1
+  operations   deposit, withdraw
+  queries      quote-withdrawal
+  rejections   withdraw: insufficient-funds, notice-required, blocked
+  events       interest-capitalised
+  implemented  easy-saver@2.1.0 (live, default), notice-90@1.3.0 (live)
+```
+
+- **The model's rules apply to payloads.** Fields have stable ids (a
+  `definition.lock`), grow rather than break, and are classified: a payer's
+  reference is personal. Payloads are checked backward compatible, so a
+  caller built for 1.0 is accepted by every 1.x
+  ([models](contract-models.md)).
+- **The caller names the interface,** and the engine checks the instance's
+  definition implements a matching version. A withdrawal sent to a loan is a
+  `409` naming what the account is, not a hook's surprise.
+- **Rejections are typed, and open to growth.** A new reason is a minor
+  version; generated clients carry an `Unknown { code }` case, so an older
+  channel shows a generic refusal instead of failing.
+- **Events are typed.** A hook emits only events the interface or the
+  definition declares; the engine adds an event for every committed action
+  ([events](contract-hooks.md#events)).
+- **Results are declared, not computed by hooks:** a receipt (the instance's
+  new version and the bookings made) and the operation's `returns`, a
+  selection of `with-instance` views. Answers that are computed and not
+  stored are queries ([results](contract-hooks.md#operation-results),
+  [queries](contract-hooks.md#queries)).
 
 ---
 
@@ -429,7 +578,7 @@ language that targets components (componentize-py for Python).
 It ships a **manifest**, read by the engine without running the code:
 
 ```yaml
-implements: easy-saver@2.0.0
+implements: easy-saver@2.1.0
 values:                       # its own parameter values, over the defaults
   CALENDAR: GBLO
 schedules: [bonus-review.yaml] # schedules of its own, as tempo definitions
@@ -438,12 +587,15 @@ requires:                     # per hook: what to fetch before it runs
     - view: AccountState
     - balances: { as_of: due }
     - entries: { since: last(capitalise), until: due }
-  check_withdrawal:
+  withdraw:
     - view: AccountState
 ```
 
 The `requires` section is what makes hooks fast: the engine fetches exactly
-that, in bulk, before the call, and the hook does no I/O at all (C3).
+that, in bulk, before the call, and the hook does no I/O at all (C3). It is
+also the only way a hook reads another instance: `linked` names the
+relation, the field, the time, whether it must be settled, and a bound
+([offset mortgage example](example-advanced-offset-mortgage.md#5-implementation), C29).
 
 ---
 
@@ -464,18 +616,22 @@ One operation on one instance:
    with fuel and memory limits. With wasmtime's pooling allocator,
    instantiation is microseconds; the cost is in moving the inputs, which is
    why they are prepared and small.
-5. **Validate** the returned actions: permitted by the definition, valid
-   against the model's invariants (a booking's entries net to zero; a transition is
-   allowed from the current state).
+5. **Validate** the outcome: its actions permitted by the definition and the
+   hook, valid against the model's invariants (a booking's entries net to
+   zero; a transition is allowed from the current state); its events
+   declared ([actions](contract-hooks.md#actions)).
 6. **Commit** per instance: one conditional append to the instance's
    journal, the actions with "only if the instance is still at version n"
    (C12). The `with-instance` views they change, the outbox (for `eventual`
-   views and events) and tempo's schedule changes go with it.
+   views and events) and tempo's schedule changes go with it. Entries for
+   other accounts (credits, and entries to unguarded accounts) are delivered
+   to their inboxes, not committed in their journals (C22).
 7. **Project** `eventual` views from the outbox, asynchronously
    ([outbox and inbox](outbox-inbox-design.md)).
 
-A hook may also **reject** (a pre-hook refusing a withdrawal): nothing is
-committed, and the rejection, with its reason, is the result.
+An operation's hook may also **reject** (a withdrawal refused): nothing is
+committed, and the typed rejection is the result. A **query** stops after
+step 4: its value is the result, and nothing is validated or committed.
 
 ### Bulk
 
@@ -488,20 +644,31 @@ previous one's commit (C6).
 
 ## Actions
 
-The set of actions is the platform's, closed, and versioned with the engine:
+A hook returns an **outcome**: the actions it wants taken and the events it
+wants told, or a typed rejection.
 
-| Action | What the engine writes |
-|---|---|
-| `Book` | a booking: entries that net to zero, or a reversal of one; balances views |
-| `Hold`, `Release` | a hold on an available balance, and its release |
-| `Transition` | the entity's status, if the model allows it from the current one |
-| `SetParameter` | an instance override, effective from a date |
-| `ScheduleChange` | a new version of the instance's tempo set (D12, D13) |
-| `Notify` | an outbox event for the application |
-| `Reject` | nothing; the reason is returned |
+```rust
+pub struct Outcome<A = Action, E = Event> { pub actions: Vec<A>, pub events: Vec<E> }
+```
 
-A definition narrows the set (`permits!`). A contract can never return "write
-this row": if it could, the engine could not keep the views true.
+The engine must understand every action, but it does not own them. They come
+in three tiers:
+
+| Tier | What | Declared in | Banking's |
+|---|---|---|---|
+| **Kernel primitives** | `Append`, `Set`, `Create`/`End`, `Transition`, `Deliver`, `ScheduleChange`: what storage can do to any model's kinds | the engine: closed, small | — |
+| **Declared actions** | a primitive on a model's type, with invariants (CEL) checked at commit | model crates: open to any domain | `Hold`/`Release`, `Transition`, `SetParameter` |
+| **Extensions** | actions whose meaning needs code; they plan writes in primitives, the engine writes | Rust crates built into the engine, required by models | the ledger: `Book`, `Reverse` |
+
+A definition narrows the actions its models declare (`permits!`), and may
+narrow them per hook; the
+SDK's generated types hold only what is permitted, so anything else does not
+compile, and the engine checks again at commit. A contract can never return
+"write this row": if it could, the engine could not keep the views true.
+Events are declared types, emitted with the actions; the engine adds an
+event for every committed action. There are no free-form attributes and no
+opaque result bytes. The types, the checks per action, and the event
+envelope: [hooks, outcomes and events](contract-hooks.md).
 
 ---
 
@@ -552,11 +719,24 @@ costs availability (a write fails when view replicas cannot be reached), and
 it cannot aggregate or join. Balances, accruals and arrears are folds, so the
 engine computes them on any store.
 
-The exception is the ledger: a transfer debits one account and credits
-another, atomically (C11). Postgres does it in one transaction; ScyllaDB has
-no transaction across partitions, so there it would be a saga (a transfer
-record, steps to each journal through the outbox, compensation). That cost,
-paid before the product exists, is why Postgres comes first (C12).
+The ledger mostly fits that shape too. A booking commits in its **home**, the
+journal of the instance whose operation produced it, where its guarded
+debits are checked; its credits and entries to unguarded accounts are
+**delivered** to inboxes, insert only, because nothing they would be checked
+against can be wrong. So a transfer is one partition's commit, and a busy
+account (fee income, a merchant) serialises nothing ([hot
+accounts](hot-accounts.md), C22). On Postgres delivery is in the same
+transaction; on ScyllaDB it is projected from the outbox.
+
+What is left is a booking that **debits two guarded accounts** at once. Postgres
+does it in one transaction; ScyllaDB has no transaction across partitions, so
+there it would be a saga (steps to each journal through the outbox,
+compensation). It is rare, and its cost is part of why Postgres comes first
+(C12).
+
+Partitions are bounded: an instance's journal is bucketed by period, so no
+partition grows for the life of a mortgage. Every record names the schemas
+and the code it was written under (C23).
 
 ---
 
@@ -566,7 +746,9 @@ paid before the product exists, is why Postgres comes first (C12).
 
 Hooks never touch the database. The engine is the only writer, so every
 write is checked against the definition and the model, every view stays
-derivable, and a hook is a pure function that can be replayed.
+derivable, and a hook is a pure function that can be replayed. The actions
+a hook may return are declared by its models, on the engine's primitives
+(C28).
 
 ### C2. Implementations are pinned by digest
 
@@ -593,7 +775,9 @@ What a hook reads about its own account is `with-instance`: committed with the
 last action, so two operations cannot both see the same balance. Data about
 other instances (an offset savings balance for a mortgage's interest) is a
 declared, read-only input from an `eventual` view, as of a time the hook
-states.
+states; `settled` makes the engine wait until those instances' journals and
+inboxes have passed that time. Every such read is recorded, so a late fact
+on what was read reaches the reader's correction hook (C29).
 
 ### C6. One writer per instance
 
@@ -636,13 +820,15 @@ An implementation targets exactly one definition version; a definition, a
 semver range of one model. The engine refuses at registration what does not
 fit (a model version not applied, a parameter missing), never at call time.
 
-### C11. The ledger is part of the core
+### C11. The ledger is the core's, as an extension
 
 Money moves only as bookings: entries that net to zero. Balances are views of
-entries. An operation across accounts (a transfer) is one booking, committed by
-the engine across the instances it touches. That is the one exception to C6's
-one instance per commit, and it goes through the ledger, not through hooks
-writing to each other.
+entries. An operation across accounts (a transfer) is one booking, committed
+in its home instance with the other accounts' entries delivered (C22); it
+goes through the ledger, not through hooks writing to each other. A booking
+that debits two guarded accounts is the one exception to C6's one instance
+per commit. The ledger is not in the engine: it is the first extension
+(C28), required by the core model, so the engine stays free of any domain.
 
 ### C12. A commit is a journal append; Postgres first
 
@@ -693,22 +879,142 @@ the database, effective-dated, set through the API with maker and checker
 Contracts refer to reference data and ledger accounts by logical key, resolved
 as of the due, and each resolved value carries its version.
 
+### C18. Fields have stable ids; models grow, compatibility is checked per kind
+
+Every entity, field, relation and view has an id, assigned by tooling and
+kept in a committed `model.lock`, so a rename is free and an id is never
+reused. Models add and deprecate; a field is never removed or redefined in
+place, and a breaking change is an approved exception. `model plan` checks
+the compatibility each kind needs: facts readable by every version, views
+rebuilt instead. Each component is given its inputs in the model version it
+was built for, by field id
+([models 1–3](contract-models.md#1-fields-have-stable-identities)).
+
+### C19. Personal data is classified when declared, and erased by key
+
+Fields are classed (`internal` by default, `personal`, `personal(special)`,
+and others), with the party they belong to. Personal fields are encrypted
+with a key per party; erasure deletes the key, everywhere at once, while
+bookings stay, pseudonymous. Retention and legal holds are policies the
+engine runs; free text is never left unclassified; hooks receive personal
+fields only when they declare them
+([models 4](contract-models.md#4-personal-data-is-classified-and-can-be-erased)).
+
+### C20. Numbers are exact, and rounding is explicit
+
+No floats in models, definitions or the SDK. Money is minor units and a
+currency; rates and other values are fixed-point decimals. Arithmetic that
+can lose precision returns `Unrounded<T>`, rounded by a mode the definition
+declares ([models 5](contract-models.md#5-numbers-are-exact)).
+
+### C21. Every collection a hook reads is bounded
+
+Relations and collections declare a `max`; a `requires` without a bound is
+refused at registration; a call whose inputs exceed their bound goes to an
+operator. Folding many rows is a view's job
+([models 6](contract-models.md#6-every-collection-is-bounded)).
+
+### C22. Only guarded writes are serialised
+
+A booking commits in its home instance, where guarded debits are checked;
+credits, and entries to unguarded accounts, are delivered to insert-only,
+sharded inboxes. A check can miss only in-flight credits, so it never passes
+wrongly. Busy accounts serialise nothing, and transfers are single-partition
+commits. A product that must be able to refuse money guards credits too:
+they land pending, its `credited` hook accepts or refuses them, and a
+refusal is a return to the sender, still without a commit across partitions
+([hot accounts](hot-accounts.md), [guarded
+credits](hot-accounts.md#guarded-credits)).
+
+### C23. Every record names its schema
+
+Journal records carry the digests of the schemas they were written under, the
+implementation, the engine version and the input hash. Readers decode by
+field id under that schema and lift values to the version they read at
+([models 8](contract-models.md#8-every-record-names-its-schema)).
+
+### C24. Identities are typed and opaque; business identifiers are not keys
+
+Keys are engine-generated, typed per entity, and never shown to customers.
+An object carries a set of identifiers (account number, IBAN, PAN, passport,
+LEI, a legacy system's id), effective-dated. Their schemes are reference
+data: what each applies to, its format and check, its uniqueness scope, how
+many an object may hold, who issues it. Definitions say which their product
+issues and needs; the engine allocates bank-issued ones. Any identifier can
+stand in for a key in the API. Operations take idempotency keys. Parties
+merge by an effective redirect; nothing that refers to them is rewritten
+([models 9](contract-models.md#9-identities-are-typed-and-survive-merges)).
+
+### C25. Operations, rejections and events are declared types, published as schemas
+
+What callers send, why they may be refused, and what they are told are typed
+in interfaces (shared by a family of products) and definitions, and
+published by digest like a model's schema. WIT, OpenAPI and client types are
+generated from them. Callers name the interface they expect; payloads follow
+the model's rules: stable ids, growth, classes
+([operation schemas](#operation-schemas)).
+
+### C26. Views are declared in four forms, not coded
+
+Re-key, latest, fold (mergeable aggregations over facts) and compose (with
+arithmetic formulas). The engine derives and maintains every view from them;
+a derivation is part of the schema, and a changed one is a new view version
+([views](contract-models.md#views-four-forms-no-code)). A projector component
+is a later, exceptional escape hatch.
+
+### C27. A hook returns an outcome of declared types; results come from views
+
+An outcome is the actions (declared by its models, narrowed per definition
+and per hook, checked again at commit) and the events (declared) it wants, or
+a typed rejection. The engine emits an event for every committed action. There
+are no free-form attributes and no opaque result bytes: an operation's
+result is a declared selection of `with-instance` views, and computed answers
+are queries, which return values and never actions
+([hooks, outcomes and events](contract-hooks.md)).
+
+### C28. Actions are declared by models on kernel primitives; extensions are rare
+
+The engine's own set is a few primitives that mirror storage: append a fact,
+set an effective attribute, create or end an effective entity, transition a
+declared state machine, deliver to another instance's inbox, change a tempo
+set. Models declare their domain's actions on them, with invariants in CEL
+over one instance's snapshot. Meanings that need code are extensions: Rust
+crates built into the engine, which plan writes in primitives and never
+write themselves; a model names the extensions it requires, and registration
+refuses an engine without them. Banking's v1 needs one, the ledger. If most
+models need an extension, a primitive is missing
+([actions](contract-hooks.md#actions)).
+
+### C29. Instances are drawn around invariants; across them, five tools
+
+An invariant reads one instance, so the instance is the consistency
+boundary: draw it so the rules that must hold at every commit fall inside it
+(a mortgage's fixed and tracker parts are one instance). Rules that involve
+other instances use, in this order: **declared inputs**, settled if they
+must be complete; **dependent corrections**, which the engine derives from
+recorded reads; **claims** for uniqueness across instances (`unique` on a
+relation, as for identifiers); **facilities**, an instance of its own for a
+shared limit, which guards it; and only then an extension with a commit
+across partitions. Product logic is not limited by this: it is hook code,
+over whatever inputs the manifest declares
+([offset mortgage example](example-advanced-offset-mortgage.md#across-instances-what-this-product-needs-and-what-it-does-not)).
+
 ---
 
 ## Crates and apps
 
 | Crate or app | Role |
 |---|---|
-| `tkone-model`, `tkone-model-macros` | `#[model]`, `#[entity]`, `#[extends]`, `#[fact]`, `#[effective]`, `#[series]`, `#[view]`; DDL diff; WIT generation |
+| `tkone-model`, `tkone-model-macros` | `#[model]`, `#[entity]`, `#[extends]`, `#[fact]`, `#[effective]`, `#[series]`, `#[view]`, `#[personal]`, `#[identifiers]`; `model.lock`; the schema; compatibility checks; DDL diff; WIT generation |
 | `tkone-core` | The core model: party, account, ledger, reference data; the vocabulary |
 | `tkone-store` | The storage trait, journals and projections; Postgres first |
-| `tkone-contract` | Definitions: operations, hooks, parameters, actions, `permits!`; their WIT worlds |
+| `tkone-contract` | Interfaces and definitions: operations, queries, rejections, events, hooks, parameters; `Outcome`, `Action`, `permits!`; their schemas, WIT worlds and OpenAPI |
 | `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`; the manifest |
-| `tkone-ledger` | Bookings, entries, holds, balances, invariants |
-| `tkone-engine` | Registries, OCI loading and verification, the pipeline, commits, projections |
+| `tkone-ledger` | The first extension (C28): `ledger.book`, `ledger.reverse`; homes, inboxes, guarded credits and returns, checkpoints, reconciliation (C22); `Money`, `Rate`, rounding |
+| `tkone-engine` | Kernel primitives and the `Extension` trait; registries, OCI loading and verification, the pipeline, CEL invariants, commits, projections |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |
 | engine server (app) | APIs: registries, lifecycle (C7), bindings, operations, bulk |
-| `tkone` CLI (app) | `model export`, `plan`, `apply`; `contract publish`, `promote`, `deprecate`, `archive`; `reference load`; `simulate` |
+| `tkone` CLI (app) | `model export`, `check`, `plan`, `apply`; `journal show`; `party merge`; `contract describe`, `publish`, `promote`, `deprecate`, `archive`; `reference load`; `simulate` |
 
 Existing crates to build on: wasmtime (components, pooling, fuel), wit-bindgen
 and cargo-component, `oci-client` and wasm-pkg-tools, sigstore-rs, sqlx; CEL
@@ -727,13 +1033,19 @@ differ from the version before.
 - **Who writes contracts?** Domain experts rarely write Rust. WIT allows
   Python through componentize-py, but the authoring experience (SDK, local
   simulation, errors) is a product of its own.
-- **WIT and model evolution.** WIT records are strict; a minor model version
-  that adds a field needs a rule for components built against the version
-  before.
-- **Limits.** How much a hook may fetch (`entries since last capitalise` on
-  a ten-year account) and how long it may run.
-- **Hooks across instances** beyond read-only inputs and ledger batches
-  (C5, C11): wait for a real product that needs them.
+- **WIT and model evolution.** Answered in part: each component is given
+  inputs in the version it was built for (C18). Open: how a component's WIT
+  world names that version, and how long the engine keeps old shapes.
+- **Limits.** How much a hook may fetch is bounded (C21); how long it may
+  run, and the fuel it gets, is not yet set.
+- **Erasure and retention, per jurisdiction.** Whether pseudonymous bookings
+  satisfy erasure where the bank operates (C19) is for its lawyers; the
+  model only makes the answer a policy.
+- **How long end of day waits for deliveries** before a run is stale (C22).
+- **Hooks across instances** beyond the tools of C29 (inputs, dependent
+  corrections, claims, facilities): wait for a real product that needs them.
+- **How long a settled read waits** for another instance's journal and inbox
+  to pass the due, and what a run does when one is behind (C5, C29).
 - **Corrections far back.** A fact backdated by months: how much the
   correction hook is given, and whether a limit sends it to an operator.
 - **Entitlement policies:** roles and attributes in the model, or an

@@ -11,9 +11,12 @@ follows, with what an author writes for each, and the forms of views),
 returns, every action's shape, events, results and queries), [hot
 instances](hot-accounts.md) (quantities, guards and delivery: how the kernel
 avoids serialising busy instances, and how the ledger uses it)
-and [extending the base](extending-the-base.md) (how a bank adds fields,
+[extending the base](extending-the-base.md) (how a bank adds fields,
 operations, events and behaviour to the models and products the platform
-ships, without forking them).
+ships, without forking them) and [developer experience](developer-experience.md)
+(how the syntax and tools are shaped so the editor understands them:
+paths instead of strings, Cargo for versions, parameters as Rust builders,
+a language server for CEL and schedule rules).
 
 **Start with an example,** each one product from its model to its customers,
 in the order the work is done: a [fixed-term deposit](example-fixed-deposit.md)
@@ -106,7 +109,7 @@ lending   ── extends core::Account ──►  LoanTerms (principal, term)
 ```
 
 ```rust
-#[model(name = "core", version = "1.4.0", extensions = ["ledger@^1"])]
+#[model(name = "core", extensions = [ledger])]   // 1.4.0
 mod core {
     #[entity(key = party_id)]
     struct Party { party_id: PartyId, kind: PartyKind, #[effective] name: Name }
@@ -125,7 +128,7 @@ mod core {
     /// Entries that net to zero, booked together. Booking is the ledger
     /// extension's action: its meaning needs code.
     #[fact(key = booking_id)]
-    #[action(extension = "ledger.book", reverse = "ledger.reverse")]
+    #[action(extension = ledger::book, reverse = ledger::reverse)]
     struct Booking { booking_id: BookingId, reverses: Option<BookingId>, entries: Vec<Entry> }
 
     /// One leg: an amount to one balance of one account.
@@ -135,12 +138,12 @@ mod core {
     /// Authorised, not booked: reduces the available balance; not an entry.
     /// A declared action: a kernel primitive and its invariants.
     #[effective(key = account_id)]
-    #[action(create = "Hold", end = "Release")]
+    #[action(create = Hold, end = Release)]
     #[invariant("amount <= state.available", reject = "hold-exceeds-available")]
     struct Hold { hold_id: HoldId, address: BalanceAddress, amount: Money }
 }
 
-#[model(name = "deposits", version = "3.1.0", requires = "core@^1.4")]
+#[model(name = "deposits")]   // 3.1.0
 mod deposits {
     /// A facet of a core account: one to one, keyed by its id.
     #[extends(core::Account, when = "product_line = 'deposits'")]
@@ -353,7 +356,7 @@ change needs approval** (C17):
 | **Constants** | an algorithm's constants, a rounding step fixed by the product's design | the definition's or implementation's code | developers | a new version |
 | **Closed code sets** (the engine relies on them) | balance types, account statuses, booking sides | enums in the model, with their IFX and ISO 20022 codes | a model version | `model apply` |
 | **Open code sets** (banks add to them) | product lines, fee types, branch codes | reference data | operations | the API, maker and checker |
-| **Definition defaults** | a default notice period, a default rate | `#[parameter(levels(definition(default)))]` in the definition | product owners | registering a version |
+| **Definition defaults** | a default notice period, a default rate | `#[parameter]` with `.definition(default)`, in the definition | product owners | registering a version |
 | **Implementation values** | its rate card, calendar, accounting mapping | the signed manifest | implementers | publishing a version |
 | **Instance overrides** | a negotiated rate, a waived fee | the database, effective | operations | the API, maker and checker |
 | **Reference data** | indices, FX, rate cards, tariffs, the chart of accounts, calendars | the database, bitemporal | feeds, treasury, finance | the API, feeds, bulk loads; maker and checker |
@@ -393,10 +396,13 @@ Parameters refer to reference data **by a logical key**, resolved by the
 engine as of the due, never by copying its values:
 
 ```rust
-#[parameter(kind = "commercial", levels(implementation(default = "card:easy-saver"), instance()))]
-const RATES: Ref<RateCard>;           // rate = RATES.tier(balance) + margin
-#[parameter(kind = "operational", levels(implementation(required)))]
-const ACCOUNTS: AccountingMapping;    // "interest_expense" → a ledger account
+#[parameter]
+const RATES: Parameter<Ref<RateCard>> = Parameter::commercial()        // rate = RATES.tier(balance) + margin
+    .implementation(reference!("card:easy-saver"))
+    .instance(Instance::optional());
+#[parameter]
+const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()  // "interest_expense" → a ledger account
+    .implementation_required();
 ```
 
 - **The snapshot says which version.** The resolved values a hook receives
@@ -420,21 +426,29 @@ else here ("condition" is a predicate, "term" is a loan's duration, an
 "attribute" is a model field, a "setting" sounds free to change).
 
 ```rust
-#[parameter(kind = "commercial",
-            levels(definition(default = "0.0075"),
-                   instance(within = "default ± 0.005",
-                            approve(when = "abs(new - old) > 0.0025", by = pricing_senior))))]
-#[range(min = "0", max = "0.05")]
-#[invariant("BASE.current + value <= CAP", reject = "above-cap")]
-const MARGIN: Rate;
+#[parameter]
+const MARGIN: Parameter<Rate> = Parameter::commercial()
+    .definition(rate!(0.0075))
+    .instance(Instance::within(rate!(0.005))                 // ± from the default
+        .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))
+    .range(rate!(0), rate!(0.05))
+    .invariant(cel!("BASE.current + value <= CAP"), "above-cap");
 
-#[parameter(kind = "commercial", levels(definition(default = r#"{ bands: [
-    { until_year: 1, rate: "0.02" }, { until_year: 2, rate: "0.01" } ] }"#)))]
-const ERC: ErcSchedule;
+#[parameter]
+const ERC: Parameter<ErcSchedule> = Parameter::commercial()
+    .definition(ErcSchedule { bands: bounded![
+        ErcBand { until_year: 1, rate: rate!(0.02) },
+        ErcBand { until_year: 2, rate: rate!(0.01) },
+    ] });
 
-#[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
-const ROUNDING: Rounding;
+#[parameter]
+const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
 ```
+
+A parameter is a typed `const` builder: each step completes in the editor,
+values are typed literals, and a complex default is a struct literal checked
+against its type when the crate builds
+([developer experience](developer-experience.md#4-options-are-ordinary-rust-attributes-mark-items)).
 
 **Any value type, built from model types.** A parameter's type may be a
 scalar, a record, an enum with data, a bounded list, an `Option`, or a
@@ -456,7 +470,7 @@ struct ErcSchedule { #[bounded(max = 10)] bands: Vec<ErcBand> }
 #[parameter_type]
 struct ErcBand {
     #[range(min = 1, max = 40)] until_year: u8,
-    #[range(min = "0", max = "0.10")] rate: Rate,
+    #[range(min = rate!(0), max = rate!(0.10))] rate: Rate,
 }
 ```
 
@@ -471,10 +485,10 @@ reference data, and the parameter is a `Ref<T>` saying which
 | Layer | Declared as | Checks | Example |
 |---|---|---|---|
 | Type | the Rust type | shape, exact types | a rate is not text |
-| Field | `#[range]`, `#[bounded]`, `#[one_of]`, `#[len]` | each field, alone | `until_year` is 1 to 40 |
+| Field | `#[range]`, `#[bounded]`, `#[one_of]`, `#[len]` on a type's fields; `.range(..)` on a scalar parameter | each field, alone | `until_year` is 1 to 40 |
 | Value | `#[invariant]` on the type | the value as a whole | bands ascending; the first tier starts at zero |
-| Context | `#[invariant]` on the parameter | against other parameters and the instance | the margin keeps the rate under the cap; the currency is the account's |
-| Level | `levels(…)` | who may set it, within what, with whose approval | an instance may vary ±0.50% from the default; a larger change needs a senior approver ([approval roles](#approval-roles)) |
+| Context | `.invariant(cel!(..), reason)` on the parameter | against other parameters and the instance | the margin keeps the rate under the cap; the currency is the account's |
+| Level | `.definition`, `.implementation`, `.instance(Instance::…)`, `.approve…` | who may set it, within what, with whose approval | an instance may vary ±0.50% from the default; a larger change needs a senior approver ([approval roles](#approval-roles)) |
 
 Defaults are checked against all five when a definition or implementation
 is registered, so a bad default never reaches `live`. An override, through
@@ -484,9 +498,9 @@ checked when a value is resolved for a call: it was checked when written.
 
 **Levels.** A parameter lists the levels it may be set at; a value resolves
 instance, then implementation, then definition, as of the due (C8).
-`instance(required)` means every account must be given one when it opens
-(a fixed deposit's rate). A parameter with no `instance` level cannot be
-overridden per account.
+`.instance(Instance::required())` means every account must be given one
+when it opens (a fixed deposit's rate). A parameter with no `.instance(..)`
+cannot be overridden per account.
 
 **Kinds.** Values with different owners and legal weight are declared
 apart:
@@ -503,7 +517,7 @@ apart:
   parts change independently, they are two parameters.
 - **Values are effective-dated whole.** "ERC schedule, version 3, from 1
   July" is one version; replay uses the version in force at the due.
-- **Hooks get typed values:** a generated `Params` (`p.ERC.rate_for(year)`),
+- **Hooks get typed values:** `ctx.params` (`ctx.params.ERC.rate_for(year)`),
   never text to parse.
 - **The schema drives the tools.** Parameter types are published in the
   definition's schema; the back-office form for a margin or a product's ERC
@@ -563,10 +577,10 @@ approval_roles! {
     collections,
 }
 
-#[parameter(kind = "commercial",
-            levels(instance(required,
-                   approve(when = "abs(new - old) > 0.0025", by = pricing_senior))))]
-const MARGIN: Rate;
+#[parameter]
+const MARGIN: Parameter<Rate> = Parameter::commercial()
+    .instance(Instance::required()
+        .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior));
 ```
 
 ```yaml
@@ -587,8 +601,9 @@ roles:
 | a model | its own, if its actions need approval | a declared action with `approve(…)` |
 | a definition | its own (`pricing_senior`, `collections`) | parameter changes, operations with `approve(…)` |
 
-- **Checked at registration.** Every role an `approve` names must be
-  declared, as `by = pricing_senior` is an identifier, not a string. And an
+- **Checked when it compiles.** Every role an `approve` names must be
+  declared: `pricing_senior` is a path to the role `approval_roles!`
+  generated, not a string. And an
   implementation is not promoted to `live` in a legal entity whose policy
   leaves one of its roles unmapped: an approval nobody can give is found
   before an account needs it.
@@ -610,14 +625,17 @@ A definition is a product's contract: what an implementation must do and may
 return.
 
 ```rust
-#[definition(name = "easy-saver", version = "2.1.0", model = "deposits@^3.1",
-             implements = ["deposit-account@^1"])]   // Deposit, Withdraw, QuoteWithdrawal,
-mod easy_saver {                                     //   their rejections and events
-    #[parameter(kind = "commercial", levels(definition(default = "0.0325"), instance()))]
-    #[range(min = "0", max = "0.15")]
-    const RATE: Rate;
-    #[parameter(kind = "operational", levels(implementation(default = "GBLO")))]
-    const CALENDAR: CalendarCode;
+#[definition(name = "easy-saver", model = deposits,    // 2.1.0, from Cargo.toml
+             implements = [deposit_account])]          // Deposit, Withdraw, QuoteWithdrawal,
+mod easy_saver {                                       //   their rejections and events
+    #[parameter]
+    const RATE: Parameter<Rate> = Parameter::commercial()
+        .definition(rate!(0.0325))
+        .instance(Instance::optional())
+        .range(rate!(0), rate!(0.15));
+    #[parameter]
+    const CALENDAR: Parameter<CalendarCode> = Parameter::operational()
+        .implementation(reference!("GBLO"));
 
     /// The product's own operation, beyond the interface.
     #[operation] struct SwitchProduct { to: ProductCode, from: NaiveDate }
@@ -717,7 +735,7 @@ Operations shared by a family of products are an **interface**, so a channel
 can withdraw from any deposit account without knowing its product:
 
 ```rust
-#[interface(name = "deposit-account", version = "1.0.0", model = "deposits@^3.1")]
+#[interface(name = "deposit-account", model = deposits)]   // 1.0.0
 mod deposit_account {
     #[operation]
     struct Deposit {
@@ -815,7 +833,7 @@ language that targets components (componentize-py for Python).
 Everything the engine needs to know about it is declared on the code:
 
 ```rust
-#[implementation(of = "easy-saver@2.1.0", values(CALENDAR = "GBLO"))]   // its own values
+#[implementation(of = easy_saver, values(CALENDAR = reference!("GBLO")))]   // its own values
 impl easy_saver::Contract for Saver {
     #[requires(view(AccountState),
                ledger::balances(as_of = due),
@@ -946,7 +964,7 @@ kernel without inheriting them (C40).
 | Kernel mechanism | Kernel name | The ledger's name for it |
 |---|---|---|
 | a value folded from facts, per instance | `#[quantity]` | a balance (`#[ledger::balances]`) |
-| a bound on a quantity, by direction | `#[guard(Q, decreases = .., increases = ..)]` | `#[ledger(guard = "debits" \| "debits-and-credits" \| "none")]` |
+| a bound on a quantity, by direction | `#[guard(Q, decreases = .., increases = ..)]` | `#[ledger(guard = Debits \| DebitsAndCredits \| Unguarded)]` |
 | a fact written to another instance's inbox | `Deliver` | a credit, or an entry to an internal account |
 | a pending delivery, accepted or refused | `#[hook(delivered(T))]`, acceptance | `#[hook(delivered(ledger::Entry))] fn credited`; guarded credits |
 | the undoing of a refused delivery | compensation | a return booking |
@@ -1388,6 +1406,24 @@ does not compile. The outcome is returned, never written to the context, so
 a hook stays a pure function and a refusal leaves nothing behind
 ([the hook signature](contract-hooks.md#the-hook-signature)).
 
+### C42 to C46. Developer experience
+
+How the declarations are written so editors, compilers and agents
+understand them is decided in [developer
+experience](developer-experience.md#decisions), with examples:
+
+- **C42.** References are paths, checked by the compiler; strings remain
+  for names and embedded languages.
+- **C43.** Cargo owns versions and dependencies; attributes never repeat a
+  version.
+- **C44.** Attributes mark items; options (parameters) are ordinary Rust
+  builders with typed literals.
+- **C45.** Embedded languages (CEL, schedule rules, `derive`, open
+  references) are marked, parsed at compile time, and served by a language
+  server.
+- **C46.** Macros tolerate half-written code; editor capability is not
+  traded for build time without measurement.
+
 ---
 
 ## Crates and apps
@@ -1404,6 +1440,7 @@ a hook stays a pure function and a refusal leaves nothing behind
 | `tkone-products-*` | The base's products as crates of pure functions, beside their components, for adopters to reuse (C37) |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |
 | engine server (app) | APIs: registries, lifecycle (C7), bindings, operations, bulk |
+| `tkone-lsp` (app) | The language server beside rust-analyzer: CEL completion and types, schedule rules' next dates, registry references, parameter hover, compatibility warnings (C45) |
 | `tkone` CLI (app) | `model export`, `check`, `plan`, `apply`; `journal show`; `party merge`; `contract describe`, `publish`, `promote`, `deprecate`, `archive`; `reference load`; `simulate` |
 
 Existing crates to build on: wasmtime (components, pooling, fuel), wit-bindgen

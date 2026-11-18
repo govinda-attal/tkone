@@ -43,7 +43,7 @@ The mortgage is a `core::Account` with a facet; the model adds its balance
 types, its own actions, the offset link and its views.
 
 ```rust
-#[model(name = "lending", version = "1.0.0", requires = "core@^1.5")]
+#[model(name = "lending")]   // 1.0.0
 mod lending {
     /// Balance types a loan uses, beside core's.
     #[ledger::balances]
@@ -72,14 +72,14 @@ mod lending {
     /// identifier, made before the commit.
     #[relation(Account as mortgage <-> Account as offset,
                max_per_mortgage = 5, unique = "offset")]          // models 6
-    #[action(create = "LinkOffset", end = "UnlinkOffset")]
+    #[action(create = LinkOffset, end = UnlinkOffset)]
     #[invariant("input.offset.status == 'Active'", reject = "offset-not-active")]
     #[invariant("input.offset.holders.all(h, h in state.borrowers)", reject = "not-the-borrowers")]
     struct OffsetLink { #[effective] since: NaiveDate }
 
     /// A payment holiday: starts and ends; six months in a mortgage's life.
     #[effective(key = account_id)]
-    #[action(create = "StartPaymentHoliday", end = "EndPaymentHoliday")]
+    #[action(create = StartPaymentHoliday, end = EndPaymentHoliday)]
     #[invariant("months >= 1 && months <= 6")]
     #[invariant("state.holiday_months_taken + months <= 6", reject = "holiday-allowance-used")]
     struct PaymentHoliday { account_id: AccountId, from: NaiveDate, months: u8 }
@@ -171,7 +171,7 @@ What channels can do with any loan, whatever its product
 ([operation schemas](contract-engine.md#operation-schemas)):
 
 ```rust
-#[interface(name = "loan-account", version = "1.0.0", model = "lending@^1")]
+#[interface(name = "loan-account", model = lending)]   // 1.0.0
 mod loan_account {
     #[operation]
     struct LinkOffset { offset: AccountLocator }       // "iban:GB…", "acc_…": resolved by the engine
@@ -202,37 +202,43 @@ mod loan_account {
 ### The mortgage
 
 ```rust
-#[definition(name = "offset-tracker", version = "1.0.0", model = "lending@^1",
-             implements = ["loan-account@^1"])]
+#[definition(name = "offset-tracker", model = lending, implements = [loan_account])]   // 1.0.0
 #[identifiers(issue = ["mortgage-number"])]
-#[ledger(guard = "debits",                // credits (repayments) arrive delivered; never refused
-         credits_to = "Incoming")]         //   and land in Incoming, for `credited` to allocate
+#[ledger(guard = Debits,                          // credits (repayments) arrive delivered; never refused
+         credits_to = LoanBalance::Incoming)]     //   and land in Incoming, for `credited` to allocate
 mod offset_tracker {
     approval_roles! {
         /// Approves a margin renegotiated by more than 0.25%.
         pricing_senior,
     }
 
-    #[parameter(kind = "commercial",                       // set at offer; renegotiated
-                levels(instance(required,                  //   with a senior's approval
-                       approve(when = "abs(new - old) > 0.0025", by = pricing_senior))))]
-    #[range(min = "0", max = "0.05")]
-    const MARGIN: Rate;
-    #[parameter(kind = "commercial", levels(instance(required)))]
-    #[invariant("value > account.opened_on")]
-    const TRACKER_END: NaiveDate;
-    #[parameter(kind = "commercial", levels(implementation(default = "series:boe-base")))]
-    const BASE: Ref<RateSeries>;                            // the rate it tracks
-    #[parameter(kind = "commercial", levels(definition(default = "0.10")))]
-    #[range(min = "0", max = "0.25")]
-    const OVERPAYMENT_ALLOWANCE: Rate;                      // of the balance at the year's start
-    #[parameter(kind = "commercial", levels(definition(default = r#"{ bands: [
-        { until_year: 1, rate: "0.02" }, { until_year: 2, rate: "0.01" } ] }"#)))]
-    const ERC: ErcSchedule;                                 // early repayment charge, by year
-    #[parameter(kind = "operational", levels(implementation(default = "mortgages-uk")))]
-    const ACCOUNTS: AccountingMapping;
-    #[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
-    const ROUNDING: Rounding;
+    #[parameter]
+    const MARGIN: Parameter<Rate> = Parameter::commercial()
+        .instance(Instance::required()                    // set at offer; renegotiated
+            .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))   // with a senior's approval
+        .range(rate!(0), rate!(0.05));
+    #[parameter]
+    const TRACKER_END: Parameter<NaiveDate> = Parameter::commercial()
+        .instance(Instance::required())
+        .invariant(cel!("value > account.opened_on"), "tracker-end-before-opening");
+    #[parameter]
+    const BASE: Parameter<Ref<RateSeries>> = Parameter::commercial()   // the rate it tracks
+        .implementation(reference!("series:boe-base"));
+    #[parameter]
+    const OVERPAYMENT_ALLOWANCE: Parameter<Rate> = Parameter::commercial()   // of the balance at the year's start
+        .definition(rate!(0.10))
+        .range(rate!(0), rate!(0.25));
+    #[parameter]
+    const ERC: Parameter<ErcSchedule> = Parameter::commercial()       // early repayment charge, by year
+        .definition(ErcSchedule { bands: bounded![
+            ErcBand { until_year: 1, rate: rate!(0.02) },
+            ErcBand { until_year: 2, rate: rate!(0.01) },
+        ] });
+    #[parameter]
+    const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()
+        .implementation(reference!("mortgages-uk"));
+    #[parameter]
+    const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
 
     #[hook(activation)]               fn open;          // drawdown
     #[hook(scheduled)]                fn scheduled;     // accrue, instalment, anniversary, milestone
@@ -271,9 +277,8 @@ it.
 ### The offset savings account
 
 ```rust
-#[definition(name = "offset-saver", version = "1.0.0", model = "deposits@^3.1",
-             implements = ["deposit-account@^1"])]
-#[ledger(guard = "debits")]
+#[definition(name = "offset-saver", model = deposits, implements = [deposit_account])]   // 1.0.0
+#[ledger(guard = Debits)]
 mod offset_saver {
     // Pays no interest: its balance reduces the linked mortgage's.
     #[hook(activation)] fn open;
@@ -312,7 +317,7 @@ as of when, how settled, how many.
 use tkone_contract_sdk::prelude::*;
 use offset_tracker::{Action, Event, *};                     // generated
 
-#[implementation(of = "offset-tracker@1.0.0", values(ROUNDING = "HalfUp"))]
+#[implementation(of = offset_tracker, values(ROUNDING = Rounding::HalfUp))]
 impl offset_tracker::Contract for OffsetTracker {
     #[requires(
         view(LoanState),
@@ -426,14 +431,14 @@ fn offset_halves_the_interest() {
 
     let saver = sim.open("offset-saver@1", opening! { deposit: gbp(100_000) });
     let loan  = sim.open("offset-tracker@1", opening! {
-        principal: gbp(200_000), margin: "0.0075", term_years: 25, repayment_day: 15,
+        principal: gbp(200_000), margin: rate!(0.0075), term_years: 25, repayment_day: 15,
         tracker_end: date(2028, 12, 1),
     });
     sim.call(loan, LinkOffset { offset: saver.locator() }).unwrap();
 
     sim.run_until(date(2026, 12, 31));                       // tempo's timeline, real dues
     assert_eq!(sim.view::<LoanBalances>(loan).accrued_between(date(2026, 12, 1), date(2026, 12, 31)),
-               interest_on(gbp(100_000), "0.0450", 31));     // charged on 200k − 100k
+               interest_on(gbp(100_000), rate!(0.0450), 31));     // charged on 200k − 100k
 }
 ```
 

@@ -42,7 +42,7 @@ uses the same model rather than a new one. It needs two additions, both
 growth ([models 2](contract-models.md#2-models-grow-they-do-not-break)):
 
 ```rust
-#[model(name = "lending", version = "1.1.0", requires = "core@^1.5")]
+#[model(name = "lending")]   // 1.1.0
 mod lending {
     /// Now also personal loans.
     #[extends(core::Account, when = "product_line in ['mortgages', 'personal-loans']")]
@@ -56,7 +56,7 @@ mod lending {
 
     /// New in 1.1: arrears and default, for every loan product.
     /// Starts at Current when the facet is created.
-    #[state_machine(LoanTerms.collection, initial = "Current")]
+    #[state_machine(LoanTerms.collection, initial = Current)]
     transitions! { Current -> Arrears, Arrears -> Current | Default }
 
     // balances, offsets, payment holidays, views: unchanged (core domain)
@@ -95,34 +95,38 @@ $ tkone reference load reference/accounting-loans-uk.yaml
 ## 3. Definition
 
 ```rust
-#[definition(name = "personal-loan", version = "1.0.0", model = "lending@^1.1")]
+#[definition(name = "personal-loan", model = lending)]   // 1.0.0
 #[identifiers(issue = ["loan-number"])]
-#[ledger(guard = "debits", credits_to = "Incoming")]   // payments land in Incoming; `credited` allocates
+#[ledger(guard = Debits, credits_to = LoanBalance::Incoming)]   // payments land in Incoming; `credited` allocates
 mod personal_loan {
     approval_roles! {
         /// Approves a restructured instalment.
         collections,
     }
 
-    #[parameter(kind = "commercial", levels(instance(required)))]    // fixed at offer
-    #[range(min = "0.029", max = "0.299")]
-    const RATE: Rate;
-    #[parameter(kind = "commercial",                                  // set by `open`; changed
-                levels(instance(approve(by = collections))))]       //   only in a restructure
-    #[invariant("value.currency == account.currency")]
-    const INSTALMENT: Money;
-    #[parameter(kind = "commercial", levels(definition(default = "12.00 GBP")))]
-    const LATE_FEE: Money;
-    #[parameter(kind = "commercial", levels(definition(default = "3")))]
-    #[range(min = 2, max = 6)]
-    const DEFAULT_AFTER: u8;                                          // missed instalments
-    #[parameter(kind = "commercial", levels(definition(default = "28")))]
-    #[range(min = 0, max = 58)]
-    const SETTLEMENT_DAYS: u16;
-    #[parameter(kind = "operational", levels(implementation(default = "loans-uk")))]
-    const ACCOUNTS: AccountingMapping;
-    #[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
-    const ROUNDING: Rounding;
+    #[parameter]
+    const RATE: Parameter<Rate> = Parameter::commercial()
+        .instance(Instance::required())                       // fixed at offer
+        .range(rate!(0.029), rate!(0.299));
+    #[parameter]
+    const INSTALMENT: Parameter<Money> = Parameter::commercial()
+        .instance(Instance::optional().approve(collections))  // set by `open`; changed only in a restructure
+        .invariant(cel!("value.currency == account.currency"), "wrong-currency");
+    #[parameter]
+    const LATE_FEE: Parameter<Money> = Parameter::commercial().definition(gbp!(12.00));
+    #[parameter]
+    const DEFAULT_AFTER: Parameter<u8> = Parameter::commercial()   // missed instalments
+        .definition(3)
+        .range(2, 6);
+    #[parameter]
+    const SETTLEMENT_DAYS: Parameter<u16> = Parameter::commercial()
+        .definition(28)
+        .range(0, 58);
+    #[parameter]
+    const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()
+        .implementation(reference!("loans-uk"));
+    #[parameter]
+    const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
 
     /// What it costs to settle the loan on a date.
     #[query(returns = SettlementQuote)]
@@ -187,7 +191,7 @@ the engine reads from these attributes
 use tkone_contract_sdk::prelude::*;
 use personal_loan::{Action, Event, *};                      // generated
 
-#[implementation(of = "personal-loan@1.0.0")]
+#[implementation(of = personal_loan)]
 impl personal_loan::Contract for PersonalLoan {
     /// Pay out, fix the instalment, start the schedules.
     #[requires(instance(from = opening.disburse_to, read = [status, holders]))]
@@ -318,12 +322,12 @@ fn a_missed_instalment_then_early_settlement() {
     let current = sim.open("easy-saver@2", opening! { deposit: gbp(2_000) });
     let loan = sim.open("personal-loan@1", opening! {
         amount: gbp(15_000), months: 48, repayment_day: 1, disburse_to: current.id(),
-        parameters: { RATE: "0.079" },
+        parameters: { RATE: rate!(0.079) },
     });
-    assert_eq!(sim.parameter(loan, "INSTALMENT"), gbp_pence(365_49));
+    assert_eq!(sim.parameter(loan, INSTALMENT), gbp_pence(365_49));
     assert_eq!(sim.balance(current, Available), gbp(17_000));          // paid out
 
-    sim.direct_debit_each(loan, current, sim.parameter(loan, "INSTALMENT"))
+    sim.direct_debit_each(loan, current, sim.parameter(loan, INSTALMENT))
        .except([date(2027, 3, 1), date(2027, 4, 1)]);                  // March bounces
     sim.run_until(date(2027, 4, 1));
     assert_eq!(sim.events::<ArrearsStarted>(loan).len(), 1);

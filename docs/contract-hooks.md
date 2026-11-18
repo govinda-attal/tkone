@@ -47,7 +47,7 @@ A write reaches an instance two ways, and each has its hook:
 The kernel names the hook kind; the definition names the hook. With the
 ledger, delivered entries are credits, and the hook is conventionally
 `credited`: an ISA that refuses subscriptions over its allowance
-(`#[ledger(guard = "debits-and-credits")]`, `#[hook(delivered(ledger::Entry))] fn credited;`):
+(`#[ledger(guard = DebitsAndCredits)]`, `#[hook(delivered(ledger::Entry))] fn credited;`):
 
 ```rust
 #[requires(view(IsaState))]
@@ -133,7 +133,7 @@ An implementation, with the SDK:
 use tkone_contract_sdk::prelude::*;
 use easy_saver::{Action, Event, Rule, Withdraw, WithdrawRefused, end_of_day, withdraw}; // generated
 
-#[implementation(of = "easy-saver@2.1.0")]
+#[implementation(of = easy_saver)]
 impl easy_saver::Contract for Saver {
     #[requires(view(AccountState))]
     fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> {
@@ -216,25 +216,25 @@ and the instance's snapshot, evaluated by the engine at commit; a failed one
 is a typed rejection.
 
 ```rust
-#[model(name = "core", version = "1.5.0", extensions = ["ledger@^1"])]
+#[model(name = "core", extensions = [ledger])]   // 1.5.0
 mod core {
     #[effective(key = account_id)]
-    #[action(create = "Hold", end = "Release")]
+    #[action(create = Hold, end = Release)]
     #[invariant("amount.currency == state.currency")]
     #[invariant("amount <= state.available", reject = "hold-exceeds-available")]
     struct Hold { account_id: AccountId, balance: BalanceType, amount: Money,
                   until: Option<NaiveDate>, reason: HoldReason }
 
-    #[state_machine(Account.status, initial = "Pending")]
+    #[state_machine(Account.status, initial = Pending)]
     transitions! { Pending -> Active | Closed, Active -> Dormant | Closed, Dormant -> Active | Closed }
 
     /// Validated against the parameter's own declaration: type, ranges,
     /// invariants and levels (C31).
-    #[action(set = "SetParameter", validate = "parameter")]
+    #[action(set = SetParameter, validate = parameter)]
     struct ParameterOverride;
 
     #[fact(key = booking_id)]
-    #[action(extension = "ledger.book", reverse = "ledger.reverse")]   // tier 3
+    #[action(extension = ledger::book, reverse = ledger::reverse)]   // tier 3
     struct Booking { /* below */ }
 }
 ```
@@ -242,17 +242,17 @@ mod core {
 The same mechanism, with no banking in it:
 
 ```rust
-#[model(name = "metering", version = "1.0.0")]
+#[model(name = "metering")]   // 1.0.0
 mod metering {
     #[fact(key = subscription_id)]
-    #[action(append = "RecordUsage")]
+    #[action(append = RecordUsage)]
     #[invariant("quantity > 0")]
     #[invariant("at <= due")]
     struct Usage { subscription_id: SubscriptionId, meter: MeterCode,
                    quantity: Quantity<KilowattHour>, at: DateTime }
 
     #[effective(key = subscription_id)]
-    #[action(set = "ChangeTariff")]
+    #[action(set = ChangeTariff)]
     struct Tariff { subscription_id: SubscriptionId, tariff: Ref<TariffCard> }
 
     #[state_machine(Subscription.status)]
@@ -321,7 +321,7 @@ pub trait Extension {
   `ledger::Entry`), so a model or hook shows which extension it depends on,
   and a kernel name never means money.
 - **Required by models, checked at registration.** A model declares the
-  extensions it needs (`extensions = ["ledger@^1"]`); applying it to an
+  extensions it needs (`extensions = [ledger]`); applying it to an
   engine without them is refused, as an unapplied model version is (C10).
 - **Trusted, not sandboxed.** Extensions enforce the invariants other code
   relies on, so they are reviewed platform code in-process, not WASM. The

@@ -49,7 +49,7 @@ actions and views, and never changes what a core type means.
 ## `core`
 
 ```rust
-#[model(name = "core", version = "1.5.0", extensions = ["ledger@^1"])]
+#[model(name = "core", extensions = [ledger])]   // 1.5.0
 mod core {
     // ───────────────────────────── Parties ─────────────────────────────
 
@@ -83,7 +83,7 @@ mod core {
         #[effective] status: AccountStatus,
     }
 
-    #[state_machine(Account.status, initial = "Pending")]
+    #[state_machine(Account.status, initial = Pending)]
     transitions! {
         Pending -> Active | Closed,                  // closed unfunded
         Active  -> Dormant | Closed,
@@ -97,7 +97,7 @@ mod core {
 
     /// An agreed overdraft or other limit on what may be debited.
     #[effective(key = account_id)]
-    #[action(set = "SetLimit")]
+    #[action(set = SetLimit)]
     #[invariant("overdraft.currency == account.currency")]
     struct Limit { account_id: AccountId, overdraft: Money }
 
@@ -111,7 +111,7 @@ mod core {
     /// Entries that net to zero, booked together. Its meaning needs code:
     /// the ledger extension's actions.
     #[fact(key = booking_id)]
-    #[action(extension = "ledger.book", reverse = "ledger.reverse")]
+    #[action(extension = ledger::book, reverse = ledger::reverse)]
     struct Booking {
         booking_id: BookingId,
         code: BankTransactionCode,                   // ISO 20022 domain, family, sub-family
@@ -134,7 +134,7 @@ mod core {
 
     /// Authorised, not booked: reduces the available balance.
     #[effective(key = account_id)]
-    #[action(create = "Hold", end = "Release")]
+    #[action(create = Hold, end = Release)]
     #[invariant("amount.currency == account.currency")]
     #[invariant("amount <= state.available", reject = "hold-exceeds-available")]
     struct Hold {
@@ -150,7 +150,7 @@ mod core {
     /// Validated against the parameter's own declaration: its type, ranges,
     /// invariants and level rules (C31). The value is the whole value.
     #[effective(key = (account_id, name))]
-    #[action(set = "SetParameter", validate = "parameter")]
+    #[action(set = SetParameter, validate = parameter)]
     struct ParameterOverride { account_id: AccountId, name: ParameterName, value: ParameterValue }
 
     // ────────────────────────── Reference data ─────────────────────────
@@ -252,14 +252,14 @@ Closed code set, from ISO 20022's bank transaction codes:
 Instant-access savings, and the offset saver.
 
 ```rust
-#[model(name = "deposits", version = "3.2.0", requires = "core@^1.5")]
+#[model(name = "deposits")]   // 3.2.0
 mod deposits {
     #[ledger::balances]
     enum DepositBalance { #[ledger::balance(scale = 12)] Accrued }   // interest owed, until capitalised
 
     #[extends(core::Account, when = "product_line = 'savings'")]
     struct DepositTerms {
-        #[deprecated(since = "3.2.0", use = "notice")]
+        #[deprecated(since = "3.2.0", note = "use `notice`")] #[replaced_by(notice)]
         #[effective] notice_days: u16,
         #[effective] notice: Option<NoticePeriod>,           // calendar or business days
     }
@@ -278,14 +278,14 @@ mod deposits {
     struct RateTiers { currency: Currency, #[bounded(max = 20)] tiers: Vec<Tier> }
 
     #[parameter_type]
-    struct Tier { from: Money, #[range(min = "0", max = "0.15")] rate: Rate }
+    struct Tier { from: Money, #[range(min = rate!(0), max = rate!(0.15))] rate: Rate }
 }
 ```
 
 ## `term-deposits`
 
 ```rust
-#[model(name = "term-deposits", version = "1.0.0", requires = "core@^1.5")]
+#[model(name = "term-deposits")]   // 1.0.0
 mod term_deposits {
     #[ledger::balances]
     enum TermDepositBalance { Principal, #[ledger::balance(scale = 12)] Accrued }
@@ -293,7 +293,7 @@ mod term_deposits {
     #[extends(core::Account, when = "product_line = 'term-deposits'")]
     struct DepositTerms {
         matures_on: NaiveDate,
-        #[effective] #[action(set = "SetPayTo")]
+        #[effective] #[action(set = SetPayTo)]
         pay_to: AccountId,                                   // where maturity pays out
     }
 
@@ -309,7 +309,7 @@ Every loan product: the personal loan uses its terms, balances and collection
 status; the mortgage also its security, offsets and payment holidays.
 
 ```rust
-#[model(name = "lending", version = "1.1.0", requires = "core@^1.5")]
+#[model(name = "lending")]   // 1.1.0
 mod lending {
     #[ledger::balances]
     enum LoanBalance {
@@ -328,7 +328,7 @@ mod lending {
         #[effective] collection: Option<CollectionStatus>,      // 1.1
     }
 
-    #[state_machine(LoanTerms.collection, initial = "Current")]  // 1.1
+    #[state_machine(LoanTerms.collection, initial = Current)]  // 1.1
     transitions! { Current -> Arrears, Arrears -> Current | Default }
 
     /// What secures a loan: mortgages only.
@@ -337,13 +337,13 @@ mod lending {
 
     /// Savings accounts whose balances offset a mortgage's interest.
     #[relation(Account as mortgage <-> Account as offset, max_per_mortgage = 5, unique = "offset")]
-    #[action(create = "LinkOffset", end = "UnlinkOffset")]
+    #[action(create = LinkOffset, end = UnlinkOffset)]
     #[invariant("input.offset.status == 'Active'", reject = "offset-not-active")]
     #[invariant("input.offset.holders.all(h, h in state.borrowers)", reject = "not-the-borrowers")]
     struct OffsetLink { #[effective] since: NaiveDate }
 
     #[effective(key = account_id)]
-    #[action(create = "StartPaymentHoliday", end = "EndPaymentHoliday")]
+    #[action(create = StartPaymentHoliday, end = EndPaymentHoliday)]
     #[invariant("months >= 1 && months <= 6")]
     #[invariant("state.holiday_months_taken + months <= 6", reject = "holiday-allowance-used")]
     struct PaymentHoliday { account_id: AccountId, from: NaiveDate, months: u8 }
@@ -381,7 +381,7 @@ mod lending {
     #[parameter_type]
     struct ErcBand {
         #[range(min = 1, max = 40)] until_year: u8,
-        #[range(min = "0", max = "0.10")] rate: Rate,
+        #[range(min = rate!(0), max = rate!(0.10))] rate: Rate,
     }
 }
 ```

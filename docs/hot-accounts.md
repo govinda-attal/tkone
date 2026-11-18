@@ -66,11 +66,11 @@ A model declares a quantity over one of its fact types, with kernel
 attributes:
 
 ```rust
-#[model(name = "loyalty", version = "1.0.0")]
+#[model(name = "loyalty")]   // 1.0.0
 mod loyalty {
     /// Points moved to or from a member. Delivered; refused moves are revoked.
     #[fact(key = move_id)]
-    #[action(deliver = "Award", compensate = "Revoke")]
+    #[action(deliver = Award, compensate = Revoke)]
     struct PointsMove { move_id: MoveId, member: MemberId, points: Quantity<Point> }
 
     /// A member's points: the kernel folds moves per member.
@@ -82,16 +82,16 @@ mod loyalty {
 A definition chooses the guard, per product:
 
 ```rust
-#[definition(name = "standard-member", version = "1.0.0", model = "loyalty@^1")]
+#[definition(name = "standard-member", model = loyalty)]   // 1.0.0
 #[guard(Points, decreases = "points >= 0")]                // spending is checked, in order
 mod standard_member { /* ... */ }
 
-#[definition(name = "capped-member", version = "1.0.0", model = "loyalty@^1")]
+#[definition(name = "capped-member", model = loyalty)]   // 1.0.0
 #[guard(Points, decreases = "points >= 0",
                 increases = accept("points <= params.CAP"))]   // awards over the cap may be refused
 mod capped_member { /* ... */ }
 
-#[definition(name = "points-pool", version = "1.0.0", model = "loyalty@^1")]
+#[definition(name = "points-pool", model = loyalty)]   // 1.0.0
 #[guard(Points, none)]                                     // the scheme's pool: never checked
 #[inbox(shards = 64)]                                      // a known giant may fix its width
 mod points_pool { /* ... */ }
@@ -102,7 +102,7 @@ mod points_pool { /* ... */ }
   whatever the hook thought.
 - **An extension may give these a vocabulary of its own.** The ledger's
   `#[ledger::balances]` declares balance types as addresses of a kernel
-  quantity over `core::Entry`, and `#[ledger(guard = "debits")]` expands to a
+  quantity over `core::Entry`, and `#[ledger(guard = Debits)]` expands to a
   `#[guard]`. Same mechanism, banking words
   ([how the ledger uses them](#how-the-ledger-uses-them)).
 
@@ -237,19 +237,19 @@ The ledger adds no mechanism of its own. It names the kernel's:
 | Kernel | Ledger |
 |---|---|
 | quantity over a fact | balances: `core::Entry` folded per account and balance address (`#[ledger::balances]`) |
-| guard on decreases | `#[ledger(guard = "debits")]`, the default; the floor is the account's limit |
-| guard on increases, with acceptance | `#[ledger(guard = "debits-and-credits")]`: guarded credits |
-| no guard | `#[ledger(guard = "none")]`: internal accounts |
+| guard on decreases | `#[ledger(guard = Debits)]`, the default; the floor is the account's limit |
+| guard on increases, with acceptance | `#[ledger(guard = DebitsAndCredits)]`: guarded credits |
+| no guard | `#[ledger(guard = Unguarded)]`: internal accounts |
 | delivered fact | a credit, or an entry to an unguarded account |
 | `delivered` hook | the definition's hook for `ledger::Entry`, conventionally named `credited` |
 | compensation | a return booking to a returns account |
-| where an accepted delivery lands | `#[ledger(credits_to = "Principal")]`: the receiving product's choice, never the sender's |
+| where an accepted delivery lands | `#[ledger(credits_to = TermDepositBalance::Principal)]`: the receiving product's choice, never the sender's |
 | joint commit | a booking that debits two guarded accounts |
 | period close | the business day's close; the ledger adds its trial balance and booking reconciliation |
 
 ```rust
-#[definition(name = "cash-isa", version = "1.0.0", model = "deposits@^3.1")]
-#[ledger(guard = "debits-and-credits")]          // = #[guard(ledger::Balance, decreases = .., increases = accept(..))]
+#[definition(name = "cash-isa", model = deposits)]   // 1.0.0
+#[ledger(guard = DebitsAndCredits)]          // = #[guard(ledger::Balance, decreases = .., increases = accept(..))]
 mod cash_isa {
     #[hook(delivered(ledger::Entry))] fn credited;   // accept or refuse each subscription
 }

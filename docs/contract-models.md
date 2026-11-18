@@ -110,7 +110,7 @@ business days:
 ```rust
 #[extends(core::Account, when = "product_line = 'deposits'")]
 struct DepositTerms {
-    #[deprecated(since = "3.2.0", use = "notice")]
+    #[deprecated(since = "3.2.0", note = "use `notice`")] #[replaced_by(notice)]
     #[effective] notice_days: u16,
     /// Calendar or business days, with the calendar to count them in.
     #[effective] notice: Option<NoticePeriod>,
@@ -302,13 +302,13 @@ what a banking author writes is usually nothing:
 ```rust
 // Customer accounts: debits are checked against the balance, in order.
 // Expands to #[guard(ledger::Balance, decreases = "...")].
-#[definition(name = "easy-saver", version = "2.0.0", model = "deposits@^3.1")]
-#[ledger(guard = "debits")]               // the default; may be omitted
+#[definition(name = "easy-saver", model = deposits)]   // 2.0.0
+#[ledger(guard = Debits)]               // the default; may be omitted
 mod easy_saver { /* ... */ }
 
 // Internal accounts: no check, so nothing is serialised.
-#[definition(name = "fee-income", version = "1.0.0", model = "core@^1.4")]
-#[ledger(guard = "none")]
+#[definition(name = "fee-income", model = core)]   // 1.0.0
+#[ledger(guard = Unguarded)]
 mod fee_income { /* ... */ }
 ```
 
@@ -423,11 +423,11 @@ A **definition** says which schemes its product issues and which it needs
 before opening:
 
 ```rust
-#[definition(name = "current-account-uk", version = "1.0.0", model = "deposits@^3.1")]
+#[definition(name = "current-account-uk", model = deposits)]   // 1.0.0
 #[identifiers(issue = ["sort-code-account", "iban"])]     // iban follows, derived
 mod current_account_uk { /* ... */ }
 
-#[definition(name = "business-account", version = "1.0.0", model = "deposits@^3.1")]
+#[definition(name = "business-account", model = deposits)]   // 1.0.0
 #[identifiers(issue = ["sort-code-account", "iban"], require_party = ["lei"])]
 mod business_account { /* ... */ }
 ```
@@ -549,7 +549,7 @@ missing.
 The core's party, with every rule that applies to it:
 
 ```rust
-#[model(name = "core", version = "1.5.0")]
+#[model(name = "core")]   // 1.5.0
 mod core {
     #[entity(key = party_id, subject = party_id, retain = "after(closed) + 7y")]
     #[identifiers]                                       // 9: passport, LEI, … by scheme

@@ -91,12 +91,11 @@ Facets are how base domains extend the core already
 An adopter uses the same macro, in their own model:
 
 ```rust
-#[model(name = "bank::savings-goals", version = "1.0.0",
-        requires = ["tkone::core@^1.5", "tkone::deposits@^3.2"])]
+#[model(name = "bank::savings-goals")]   // 1.0.0; Cargo.toml: tkone-core = "1.5", tkone-deposits = "3.2"
 mod savings_goals {
     /// A goal saver's target. One to one with the account.
     #[extends(core::Account, when = "definition = 'bank:goal-saver'")]
-    #[action(set = "SetGoal")]
+    #[action(set = SetGoal)]
     #[invariant("target.currency == account.currency")]
     #[invariant("by > account.opened_on", reject = "goal-in-the-past")]
     struct GoalTerms {
@@ -145,8 +144,8 @@ narrow it **for their products**:
 mod goal_saver {
     /// Checked by the engine when the account opens and whenever a holder is
     /// added or changes: never by hook code.
-    #[profile(core::Party, role = "Holder", require = [tax_residency])]
-    #[profile(core::Account, require_identifier = ["sort-code-account"])]
+    #[profile(core::Party, role = Role::Holder, require = [tax_residency])]
+    #[profile(core::Account, require_identifier = [reference!("sort-code-account")])]
     // …
 }
 ```
@@ -167,8 +166,7 @@ and every implementation of it would have to handle the new operation.
 They declare an interface of their own and implement both:
 
 ```rust
-#[interface(name = "bank:savings-goals", version = "1.0.0",
-            model = "bank::savings-goals@^1")]
+#[interface(name = "bank:savings-goals", model = savings_goals)]   // 1.0.0
 mod savings_goals_if {
     #[operation(returns = { target: GoalTerms.target, by: GoalTerms.by })]
     struct SetGoal { target: Money, by: NaiveDate }
@@ -183,18 +181,20 @@ mod savings_goals_if {
     #[event] struct BonusForfeited { month: YearMonth }
 }
 
-#[definition(name = "bank:goal-saver", version = "1.0.0",
-             model = "bank::savings-goals@^1",
-             implements = ["deposit-account@^1", "bank:savings-goals@^1"])]
+#[definition(name = "bank:goal-saver", model = savings_goals,
+             implements = [deposit_account, savings_goals_if])]   // 1.0.0
 mod goal_saver {
-    #[parameter(kind = "commercial", levels(definition(default = "0.0300"), instance()))]
-    #[range(min = "0", max = "0.15")]
-    const RATE: Rate;
-    #[parameter(kind = "commercial", levels(definition(default = "0.0100")))]
-    #[range(min = "0", max = "0.05")]
-    const BONUS: Rate;
+    #[parameter]
+    const RATE: Parameter<Rate> = Parameter::commercial()
+        .definition(rate!(0.0300))
+        .instance(Instance::optional())
+        .range(rate!(0), rate!(0.15));
+    #[parameter]
+    const BONUS: Parameter<Rate> = Parameter::commercial()
+        .definition(rate!(0.0100))
+        .range(rate!(0), rate!(0.05));
 
-    #[profile(core::Party, role = "Holder", require = [tax_residency])]
+    #[profile(core::Party, role = Role::Holder, require = [tax_residency])]
 
     #[hook(scheduled)] fn end_of_day;
     #[hook(activation)] fn open;
@@ -305,7 +305,7 @@ The adopter's implementation calls it, and adds its own:
 ```rust
 use tkone_products_deposits::interest;          // = 2.1, pinned in Cargo.lock
 
-#[implementation(of = "bank:goal-saver@1.0.0")]
+#[implementation(of = goal_saver)]
 impl goal_saver::Contract for GoalSaver {
     #[requires(view(SavingsState), ledger::balances(as_of = due))]
     fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome {
@@ -394,7 +394,7 @@ wants loans in a repayment plan:
 #[extends(lending::LoanTerms, when = "collection = 'Arrears'")]
 struct RepaymentPlan { #[effective] plan: Option<PlanStatus> }   // Proposed | Agreed | Broken
 
-#[state_machine(RepaymentPlan.plan, initial = "Proposed")]
+#[state_machine(RepaymentPlan.plan, initial = Proposed)]
 transitions! { Proposed -> Agreed | Broken, Agreed -> Broken }
 ```
 
@@ -410,14 +410,14 @@ Being extensible is a promise the base keeps, release after release.
 **Extension points are declared.** Anything not declared is closed:
 
 ```rust
-#[model(name = "tkone::core", version = "1.5.0")]
+#[model(name = "tkone::core")]   // 1.5.0
 mod core {
     #[code_set(open)]   enum ProductLine;            // reference data adds to it
     #[code_set(closed)] enum AccountStatus { … }     // the engine relies on it
     #[sealed]           enum Role { … }              // the default; stated where it matters
 }
 
-#[interface(name = "deposit-account", version = "1.0.0", model = "deposits@^3.1")]
+#[interface(name = "deposit-account", model = deposits)]   // 1.0.0
 mod deposit_account {
     #[operation(returns = { … })]
     #[accepts_facets]                                // operation facets allowed
@@ -455,7 +455,7 @@ crates at pinned versions, plus the adopter's, locked together. Registration
 checks the pair, not each side alone.
 
 ```toml
-# distribution.lock (generated)
+# distribution.lock: generated from Cargo.lock, with the schema digests Cargo does not know
 [base]
 "tkone::core"      = { version = "1.5.0", digest = "sha256:4be1…" }
 "tkone::deposits"  = { version = "3.2.0", digest = "sha256:91ac…" }
@@ -473,8 +473,7 @@ knows both sides, declares the move in their next model version; the base
 never names an adopter's fields:
 
 ```rust
-#[model(name = "bank::savings-goals", version = "1.1.0",
-        requires = ["tkone::core@^1.5", "tkone::deposits@^3.3"])]
+#[model(name = "bank::savings-goals")]   // 1.1.0; Cargo.toml: tkone-deposits = "3.3"
 mod savings_goals {
     #[extends(core::Account, when = "definition = 'bank:goal-saver'")]
     struct GoalTerms {

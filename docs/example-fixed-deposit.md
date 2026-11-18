@@ -40,10 +40,10 @@ A model says what the data is, not how the product behaves
 facet holding its terms, and one view.
 
 ```rust
-#[model(name = "term-deposits", version = "1.0.0", requires = "core@^1.5")]
+#[model(name = "term-deposits")]   // 1.0.0
 mod term_deposits {
     #[ledger::balances]
-    enum DepositBalance {
+    enum TermDepositBalance {
         Principal,
         #[ledger::balance(scale = 12)] Accrued,     // interest, finer than pennies until paid
     }
@@ -53,7 +53,7 @@ mod term_deposits {
     struct DepositTerms {
         matures_on: NaiveDate,
         /// The nominated account; changing it is a declared action.
-        #[effective] #[action(set = "SetPayTo")]
+        #[effective] #[action(set = SetPayTo)]
         pay_to: AccountId,
     }
 
@@ -97,24 +97,45 @@ The definition is the product: its parameters, what callers can do, which
 hooks the code must provide, which actions it may take, and its schedules
 ([definitions](contract-engine.md#definitions)).
 
+The product is a crate. Its version, and the model version it is built
+against, are Cargo's
+([developer experience](developer-experience.md#2-cargo-owns-versions-and-dependencies)):
+
+```toml
+# products/fixed-12m/Cargo.toml
+[package]
+name    = "fixed-12m"
+version = "1.0.0"
+
+[dependencies]
+tkone-contract = "1"
+tkone-ledger   = "1"
+term-deposits  = "1.0"
+```
+
 ```rust
-#[definition(name = "fixed-12m", version = "1.0.0", model = "term-deposits@^1")]
-#[ledger(guard = "debits-and-credits",      // credits must be accepted: the funding window
-         credits_to = "Principal")]         // and, once accepted, count as principal
+use term_deposits::TermDepositBalance;
+
+#[definition(name = "fixed-12m", model = term_deposits)]
+#[ledger(guard = DebitsAndCredits,                        // credits must be accepted: the funding window
+         credits_to = TermDepositBalance::Principal)]     // and, once accepted, count as principal
 mod fixed_12m {
-    #[parameter(kind = "commercial", levels(instance(required)))]   // fixed when opened
-    #[range(min = "0", max = "0.10")]
-    const RATE: Rate;
-    #[parameter(kind = "commercial", levels(definition(default = "14")))]
-    #[range(min = 1, max = 30)]
-    const FUNDING_DAYS: u16;
-    #[parameter(kind = "commercial", levels(definition(default = "1000.00 GBP")))]
-    const MINIMUM: Money;
-    #[parameter(kind = "commercial", levels(definition(default = "1000000.00 GBP")))]
-    #[invariant("value > MINIMUM", reject = "maximum-below-minimum")]
-    const MAXIMUM: Money;
-    #[parameter(kind = "operational", levels(implementation(default = "HalfEven")))]
-    const ROUNDING: Rounding;
+    #[parameter]
+    const RATE: Parameter<Rate> = Parameter::commercial()
+        .instance(Instance::required())                   // fixed when opened
+        .range(rate!(0), rate!(0.10));
+    #[parameter]
+    const FUNDING_DAYS: Parameter<u16> = Parameter::commercial()
+        .definition(14)
+        .range(1, 30);
+    #[parameter]
+    const MINIMUM: Parameter<Money> = Parameter::commercial().definition(gbp!(1_000.00));
+    #[parameter]
+    const MAXIMUM: Parameter<Money> = Parameter::commercial()
+        .definition(gbp!(1_000_000.00))
+        .invariant(cel!("value > MINIMUM"), "maximum-below-minimum");
+    #[parameter]
+    const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfEven);
 
     /// The customer may change where the money goes at maturity.
     #[operation(returns = { pay_to: DepositTerms.pay_to })]
@@ -156,10 +177,12 @@ mod fixed_12m {
 }
 ```
 
-- **Parameters** are typed, with where each may be set (`levels`), its limits
-  (`#[range]`, `#[invariant]`) and its kind: `commercial` values are the
-  customer's terms, `operational` ones are not
-  ([parameters](contract-engine.md#parameters)). The rate has no default:
+- **Parameters** are typed builders: where each may be set (`.definition`,
+  `.implementation`, `.instance`), its limits (`.range`, `.invariant`) and
+  its kind: `commercial` values are the customer's terms, `operational` ones
+  are not ([parameters](contract-engine.md#parameters)). Every step is
+  ordinary Rust, so the editor completes it and a wrong value is a compile
+  error ([developer experience](developer-experience.md#4-options-are-ordinary-rust-attributes-mark-items)). The rate has no default:
   every deposit is given one when it opens.
 - **Operations** (`ChangePayTo`) and the **query** (`QuoteMaturity`) are what
   channels call. Each is handled by a hook of the same name
@@ -201,7 +224,7 @@ the engine reads from these attributes
 use tkone_contract_sdk::prelude::*;
 use fixed_12m::{Action, Event, *};                         // generated from the definition
 
-#[implementation(of = "fixed-12m@1.0.0")]
+#[implementation(of = fixed_12m)]
 impl fixed_12m::Contract for Fixed12m {
     /// Money arrived. Accept it inside the window and under the maximum.
     #[requires(view(DepositBalances))]
@@ -311,7 +334,7 @@ fn pays_principal_and_interest_at_maturity() {
 
     let current = sim.open("easy-saver@2", opening! {});
     let fd = sim.open("fixed-12m@1", opening! {
-        parameters: { RATE: "0.0450" }, terms: { pay_to: current.id(), matures_on: date(2027, 12, 1) },
+        parameters: { RATE: rate!(0.0450) }, terms: { pay_to: current.id(), matures_on: date(2027, 12, 1) },
     });
 
     sim.transfer(current, fd, gbp(10_000), date(2026, 12, 3));           // accepted

@@ -40,28 +40,29 @@ A model says what the data is, not how the product behaves
 facet holding its terms, and one view.
 
 ```rust
-#[model(name = "term-deposits")]   // 1.0.0
-mod term_deposits {
-    #[ledger::balances]
-    enum TermDepositBalance {
-        Principal,
-        #[ledger::balance(scale = 12)] Accrued,     // interest, finer than pennies until paid
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "term-deposits");   // 1.0.0
 
-    /// The deposit's terms: a facet of the core account.
-    #[extends(core::Account, when = "product_line = 'term-deposits'")]
-    struct DepositTerms {
-        matures_on: NaiveDate,
-        /// The nominated account; changing it is a declared action.
-        #[effective] #[action(set = SetPayTo)]
-        pay_to: AccountId,
-    }
-
-    /// What the product's hooks read about the deposit.
-    #[view(key = account_id, consistency = "with-instance", from = core::Entry,
-           group_by = address, fold = sum(signed(amount)))]
-    struct DepositBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
+// its items, in whichever of the crate's modules suit them
+#[ledger::balances]
+pub enum TermDepositBalance {
+    Principal,
+    #[ledger::balance(scale = 12)] Accrued,     // interest, finer than pennies until paid
 }
+
+/// The deposit's terms: a facet of the core account.
+#[extends(core::Account, when = "product_line = 'term-deposits'")]
+pub struct DepositTerms {
+    matures_on: NaiveDate,
+    /// The nominated account; changing it is a declared action.
+    #[effective] #[action(set = SetPayTo)]
+    pay_to: AccountId,
+}
+
+/// What the product's hooks read about the deposit.
+#[view(key = account_id, consistency = "with-instance", from = core::Entry,
+       group_by = address, fold = sum(signed(amount)))]
+pub struct DepositBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
 ```
 
 ```text
@@ -113,67 +114,91 @@ tkone-ledger   = "1"
 term-deposits  = "1.0"
 ```
 
-```rust
-use term_deposits::TermDepositBalance;
+Its files follow what a reviewer looks for: the contract on one screen, then
+each part on its own
+([developer experience](developer-experience.md#8-the-crate-is-the-unit-files-follow-the-product)):
 
-#[definition(name = "fixed-12m", model = term_deposits)]
-#[ledger(guard = DebitsAndCredits,                        // credits must be accepted: the funding window
-         credits_to = TermDepositBalance::Principal)]     // and, once accepted, count as principal
-mod fixed_12m {
-    #[parameter]
-    const RATE: Parameter<Rate> = Parameter::commercial()
-        .instance(Instance::required())                   // fixed when opened
+```text
+products/fixed-12m/src/
+├── lib.rs           the contract: what it is, what callers can do, its hooks, what it may do
+├── params.rs        its parameters
+├── operations.rs    its operation, query, refusals and events
+└── schedules.rs     its schedules
+```
+
+```rust
+// src/lib.rs
+use tkone_contract::prelude::*;
+use term_deposits::TermDepositBalance;
+mod params; mod operations; mod schedules;
+
+#[definition(name = "fixed-12m", model = term_deposits,
+             parameters = params::Params,
+             operations = [operations::ChangePayTo, operations::QuoteMaturity],
+             hooks(activation = open,
+                   delivered(ledger::Entry) = credited,       // a credit landed: accept or refuse (funding)
+                   scheduled = scheduled),                    // accrue, funding-close, maturity
+             schedules = schedules::Rules)]
+#[ledger(guard = DebitsAndCredits,                            // credits must be accepted: the funding window
+         credits_to = TermDepositBalance::Principal)]         // and, once accepted, count as principal
+pub struct Fixed12m;
+
+permits! {
+    Book,
+    Transition(Pending -> Active | Closed, Active -> Closed),
+    SetPayTo,
+    ScheduleChange,
+}
+```
+
+```rust
+// src/params.rs
+#[parameters]
+impl Params {
+    pub const RATE: Parameter<Rate> = Parameter::commercial()
+        .instance(Instance::required())                       // fixed when opened
         .range(rate!(0), rate!(0.10));
-    #[parameter]
-    const FUNDING_DAYS: Parameter<u16> = Parameter::commercial()
+    pub const FUNDING_DAYS: Parameter<u16> = Parameter::commercial()
         .definition(14)
         .range(1, 30);
-    #[parameter]
-    const MINIMUM: Parameter<Money> = Parameter::commercial().definition(gbp!(1_000.00));
-    #[parameter]
-    const MAXIMUM: Parameter<Money> = Parameter::commercial()
+    pub const MINIMUM: Parameter<Money> = Parameter::commercial().definition(gbp!(1_000.00));
+    pub const MAXIMUM: Parameter<Money> = Parameter::commercial()
         .definition(gbp!(1_000_000.00))
         .invariant(cel!("value > MINIMUM"), "maximum-below-minimum");
-    #[parameter]
-    const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfEven);
+    pub const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfEven);
+}
+```
 
-    /// The customer may change where the money goes at maturity.
-    #[operation(returns = { pay_to: DepositTerms.pay_to })]
-    struct ChangePayTo { pay_to: AccountLocator }
-    #[rejections(ChangePayTo)]
-    enum ChangeRefused { Matured, NotTheHolder }
+```rust
+// src/operations.rs
+/// The customer may change where the money goes at maturity.
+#[operation(returns = { pay_to: DepositTerms.pay_to })]
+pub struct ChangePayTo { pub pay_to: AccountLocator }
+#[rejections(ChangePayTo)]
+pub enum ChangeRefused { Matured, NotTheHolder }
 
-    /// What the customer will receive at maturity, at today's balance.
-    #[query(returns = MaturityQuote)]
-    struct QuoteMaturity;
-    struct MaturityQuote { principal: Money, interest: Money, total: Money, on: NaiveDate }
+/// What the customer will receive at maturity, at today's balance.
+#[query(returns = MaturityQuote)]
+pub struct QuoteMaturity;
+pub struct MaturityQuote { pub principal: Money, pub interest: Money, pub total: Money, pub on: NaiveDate }
 
-    #[rejections(credited)]                       // the delivered hook's refusals
-    enum CreditRefused { FundingClosed, AboveMaximum { room: Money } }
+#[rejections(credited)]                                       // the delivered hook's refusals
+pub enum CreditRefused { FundingClosed, AboveMaximum { room: Money } }
 
-    #[event] struct Funded { amount: Money }
-    #[event] struct Matured { principal: Money, interest: Money, paid_to: AccountId }
+#[event] pub struct Funded { pub amount: Money }
+#[event] pub struct Matured { pub principal: Money, pub interest: Money, pub paid_to: AccountId }
+```
 
-    #[hook(activation)]               fn open;
-    #[hook(delivered(ledger::Entry))] fn credited;    // a credit landed: accept or refuse (funding)
-    #[hook(scheduled)]                fn scheduled;   // accrue, funding-close, maturity
-
-    permits! {
-        Book,
-        Transition(Pending -> Active | Closed, Active -> Closed),
-        SetPayTo,
-        ScheduleChange,
-    }
-
-    schedules! {
-        time_zone: "Europe/London",
-        calendar: "GBLO",
-        start: 2026-01-01,
-        /// Interest, each business evening.
-        accrue:    "YY-MM-DD~SBT18:00:00",
-        /// One-off dates each deposit selects: its funding deadline, its maturity.
-        milestone: "YY-MM-DD~SBT09:00:00",
-    }
+```rust
+// src/schedules.rs
+schedules! {
+    time_zone: "Europe/London",
+    calendar: "GBLO",
+    start: 2026-01-01,
+    /// Interest, each business evening.
+    accrue:    "YY-MM-DD~SBT18:00:00",
+    /// One-off dates each deposit selects: its funding deadline, its maturity.
+    milestone: "YY-MM-DD~SBT09:00:00",
 }
 ```
 
@@ -185,8 +210,9 @@ mod fixed_12m {
   error ([developer experience](developer-experience.md#4-options-are-ordinary-rust-attributes-mark-items)). The rate has no default:
   every deposit is given one when it opens.
 - **Operations** (`ChangePayTo`) and the **query** (`QuoteMaturity`) are what
-  channels call. Each is handled by a hook of the same name
-  ([hooks](contract-hooks.md)).
+  channels call, listed in `lib.rs`. Each is handled by a hook of the same
+  name ([hooks](contract-hooks.md)). Events and refusals need no list: they
+  belong to the definition because they are declared in its crate.
 - **Guarded credits.** Money arriving is pending until `credited` accepts it,
   so a transfer after the funding window, or above the maximum, is returned
   to the sender ([delivery with acceptance](hot-accounts.md#delivery-with-acceptance)).
@@ -200,7 +226,8 @@ mod fixed_12m {
   definition hands tempo its documents; nobody writes them by hand
   ([schedules](contract-engine.md#schedules)).
 
-From `schedules!` the SDK generates two things the code uses:
+From the definition the SDK generates what the implementation uses: a trait
+per hook in `fixed_12m::hooks`, and from `schedules!`:
 
 ```rust
 pub enum Rule { Accrue, Milestone }       // what a run is for: run.is_for(Rule::Accrue)
@@ -211,7 +238,10 @@ pub struct Schedules { /* … */ }          // an account's own selection: .accr
 
 ### The code
 
-Each hook says what it needs with `#[requires]`: the engine fetches exactly
+The implementation is its own crate, so a product can have several (C7).
+Each hook is a trait the definition generated; the files follow the
+product's story, not one file per hook. Each hook's impl says what it needs
+with `#[requires]`: the engine fetches exactly
 that before the call, so the code does no I/O. Every hook takes two
 arguments: a context the engine prepared (`ctx`: the instance, the time, the
 caller, the parameters, and exactly what `#[requires]` named, in fields
@@ -220,15 +250,44 @@ delivery). `cargo component build` writes the manifest
 the engine reads from these attributes
 ([implementations](contract-engine.md#implementations)).
 
+```text
+products/fixed-12m-impl/src/
+├── lib.rs           what it implements
+├── funding.rs       opening, and accepting or refusing money (open, credited)
+├── scheduled.rs     each evening's accrual; funding close and maturity (scheduled)
+└── maturity.rs      the maturity quote, and where the money goes (quote_maturity, change_pay_to)
+```
+
 ```rust
+// src/lib.rs
 use tkone_contract_sdk::prelude::*;
-use fixed_12m::{Action, Event, *};                         // generated from the definition
+mod funding; mod scheduled; mod maturity;
 
 #[implementation(of = fixed_12m)]
-impl fixed_12m::Contract for Fixed12m {
-    /// Money arrived. Accept it inside the window and under the maximum.
-    #[requires(view(DepositBalances))]
-    fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused> {
+pub struct Fixed12mImpl;
+```
+
+```rust
+// src/funding.rs
+use fixed_12m::{hooks, Action, *};                         // generated from the definition
+
+/// Nothing to book until funded; start the deposit's own schedules.
+#[requires]                                           // no inputs: sets this hook's Ctx all the same
+impl hooks::Open for Fixed12mImpl {
+    fn open(ctx: &Self::Ctx, o: Opening) -> Result<Outcome, OpenRefused> {
+        let deadline = o.opened_on + Days(ctx.params.FUNDING_DAYS);
+        let schedules = Schedules::new()
+            .accrue(Select::between(o.opened_on, o.matures_on))
+            .milestone(Select::once_on(deadline))             // or the next business day
+            .milestone(Select::once_on(o.matures_on));
+        Ok(Outcome::new().act(Action::ScheduleChange(schedules)))
+    }
+}
+
+/// Money arrived. Accept it inside the window and under the maximum.
+#[requires(view(DepositBalances))]
+impl hooks::Credited for Fixed12mImpl {
+    fn credited(ctx: &Self::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused> {
         let (p, b) = (&ctx.params, &ctx.views.deposit_balances);
         if c.value_date > ctx.instance.opened_on + Days(p.FUNDING_DAYS) {
             return Err(CreditRefused::FundingClosed);
@@ -238,16 +297,24 @@ impl fixed_12m::Contract for Fixed12m {
             return Err(CreditRefused::AboveMaximum { room });
         }
         // Accepting is enough: the credit now counts, in Principal (credits_to).
-        let mut out = Outcome::new().emit(Event::Funded { amount: c.amount });
+        let mut out = Outcome::new().emit(Funded { amount: c.amount });
         if ctx.instance.status == Status::Pending {
             out = out.act(Action::Transition(Active));        // first money: the deposit starts
         }
         Ok(out)
     }
+}
 
-    #[requires(view(DepositBalances),
-               instance(from = terms.pay_to, read = [status]))]     // to pay out at maturity
-    fn scheduled(ctx: &scheduled::Ctx, run: Run) -> Outcome {
+```
+
+```rust
+// src/scheduled.rs
+use fixed_12m::{hooks, Action, *};
+
+#[requires(view(DepositBalances),
+           instance(from = terms.pay_to, read = [status]))]     // to pay out at maturity
+impl hooks::Scheduled for Fixed12mImpl {
+    fn scheduled(ctx: &Self::Ctx, run: Run) -> Outcome {
         let (p, b) = (&ctx.params, &ctx.views.deposit_balances);
         let mut out = Outcome::new();
 
@@ -279,38 +346,38 @@ impl fixed_12m::Contract for Fixed12m {
                     credit: (Input(pay_to), b.principal + interest),   // lands where that account takes credits
                 })
                 .act(Action::Transition(Closed))
-                .emit(Event::Matured { principal: b.principal, interest, paid_to: pay_to });
+                .emit(Matured { principal: b.principal, interest, paid_to: pay_to });
         }
         out
     }
+}
 
-    #[requires(instance(from = op.pay_to, read = [status, holders]))]
-    fn change_pay_to(ctx: &change_pay_to::Ctx, op: ChangePayTo) -> Result<Outcome, ChangeRefused> {
+```
+
+```rust
+// src/maturity.rs
+use fixed_12m::{hooks, Action, *};
+
+#[requires(instance(from = op.pay_to, read = [status, holders]))]
+impl hooks::ChangePayTo for Fixed12mImpl {
+    fn change_pay_to(ctx: &Self::Ctx, op: ChangePayTo) -> Result<Outcome, ChangeRefused> {
         let to = &ctx.instances.pay_to;
         if !to.holders.contains_all(&ctx.instance.holders) {
             return Err(ChangeRefused::NotTheHolder);
         }
         Ok(Outcome::new().act(Action::SetPayTo(to.id)))
     }
+}
 
-    #[requires(view(DepositBalances))]
-    fn quote_maturity(ctx: &quote_maturity::Ctx, _: QuoteMaturity) -> Result<MaturityQuote, Never> {
+#[requires(view(DepositBalances))]
+impl hooks::QuoteMaturity for Fixed12mImpl {
+    fn quote_maturity(ctx: &Self::Ctx, _: QuoteMaturity) -> Result<MaturityQuote, Never> {
         let (p, b) = (&ctx.params, &ctx.views.deposit_balances);
         let matures_on = ctx.instance.terms.matures_on;
         let days = matures_on - ctx.time.today;
         let interest = (b.accrued + b.principal * p.RATE.daily(DayCount::Act365Fixed) * days)
             .round(p.ROUNDING);
         Ok(MaturityQuote { principal: b.principal, interest, total: b.principal + interest, on: matures_on })
-    }
-
-    /// Nothing to book until funded; start the deposit's own schedules.
-    fn open(ctx: &open::Ctx, o: Opening) -> Result<Outcome, OpenRefused> {
-        let deadline = o.opened_on + Days(ctx.params.FUNDING_DAYS);
-        let schedules = Schedules::new()
-            .accrue(Select::between(o.opened_on, o.matures_on))
-            .milestone(Select::once_on(deadline))             // or the next business day
-            .milestone(Select::once_on(o.matures_on));
-        Ok(Outcome::new().act(Action::ScheduleChange(schedules)))
     }
 }
 ```
@@ -329,7 +396,7 @@ A simulation runs the real component over a timeline of its schedules
 fn pays_principal_and_interest_at_maturity() {
     let mut sim = Simulation::new()
         .definition("fixed-12m@1.0.0")
-        .component("target/wasm32-wasip2/release/fixed_12m.wasm")
+        .component("target/wasm32-wasip2/release/fixed_12m_impl.wasm")
         .reference("reference/*.yaml");
 
     let current = sim.open("easy-saver@2", opening! {});

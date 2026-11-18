@@ -10,7 +10,7 @@ what the editor understands: completion, go to definition, rename, hover,
 and errors underlined where the mistake is.
 
 This document decides how the syntax and tools are shaped for that. Each
-decision is shown before and after, then stated as a decision (C42 to C46)
+decision is shown before and after, then stated as a decision (C42 to C47)
 at the end.
 
 ---
@@ -49,21 +49,29 @@ name    = "fixed-12m"
 version = "1.0.0"                       # the definition's version: nowhere else
 
 [dependencies]
-tkone-contract     = "1"                # #[definition], #[parameter], schedules!, …
+tkone-contract     = "1"                # #[definition], #[parameters], schedules!, …
 tkone-ledger       = "1"                # #[ledger], booking!, Money
 term-deposits      = "1.0"              # the model it uses: a crate, resolved by Cargo
 ```
 
 ```rust
-// products/fixed-12m/src/lib.rs
+// products/fixed-12m/src/lib.rs: the product's contract, on one screen
 use tkone_contract::prelude::*;
-use term_deposits::{self, TermDepositBalance};
+use term_deposits::TermDepositBalance;
+mod params; mod operations; mod schedules;
 
-#[definition(name = "fixed-12m", model = term_deposits)]
+#[definition(name = "fixed-12m", model = term_deposits,
+             parameters = params::Params,
+             operations = [operations::ChangePayTo, operations::QuoteMaturity],
+             hooks(activation = open, delivered(ledger::Entry) = credited, scheduled = scheduled),
+             schedules  = schedules::Rules)]
 #[ledger(guard = DebitsAndCredits, credits_to = TermDepositBalance::Principal)]
-mod fixed_12m {
-    #[parameter]
-    const RATE: Parameter<Rate> = Parameter::commercial()
+pub struct Fixed12m;
+
+// products/fixed-12m/src/params.rs
+#[parameters]
+impl Params {
+    pub const RATE: Parameter<Rate> = Parameter::commercial()
         .instance(Instance::required())                       // fixed when opened
         .range(rate!(0), rate!(0.10));
     // …
@@ -165,6 +173,10 @@ approve(when(..), by(..))))`) is a small language the editor does not know.
 The rule: **an attribute marks an item; anything with options is a Rust
 expression.** Parameters are the main case:
 
+Parameters are associated `const`s of one `#[parameters] impl Params`
+block, in the definition's `params.rs`
+([the crate is the unit](#8-the-crate-is-the-unit-files-follow-the-product)):
+
 ```rust
 // before
 #[parameter(kind = "commercial",
@@ -176,13 +188,15 @@ expression.** Parameters are the main case:
 const MARGIN: Rate;
 
 // after
-#[parameter]
-const MARGIN: Parameter<Rate> = Parameter::commercial()
-    .definition(rate!(0.0075))
-    .instance(Instance::within(rate!(0.005))
-        .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))
-    .range(rate!(0), rate!(0.05))
-    .invariant(cel!("BASE.current + value <= CAP"), "above-cap");
+#[parameters]
+impl Params {
+    pub const MARGIN: Parameter<Rate> = Parameter::commercial()
+        .definition(rate!(0.0075))
+        .instance(Instance::within(rate!(0.005))
+            .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))
+        .range(rate!(0), rate!(0.05))
+        .invariant(cel!("BASE.current + value <= CAP"), "above-cap");
+}
 ```
 
 - **Every step completes.** `Parameter::` offers `commercial` and
@@ -195,8 +209,7 @@ const MARGIN: Parameter<Rate> = Parameter::commercial()
 - **Complex defaults are struct literals,** not JSON in a string:
 
 ```rust
-#[parameter]
-const ERC: Parameter<ErcSchedule> = Parameter::commercial()
+pub const ERC: Parameter<ErcSchedule> = Parameter::commercial()
     .definition(ErcSchedule { bands: bounded![
         ErcBand { until_year: 1, rate: rate!(0.02) },
         ErcBand { until_year: 2, rate: rate!(0.01) },
@@ -264,15 +277,149 @@ with it. So every macro:
 
 ```text
 error: unknown hook kind `deliverd`
-  --> products/cash-isa/src/lib.rs:14:12
+  --> products/cash-isa/src/lib.rs:3:19
    |
-14 |     #[hook(deliverd(ledger::Entry))] fn credited;
-   |            ^^^^^^^^ expected one of: scheduled, delivered(T), activation, closure, upgrade, correction
+3  |              hooks(deliverd(ledger::Entry) = credited))]
+   |                    ^^^^^^^^ expected one of: scheduled, delivered(T), activation, closure, upgrade, correction
 ```
 
 - **is tested for it:** each macro has tests on truncated input (every
   prefix of a valid example must expand without a panic), so tolerance does
   not regress.
+
+## 8. The crate is the unit; files follow the product
+
+Rust splits a module across files freely (`mod accrual;` loads
+`accrual.rs`), but an attribute macro on a module sees its contents only
+when they are written inline: `#[model] mod lending;` with its body in other
+files is refused on stable Rust, and an inner `#![model]` is unstable. A
+design built on `#[model] mod … { }` or one `impl Contract for … { }` puts a
+whole model, definition or implementation in one file, which for a mortgage
+is hundreds of lines in one scroll.
+
+So nothing depends on seeing a whole module. **Each model, interface,
+definition and implementation is a crate; each item carries its own
+attribute, in whichever file suits it; and a short `lib.rs` names the
+parts.**
+
+### Models: items, no wrapper
+
+```text
+crates/lending/
+├── Cargo.toml              name = "lending", version = "1.1.0"
+├── model.lock
+└── src/
+    ├── lib.rs              tkone::model!(name = "lending", extensions = [ledger]);
+    │                       pub mod balances; pub mod terms; pub mod offsets; pub mod holidays; pub mod views;
+    ├── balances.rs         #[ledger::balances] pub enum LoanBalance { … }
+    ├── terms.rs            #[extends(core::Account, …)] pub struct LoanTerms { … }   #[state_machine(…)]
+    ├── offsets.rs          #[relation(…)] pub struct OffsetLink { … }
+    ├── holidays.rs         #[effective(…)] pub struct PaymentHoliday { … }
+    └── views.rs            #[view(…)] pub struct LoanState;
+```
+
+- **Each item's macro works alone:** it generates its types and its
+  compiler checks (C42), knows its model from the crate, and reads
+  `model.lock` for its field ids.
+- **The whole schema is assembled after compiling.** Built with the
+  `schema` feature, each item registers its schema fragment in a link-time
+  list; `cargo tkone export` builds the crate for the host, collects the
+  list, sorts it and writes the schema. No macro needs the whole model, and
+  nothing parses source text.
+
+### Interfaces and definitions: a table of contents, and the parts
+
+What is whole-product (the operations callers can invoke, the hooks, the
+parameters, the permitted actions, the schedules) is named once, by path, in
+`lib.rs`; each part is declared in its own file:
+
+```text
+products/fixed-12m/src/
+├── lib.rs                  #[definition(…, parameters = …, operations = [ … ], hooks(…), schedules = …)]
+│                           pub struct Fixed12m;      permits! { … }
+├── params.rs               #[parameters] impl Params { pub const RATE: Parameter<Rate> = …; … }
+├── operations.rs           #[operation] pub struct ChangePayTo { … }   #[query] pub struct QuoteMaturity;
+│                           #[rejections] pub enum ChangeRefused { … }  #[event] pub struct Funded { … }
+└── schedules.rs            schedules! { accrue: "…", milestone: "…" }
+```
+
+- **`lib.rs` is the reviewable contract.** A change to what callers can do,
+  which hooks exist or which actions are permitted is a diff of one short
+  file.
+- **Operations are listed; events and rejections are not.** The operation
+  list decides the hooks and the component's exports, so it is explicit.
+  Events and rejections attach themselves: `#[definition]` emits a crate-root
+  alias (`crate::__Definition`), and `#[event]` and `#[rejections]` implement
+  their marker traits for it, so `emit` accepts the crate's events and no
+  others, without a list.
+- **Operations from an interface** come with `implements = [..]` and need no
+  listing.
+- **Parameters are one block.** An attribute sees one `impl` block, and the
+  resolved `ctx.params` is generated from it, so a definition's parameters
+  are one `#[parameters] impl Params` in `params.rs`.
+
+An interface is the same shape: `#[interface(name, model, operations =
+[..])] pub struct DepositAccount;` in `lib.rs`, its operations, queries,
+rejections and events in their own files.
+
+### Implementations: one trait per hook
+
+A trait's `impl` is one block, so a single `Contract` trait would put every
+hook in one file. The definition instead generates **a trait per hook**, in
+its `hooks` module, and a `Contract` trait that requires them all:
+
+```rust
+// generated by #[definition], in fixed_12m::hooks
+pub trait Credited {
+    type Ctx;                                         // set by the implementation's #[requires]
+    fn credited(ctx: &Self::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused>;
+}
+pub trait Contract: Open + Credited + Scheduled + ChangePayTo + QuoteMaturity {}
+```
+
+```text
+products/fixed-12m-impl/src/
+├── lib.rs                  #[implementation(of = fixed_12m)] pub struct Fixed12mImpl;
+│                           mod funding; mod accrual; mod maturity; mod pay_to;
+├── funding.rs              impl hooks::Open for … { }      impl hooks::Credited for … { }
+├── accrual.rs              impl hooks::Scheduled for … { }   // calls maturity::pay_out
+├── maturity.rs             impl hooks::QuoteMaturity for … { }   pub(crate) fn pay_out(…)
+└── pay_to.rs               impl hooks::ChangePayTo for … { }
+```
+
+```rust
+// funding.rs
+#[requires(view(DepositBalances))]                    // generates `type Ctx` for this impl
+impl hooks::Credited for Fixed12mImpl {
+    fn credited(ctx: &Self::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused> {
+        // …
+    }
+}
+```
+
+- **A missing hook is a compiler error at the struct:** "the trait bound
+  `Fixed12mImpl: Credited` is not satisfied". rust-analyzer's "implement
+  missing members" writes the stub with the right signature.
+- **`#[requires]` sits on the impl block** and sets its `Ctx` type, so the
+  trait, declared in the definition crate, does not need to know what each
+  implementation reads.
+- **Files follow the product's logic** (funding, accrual, maturity), not
+  one file per hook, and shared code is ordinary `pub(crate)` functions.
+
+### Gotchas, and how each is handled
+
+| Gotcha | Handled by |
+|---|---|
+| A macro reads `model.lock`, but Cargo does not know, so a changed lock would not rebuild | the macro also emits `const _: &[u8] = include_bytes!("…/model.lock");`, which Cargo tracks |
+| Link-time registration (the schema list) does not work on every target, `wasm32` included | it is only in the host build with the `schema` feature; components never carry it |
+| Link order is arbitrary, so a collected schema could differ build to build | fragments are sorted by kind, name and field id before export; the schema digest is stable |
+| Two items in different files with the same name, or the same field id | names: the compiler, within a module, and `cargo tkone export` across the crate; ids: `model.lock` |
+| Generated references cross crates, so declared items must be visible | each macro refuses a non-`pub` item, with the fix in the message |
+| One crate, two `#[definition]`s, or a definition and an implementation | refused: one definition per crate, implementations in their own crates, so several implementations can exist for one definition (C7) |
+| Cargo allows two semver-incompatible versions of one crate in a build: two majors of a model | `cargo tkone check` refuses a build with two majors of any model or interface, naming the dependency paths |
+| A hook trait named like an operation (`ChangePayTo`) | hook traits live in the definition's `hooks` module and are written `hooks::ChangePayTo` |
+| The component's single export needs every hook | `#[implementation]` emits the export glue from the `Contract` trait, which already names every hook |
+| Many small crates | compiled in parallel, cached by Cargo; a product is two crates, a model one |
 
 ---
 
@@ -287,7 +434,7 @@ editor that speaks the protocol (with a VS Code extension to install both):
 | Completion and type errors in CEL | `cel!`, `when`, `#[invariant]`, `#[guard]`, `approve` | the schemas the build exports (`target/tkone/*.json`) |
 | Next dates on hover | rule strings in `schedules!` and `rule!` | tkone-schedule, with the definition's calendar |
 | Completion of open references | `reference!(..)` | the registry, or a cached snapshot offline |
-| Parameter hover | `#[parameter]` | levels, range, kind; current default per legal entity, from the registry |
+| Parameter hover | a parameter in `#[parameters]` | levels, range, kind; current default per legal entity, from the registry |
 | Compatibility warnings | a changed model field | `model.lock`: "this retypes field 7; it will be refused" |
 | Quick fixes | a missing `#[requires]` input; an unmapped approval role | the same checks as registration |
 
@@ -373,6 +520,16 @@ editor uses; the rest runs on build or in CI. Expansion time and generated
 size are measured, and a capability is given up only against a measured
 cost ([7](#7-macros-tolerate-half-written-code),
 [where the cost goes](#where-the-cost-goes)).
+
+### C47. The crate is the unit; declarations are per item; the contract is a table of contents
+
+Each model, interface, definition and implementation is a crate. Model
+items carry their own attributes in any file, and the schema is assembled
+after compiling. A definition's or interface's `lib.rs` names, by path,
+its parameters block, its operations, its hooks and its schedules; events
+and rejections attach to it without a list. Implementations implement one
+trait per hook, in any file, with `#[requires]` on each impl setting its
+context type ([8](#8-the-crate-is-the-unit-files-follow-the-product)).
 
 ---
 

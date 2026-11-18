@@ -42,25 +42,26 @@ uses the same model rather than a new one. It needs two additions, both
 growth ([models 2](contract-models.md#2-models-grow-they-do-not-break)):
 
 ```rust
-#[model(name = "lending")]   // 1.1.0
-mod lending {
-    /// Now also personal loans.
-    #[extends(core::Account, when = "product_line in ['mortgages', 'personal-loans']")]
-    struct LoanTerms {
-        #[effective] term_end: NaiveDate,
-        #[effective] repayment_day: u8,
-        #[effective] repayment: RepaymentType,
-        /// New in 1.1: where collection stands. Optional for loans opened before.
-        #[effective] collection: Option<CollectionStatus>,
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "lending");   // 1.1.0
 
-    /// New in 1.1: arrears and default, for every loan product.
-    /// Starts at Current when the facet is created.
-    #[state_machine(LoanTerms.collection, initial = Current)]
-    transitions! { Current -> Arrears, Arrears -> Current | Default }
-
-    // balances, offsets, payment holidays, views: unchanged (core domain)
+// its items, in whichever of the crate's modules suit them
+/// Now also personal loans.
+#[extends(core::Account, when = "product_line in ['mortgages', 'personal-loans']")]
+pub struct LoanTerms {
+    #[effective] term_end: NaiveDate,
+    #[effective] repayment_day: u8,
+    #[effective] repayment: RepaymentType,
+    /// New in 1.1: where collection stands. Optional for loans opened before.
+    #[effective] collection: Option<CollectionStatus>,
 }
+
+/// New in 1.1: arrears and default, for every loan product.
+/// Starts at Current when the facet is created.
+#[state_machine(LoanTerms.collection, initial = Current)]
+transitions! { Current -> Arrears, Arrears -> Current | Default }
+
+// balances, offsets, payment holidays, views: unchanged (core domain)
 ```
 
 ```text
@@ -94,72 +95,96 @@ $ tkone reference load reference/accounting-loans-uk.yaml
 
 ## 3. Definition
 
+Laid out as the [fixed deposit](example-fixed-deposit.md#3-definition) is:
+
+```text
+products/personal-loan/src/
+├── lib.rs           the contract, and its approval role
+├── params.rs        rate, instalment, fees, default and settlement rules
+├── operations.rs    the settlement quote, and its events
+└── schedules.rs     accrual and instalments
+```
+
 ```rust
-#[definition(name = "personal-loan", model = lending)]   // 1.0.0
+// src/lib.rs
+use tkone_contract::prelude::*;
+use lending::LoanBalance;
+mod params; mod operations; mod schedules;
+
+#[definition(name = "personal-loan", model = lending,
+             parameters = params::Params,
+             operations = [operations::QuoteSettlement],
+             hooks(activation = open,                         // pay out; compute the instalment; schedules
+                   scheduled = scheduled,                     // accrue, instalment
+                   delivered(ledger::Entry) = credited),      // a credit landed: allocate; clear arrears; settle
+             schedules = schedules::Rules)]
 #[identifiers(issue = ["loan-number"])]
 #[ledger(guard = Debits, credits_to = LoanBalance::Incoming)]   // payments land in Incoming; `credited` allocates
-mod personal_loan {
-    approval_roles! {
-        /// Approves a restructured instalment.
-        collections,
-    }
+pub struct PersonalLoan;
 
-    #[parameter]
-    const RATE: Parameter<Rate> = Parameter::commercial()
+approval_roles! {
+    /// Approves a restructured instalment.
+    collections,
+}
+
+permits! {
+    Book,
+    SetParameter(params::Params::INSTALMENT),
+    Transition(Pending -> Active, Active -> Closed),
+    Transition(collection: Current -> Arrears, Arrears -> Current | Default),
+    ScheduleChange,
+}
+```
+
+```rust
+// src/params.rs
+use crate::collections;
+
+#[parameters]
+impl Params {
+    pub const RATE: Parameter<Rate> = Parameter::commercial()
         .instance(Instance::required())                       // fixed at offer
         .range(rate!(0.029), rate!(0.299));
-    #[parameter]
-    const INSTALMENT: Parameter<Money> = Parameter::commercial()
+    pub const INSTALMENT: Parameter<Money> = Parameter::commercial()
         .instance(Instance::optional().approve(collections))  // set by `open`; changed only in a restructure
         .invariant(cel!("value.currency == account.currency"), "wrong-currency");
-    #[parameter]
-    const LATE_FEE: Parameter<Money> = Parameter::commercial().definition(gbp!(12.00));
-    #[parameter]
-    const DEFAULT_AFTER: Parameter<u8> = Parameter::commercial()   // missed instalments
+    pub const LATE_FEE: Parameter<Money> = Parameter::commercial().definition(gbp!(12.00));
+    pub const DEFAULT_AFTER: Parameter<u8> = Parameter::commercial()   // missed instalments
         .definition(3)
         .range(2, 6);
-    #[parameter]
-    const SETTLEMENT_DAYS: Parameter<u16> = Parameter::commercial()
+    pub const SETTLEMENT_DAYS: Parameter<u16> = Parameter::commercial()
         .definition(28)
         .range(0, 58);
-    #[parameter]
-    const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()
+    pub const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()
         .implementation(reference!("loans-uk"));
-    #[parameter]
-    const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
+    pub const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
+}
+```
 
-    /// What it costs to settle the loan on a date.
-    #[query(returns = SettlementQuote)]
-    struct QuoteSettlement { on: NaiveDate }
-    struct SettlementQuote { principal: Money, interest: Money, fees: Money, total: Money, valid_until: NaiveDate }
+```rust
+// src/operations.rs
+/// What it costs to settle the loan on a date.
+#[query(returns = SettlementQuote)]
+pub struct QuoteSettlement { pub on: NaiveDate }
+pub struct SettlementQuote { pub principal: Money, pub interest: Money, pub fees: Money, pub total: Money, pub valid_until: NaiveDate }
 
-    #[event] struct InstalmentDue { amount: Money, due_on: NaiveDate }
-    #[event] struct PaymentAllocated { fees: Money, due: Money, principal: Money }
-    #[event] struct ArrearsStarted { missed: Money }
-    #[event] struct DefaultRaised { missed_instalments: u8, outstanding: Money }
-    #[event] struct Settled { on: NaiveDate }
+#[event] pub struct InstalmentDue { pub amount: Money, pub due_on: NaiveDate }
+#[event] pub struct PaymentAllocated { pub fees: Money, pub due: Money, pub principal: Money }
+#[event] pub struct ArrearsStarted { pub missed: Money }
+#[event] pub struct DefaultRaised { pub missed_instalments: u8, pub outstanding: Money }
+#[event] pub struct Settled { pub on: NaiveDate }
+```
 
-    #[hook(activation)]               fn open;        // pay out; compute the instalment; schedules
-    #[hook(scheduled)]                fn scheduled;   // accrue, instalment
-    #[hook(delivered(ledger::Entry))] fn credited;    // a credit landed: allocate; clear arrears; settle
-
-    permits! {
-        Book,
-        SetParameter(INSTALMENT),
-        Transition(Pending -> Active, Active -> Closed),
-        Transition(collection: Current -> Arrears, Arrears -> Current | Default),
-        ScheduleChange,
-    }
-
-    schedules! {
-        time_zone: "Europe/London",
-        calendar: "GBLO",
-        start: 2026-01-01,
-        /// Interest, each business evening.
-        accrue:     "YY-MM-DD~SBT18:00:00",
-        /// Instalments fall due in the morning; each loan selects its day.
-        instalment: "YY-MM-DD~SBT09:00:00",
-    }
+```rust
+// src/schedules.rs
+schedules! {
+    time_zone: "Europe/London",
+    calendar: "GBLO",
+    start: 2026-01-01,
+    /// Interest, each business evening.
+    accrue:     "YY-MM-DD~SBT18:00:00",
+    /// Instalments fall due in the morning; each loan selects its day.
+    instalment: "YY-MM-DD~SBT09:00:00",
 }
 ```
 
@@ -187,15 +212,31 @@ context the engine prepared (`ctx`, with fields generated from
 the engine reads from these attributes
 ([implementations](contract-engine.md#implementations)).
 
+```text
+products/personal-loan-impl/src/
+├── lib.rs           what it implements
+├── opening.rs       pay out, fix the instalment, start the schedules (open)
+├── collection.rs    accrual, instalments, arrears and default (scheduled)
+└── payments.rs      allocation and settlement (credited, quote_settlement), sharing one function
+```
+
 ```rust
+// src/lib.rs
 use tkone_contract_sdk::prelude::*;
-use personal_loan::{Action, Event, *};                      // generated
+mod opening; mod collection; mod payments;
 
 #[implementation(of = personal_loan)]
-impl personal_loan::Contract for PersonalLoan {
-    /// Pay out, fix the instalment, start the schedules.
-    #[requires(instance(from = opening.disburse_to, read = [status, holders]))]
-    fn open(ctx: &open::Ctx, o: Opening) -> Result<Outcome, OpenRefused> {
+pub struct PersonalLoanImpl;
+```
+
+```rust
+// src/opening.rs
+use personal_loan::{hooks, params::Params, Action, *};       // generated
+
+/// Pay out, fix the instalment, start the schedules.
+#[requires(instance(from = opening.disburse_to, read = [status, holders]))]
+impl hooks::Open for PersonalLoanImpl {
+    fn open(ctx: &Self::Ctx, o: Opening) -> Result<Outcome, OpenRefused> {
         let (p, payout) = (&ctx.params, &ctx.instances.disburse_to);
         if !payout.holders.contains_all(&o.borrowers) {
             return Err(OpenRefused::PayoutNotTheBorrowers);
@@ -207,13 +248,31 @@ impl personal_loan::Contract for PersonalLoan {
                 debit:  (This, Principal, o.amount),
                 credit: (Input(payout.id), o.amount),            // delivered to the customer
             })
-            .act(Action::SetParameter(INSTALMENT, instalment, o.opened_on))
+            .act(Action::SetParameter(Params::INSTALMENT, instalment, o.opened_on))
             .act(Action::Transition(Active))
             .act(Action::ScheduleChange(schedules(&o))))
     }
+}
 
-    #[requires(view(LoanState))]
-    fn scheduled(ctx: &scheduled::Ctx, run: Run) -> Outcome {
+
+/// The loan's own schedules: accrue for its term; the instalment on its day.
+fn schedules(o: &Opening) -> Schedules {
+    let first_due = o.opened_on.first_full_month_on(o.repayment_day);
+    let last_due = first_due + Months(o.months - 1);
+    Schedules::new()
+        .accrue(Select::between(o.opened_on, last_due))
+        .instalment(Select::between(first_due, last_due)
+            .rule(rule!("YY-MM-{day:02}~NBT09:00:00", day = o.repayment_day)))
+}
+```
+
+```rust
+// src/collection.rs
+use personal_loan::{hooks, Action, *};
+
+#[requires(view(LoanState))]
+impl hooks::Scheduled for PersonalLoanImpl {
+    fn scheduled(ctx: &Self::Ctx, run: Run) -> Outcome {
         let (p, s) = (&ctx.params, &ctx.views.loan_state);
         let mut out = Outcome::new();
 
@@ -240,10 +299,10 @@ impl personal_loan::Contract for PersonalLoan {
                 let missed = s.due.ceil_div(p.INSTALMENT);
                 if s.collection == Current {
                     out = out.act(Action::Transition(collection: Arrears))
-                             .emit(Event::ArrearsStarted { missed: s.due });
+                             .emit(ArrearsStarted { missed: s.due });
                 } else if missed >= p.DEFAULT_AFTER {
                     out = out.act(Action::Transition(collection: Default))
-                             .emit(Event::DefaultRaised { missed_instalments: missed, outstanding: s.outstanding });
+                             .emit(DefaultRaised { missed_instalments: missed, outstanding: s.outstanding });
                 }
             }
             // This month's instalment falls due: interest first, the rest is capital.
@@ -256,21 +315,29 @@ impl personal_loan::Contract for PersonalLoan {
                     credit: (This, Accrued, interest),
                     credit: (This, Principal, amount - interest),
                 })
-                .emit(Event::InstalmentDue { amount, due_on: run.due().date() });
+                .emit(InstalmentDue { amount, due_on: run.due().date() });
         }
         out
     }
+}
 
-    /// A payment arrived in Incoming: fees, then what is due, then principal.
-    #[requires(view(LoanState))]
-    fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Outcome {
+```
+
+```rust
+// src/payments.rs
+use personal_loan::{hooks, Action, *};
+
+/// A payment arrived in Incoming: fees, then what is due, then principal.
+#[requires(view(LoanState))]
+impl hooks::Credited for PersonalLoanImpl {
+    fn credited(ctx: &Self::Ctx, c: Delivery<ledger::Entry>) -> Outcome {
         let (p, s) = (&ctx.params, &ctx.views.loan_state);
         let q = settlement(s, p, c.value_date);
         let (fees, due, principal) = allocate(c.amount, s.fees, s.due);
 
         let mut out = Outcome::new()
             .book(allocation(fees, due, principal))              // out of Incoming
-            .emit(Event::PaymentAllocated { fees, due, principal });
+            .emit(PaymentAllocated { fees, due, principal });
 
         if s.collection == Arrears && due == s.due && fees == s.fees {
             out = out.act(Action::Transition(collection: Current));
@@ -280,26 +347,19 @@ impl personal_loan::Contract for PersonalLoan {
                 .book(final_interest(q.interest - s.accrued.round(p.ROUNDING)))
                 .act(Action::Transition(Closed))
                 .act(Action::ScheduleChange(Schedules::end_all(c.value_date)))
-                .emit(Event::Settled { on: c.value_date });
+                .emit(Settled { on: c.value_date });
         }
         out
     }
+}
 
-    #[requires(view(LoanState))]
-    fn quote_settlement(ctx: &quote_settlement::Ctx, q: QuoteSettlement) -> Result<SettlementQuote, Never> {
+#[requires(view(LoanState))]
+impl hooks::QuoteSettlement for PersonalLoanImpl {
+    fn quote_settlement(ctx: &Self::Ctx, q: QuoteSettlement) -> Result<SettlementQuote, Never> {
         Ok(settlement(&ctx.views.loan_state, &ctx.params, q.on))   // the same function `credited` uses
     }
 }
 
-/// The loan's own schedules: accrue for its term; the instalment on its day.
-fn schedules(o: &Opening) -> Schedules {
-    let first_due = o.opened_on.first_full_month_on(o.repayment_day);
-    let last_due = first_due + Months(o.months - 1);
-    Schedules::new()
-        .accrue(Select::between(o.opened_on, last_due))
-        .instalment(Select::between(first_due, last_due)
-            .rule(rule!("YY-MM-{day:02}~NBT09:00:00", day = o.repayment_day)))
-}
 
 /// Principal, interest to the date plus SETTLEMENT_DAYS, and fees.
 fn settlement(s: &LoanState, p: &Params, on: NaiveDate) -> SettlementQuote { /* … */ }
@@ -316,7 +376,7 @@ $ cargo component build --release
 fn a_missed_instalment_then_early_settlement() {
     let mut sim = Simulation::new()
         .definition("personal-loan@1.0.0")
-        .component("target/wasm32-wasip2/release/personal_loan.wasm")
+        .component("target/wasm32-wasip2/release/personal_loan_impl.wasm")
         .reference("reference/*.yaml");
 
     let current = sim.open("easy-saver@2", opening! { deposit: gbp(2_000) });

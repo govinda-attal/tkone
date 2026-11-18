@@ -91,21 +91,22 @@ Facets are how base domains extend the core already
 An adopter uses the same macro, in their own model:
 
 ```rust
-#[model(name = "bank::savings-goals")]   // 1.0.0; Cargo.toml: tkone-core = "1.5", tkone-deposits = "3.2"
-mod savings_goals {
-    /// A goal saver's target. One to one with the account.
-    #[extends(core::Account, when = "definition = 'bank:goal-saver'")]
-    #[action(set = SetGoal)]
-    #[invariant("target.currency == account.currency")]
-    #[invariant("by > account.opened_on", reject = "goal-in-the-past")]
-    struct GoalTerms {
-        #[effective] target: Money,
-        #[effective] by: NaiveDate,
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "bank::savings-goals");   // 1.0.0; Cargo.toml: tkone-core = "1.5", tkone-deposits = "3.2"
 
-    #[ledger::balances]
-    enum GoalBalance { #[ledger::balance(scale = 12)] BonusAccrued }
+// its items, in whichever of the crate's modules suit them
+/// A goal saver's target. One to one with the account.
+#[extends(core::Account, when = "definition = 'bank:goal-saver'")]
+#[action(set = SetGoal)]
+#[invariant("target.currency == account.currency")]
+#[invariant("by > account.opened_on", reject = "goal-in-the-past")]
+pub struct GoalTerms {
+    #[effective] target: Money,
+    #[effective] by: NaiveDate,
 }
+
+#[ledger::balances]
+pub enum GoalBalance { #[ledger::balance(scale = 12)] BonusAccrued }
 ```
 
 - The facet's fields have ids in `bank::savings-goals`'s lock, grow by its
@@ -140,14 +141,13 @@ break every other product and every caller built for the base (rule 2). They
 narrow it **for their products**:
 
 ```rust
-#[definition(name = "bank:goal-saver", ...)]
-mod goal_saver {
-    /// Checked by the engine when the account opens and whenever a holder is
-    /// added or changes: never by hook code.
-    #[profile(core::Party, role = Role::Holder, require = [tax_residency])]
-    #[profile(core::Account, require_identifier = [reference!("sort-code-account")])]
-    // …
-}
+// src/lib.rs of bank:goal-saver
+#[definition(name = "bank:goal-saver", /* … */)]
+/// Checked by the engine when the account opens and whenever a holder is
+/// added or changes: never by hook code.
+#[profile(core::Party, role = Role::Holder, require = [tax_residency])]
+#[profile(core::Account, require_identifier = [reference!("sort-code-account")])]
+pub struct GoalSaver;
 ```
 
 ```text
@@ -166,49 +166,57 @@ and every implementation of it would have to handle the new operation.
 They declare an interface of their own and implement both:
 
 ```rust
-#[interface(name = "bank:savings-goals", model = savings_goals)]   // 1.0.0
-mod savings_goals_if {
-    #[operation(returns = { target: GoalTerms.target, by: GoalTerms.by })]
-    struct SetGoal { target: Money, by: NaiveDate }
+// interfaces/savings-goals (crate savings_goals_if): src/lib.rs
+#[interface(name = "bank:savings-goals", model = savings_goals,       // 1.0.0
+            operations = [SetGoal, QueryGoalProgress])]
+pub struct SavingsGoals;
 
-    #[rejections(SetGoal)]
-    enum SetGoalRefused { GoalInThePast, BelowBalance { balance: Money } }
+// src/operations.rs
+#[operation(returns = { target: GoalTerms.target, by: GoalTerms.by })]
+pub struct SetGoal { pub target: Money, pub by: NaiveDate }
 
-    #[query(returns = GoalProgress)]
-    struct QueryGoalProgress { on: NaiveDate }
+#[rejections(SetGoal)]
+pub enum SetGoalRefused { GoalInThePast, BelowBalance { balance: Money } }
 
-    #[event] struct GoalReached { target: Money, on: NaiveDate }
-    #[event] struct BonusForfeited { month: YearMonth }
-}
+#[query(returns = GoalProgress)]
+pub struct QueryGoalProgress { pub on: NaiveDate }
 
-#[definition(name = "bank:goal-saver", model = savings_goals,
-             implements = [deposit_account, savings_goals_if])]   // 1.0.0
-mod goal_saver {
-    #[parameter]
-    const RATE: Parameter<Rate> = Parameter::commercial()
+#[event] pub struct GoalReached { pub target: Money, pub on: NaiveDate }
+#[event] pub struct BonusForfeited { pub month: YearMonth }
+```
+
+```rust
+// products/goal-saver: src/lib.rs
+#[definition(name = "bank:goal-saver", model = savings_goals,          // 1.0.0
+             implements = [deposit_account, savings_goals_if],
+             parameters = params::Params,
+             hooks(scheduled = end_of_day, activation = open, closure = close),
+             schedules = schedules::Rules)]
+#[profile(core::Party, role = Role::Holder, require = [tax_residency])]
+#[accepts(WithdrawalNote, required)]
+pub struct GoalSaver;
+
+permits! { Book, Reverse, Hold, Release, SetGoal,
+           Transition(Active -> Dormant | Closed), ScheduleChange }
+
+// src/params.rs
+#[parameters]
+impl Params {
+    pub const RATE: Parameter<Rate> = Parameter::commercial()
         .definition(rate!(0.0300))
         .instance(Instance::optional())
         .range(rate!(0), rate!(0.15));
-    #[parameter]
-    const BONUS: Parameter<Rate> = Parameter::commercial()
+    pub const BONUS: Parameter<Rate> = Parameter::commercial()
         .definition(rate!(0.0100))
         .range(rate!(0), rate!(0.05));
+}
 
-    #[profile(core::Party, role = Role::Holder, require = [tax_residency])]
-
-    #[hook(scheduled)] fn end_of_day;
-    #[hook(activation)] fn open;
-    #[hook(closure)] fn close;
-
-    permits! { Book, Reverse, Hold, Release, SetGoal,
-               Transition(Active -> Dormant | Closed), ScheduleChange }
-
-    schedules! {
-        time_zone: "Europe/London", calendar: "GBLO", start: 2026-01-01,
-        accrue:      "YY-MM-DD~SBT18:00:00",
-        capitalise:  "YY-MM-L~PBT18:00:00",
-        bonus_check: "YY-MM-L~PBT17:00:00",
-    }
+// src/schedules.rs
+schedules! {
+    time_zone: "Europe/London", calendar: "GBLO", start: 2026-01-01,
+    accrue:      "YY-MM-DD~SBT18:00:00",
+    capitalise:  "YY-MM-L~PBT18:00:00",
+    bonus_check: "YY-MM-L~PBT17:00:00",
 }
 ```
 
@@ -239,11 +247,9 @@ struct WithdrawalNote {
 The definition says whether its products accept it, or require it:
 
 ```rust
-#[definition(name = "bank:goal-saver", ...)]
-mod goal_saver {
-    #[accepts(WithdrawalNote, required)]
-    // …
-}
+#[definition(name = "bank:goal-saver", /* … */)]
+#[accepts(WithdrawalNote, required)]
+pub struct GoalSaver;
 ```
 
 On the engine's API it is named, and checked against its schema like the
@@ -304,11 +310,14 @@ The adopter's implementation calls it, and adds its own:
 
 ```rust
 use tkone_products_deposits::interest;          // = 2.1, pinned in Cargo.lock
+use goal_saver::{hooks, *};
 
 #[implementation(of = goal_saver)]
-impl goal_saver::Contract for GoalSaver {
-    #[requires(view(SavingsState), ledger::balances(as_of = due))]
-    fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome {
+pub struct GoalSaverImpl;
+
+#[requires(view(SavingsState), ledger::balances(as_of = due))]
+impl hooks::EndOfDay for GoalSaverImpl {
+    fn end_of_day(ctx: &Self::Ctx, run: Run) -> Outcome {
         let (p, available) = (&ctx.params, ctx.ledger.balances.available);
         let mut out = Outcome::new();
         if run.is_for(Rule::Accrue) {
@@ -322,9 +331,11 @@ impl goal_saver::Contract for GoalSaver {
         // capitalise, bonus_check, GoalReached …
         out
     }
+}
 
-    #[requires(view(SavingsState), facet(WithdrawalNote))]
-    fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> {
+#[requires(view(SavingsState), facet(WithdrawalNote))]
+impl hooks::Withdraw for GoalSaverImpl {
+    fn withdraw(ctx: &Self::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> {
         let available = ctx.views.savings_state.available;
         let mut out = tkone_products_deposits::withdraw::plan(op.amount, available)?;
         if ctx.facets.withdrawal_note.purpose != WithdrawalPurpose::Emergency {
@@ -357,14 +368,14 @@ And the adopter's API names what it exposes, from both namespaces, in the
 
 ```rust
 #[api(name = "bank:savings", version = "1")]
-mod savings_api {
-    expose! {
-        get  "/goal-savers/{account}"          => view(GoalProgressView),
-        post "/goal-savers/{account}/goal"     => operation(savings_goals_if::SetGoal),
-        post "/goal-savers/{account}/withdraw" => operation(deposit_account::Withdraw)
-                                                  with(WithdrawalNote),    // flattened into the body
-        events "bank.savings.v1"               => events(savings_goals_if::*, deposit_account::*),
-    }
+pub struct SavingsApi;
+
+expose! {
+    get  "/goal-savers/{account}"          => view(GoalProgressView),
+    post "/goal-savers/{account}/goal"     => operation(savings_goals_if::SetGoal),
+    post "/goal-savers/{account}/withdraw" => operation(deposit_account::Withdraw)
+                                              with(WithdrawalNote),    // flattened into the body
+    events "bank.savings.v1"               => events(savings_goals_if::*, deposit_account::*),
 }
 ```
 
@@ -410,19 +421,18 @@ Being extensible is a promise the base keeps, release after release.
 **Extension points are declared.** Anything not declared is closed:
 
 ```rust
-#[model(name = "tkone::core")]   // 1.5.0
-mod core {
-    #[code_set(open)]   enum ProductLine;            // reference data adds to it
-    #[code_set(closed)] enum AccountStatus { … }     // the engine relies on it
-    #[sealed]           enum Role { … }              // the default; stated where it matters
-}
+// src/lib.rs of the model crate
+tkone::model!(name = "tkone::core");   // 1.5.0
 
-#[interface(name = "deposit-account", model = deposits)]   // 1.0.0
-mod deposit_account {
-    #[operation(returns = { … })]
-    #[accepts_facets]                                // operation facets allowed
-    struct Withdraw { amount: Money, channel: Channel }
-}
+// its items, in whichever of the crate's modules suit them
+#[code_set(open)]   pub enum ProductLine;            // reference data adds to it
+#[code_set(closed)] pub enum AccountStatus { … }     // the engine relies on it
+#[sealed]           pub enum Role { … }              // the default; stated where it matters
+
+// in the deposit-account interface crate
+#[operation(returns = { … })]
+#[accepts_facets]                                    // operation facets allowed
+pub struct Withdraw { pub amount: Money, pub channel: Channel }
 ```
 
 **The product crates are a supported API.** Publishing `easy-saver`'s logic
@@ -473,14 +483,15 @@ knows both sides, declares the move in their next model version; the base
 never names an adopter's fields:
 
 ```rust
-#[model(name = "bank::savings-goals")]   // 1.1.0; Cargo.toml: tkone-deposits = "3.3"
-mod savings_goals {
-    #[extends(core::Account, when = "definition = 'bank:goal-saver'")]
-    struct GoalTerms {
-        #[superseded_by(deposits::SavingsGoal.target, since = "1.1.0")]
-        #[effective] target: Money,
-        #[effective] by: NaiveDate,
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "bank::savings-goals");   // 1.1.0; Cargo.toml: tkone-deposits = "3.3"
+
+// its items, in whichever of the crate's modules suit them
+#[extends(core::Account, when = "definition = 'bank:goal-saver'")]
+pub struct GoalTerms {
+    #[superseded_by(deposits::SavingsGoal.target, since = "1.1.0")]
+    #[effective] target: Money,
+    #[effective] by: NaiveDate,
 }
 ```
 

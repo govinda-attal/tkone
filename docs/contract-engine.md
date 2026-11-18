@@ -109,54 +109,56 @@ lending   ── extends core::Account ──►  LoanTerms (principal, term)
 ```
 
 ```rust
-#[model(name = "core", extensions = [ledger])]   // 1.4.0
-mod core {
-    #[entity(key = party_id)]
-    struct Party { party_id: PartyId, kind: PartyKind, #[effective] name: Name }
+// src/lib.rs of the model crate
+tkone::model!(name = "core", extensions = [ledger]);   // 1.4.0
 
-    #[entity(key = account_id)]
-    struct Account { account_id: AccountId, opened_on: NaiveDate, #[effective] status: Status }
+// its items, in whichever of the crate's modules suit them
+#[entity(key = party_id)]
+pub struct Party { party_id: PartyId, kind: PartyKind, #[effective] name: Name }
 
-    /// The statuses an account moves through; `Transition` follows it.
-    #[state_machine(Account.status)]
-    transitions! { Pending -> Active, Active -> Dormant | Closed, Dormant -> Active | Closed }
+#[entity(key = account_id)]
+pub struct Account { account_id: AccountId, opened_on: NaiveDate, #[effective] status: Status }
 
-    /// Parties and accounts are many to many, each in a role.
-    #[relation(Account <-> Party)]
-    struct AccountPartyRole { #[effective] role: Role }
+/// The statuses an account moves through; `Transition` follows it.
+#[state_machine(Account.status)]
+transitions! { Pending -> Active, Active -> Dormant | Closed, Dormant -> Active | Closed }
 
-    /// Entries that net to zero, booked together. Booking is the ledger
-    /// extension's action: its meaning needs code.
-    #[fact(key = booking_id)]
-    #[action(extension = ledger::book, reverse = ledger::reverse)]
-    struct Booking { booking_id: BookingId, reverses: Option<BookingId>, entries: Vec<Entry> }
+/// Parties and accounts are many to many, each in a role.
+#[relation(Account <-> Party)]
+pub struct AccountPartyRole { #[effective] role: Role }
 
-    /// One leg: an amount to one balance of one account.
-    #[fact(key = account_id)]
-    struct Entry { account_id: AccountId, address: BalanceAddress, amount: Money, side: Side }
+/// Entries that net to zero, booked together. Booking is the ledger
+/// extension's action: its meaning needs code.
+#[fact(key = booking_id)]
+#[action(extension = ledger::book, reverse = ledger::reverse)]
+pub struct Booking { booking_id: BookingId, reverses: Option<BookingId>, entries: Vec<Entry> }
 
-    /// Authorised, not booked: reduces the available balance; not an entry.
-    /// A declared action: a kernel primitive and its invariants.
-    #[effective(key = account_id)]
-    #[action(create = Hold, end = Release)]
-    #[invariant("amount <= state.available", reject = "hold-exceeds-available")]
-    struct Hold { hold_id: HoldId, address: BalanceAddress, amount: Money }
-}
+/// One leg: an amount to one balance of one account.
+#[fact(key = account_id)]
+pub struct Entry { account_id: AccountId, address: BalanceAddress, amount: Money, side: Side }
 
-#[model(name = "deposits")]   // 3.1.0
-mod deposits {
-    /// A facet of a core account: one to one, keyed by its id.
-    #[extends(core::Account, when = "product_line = 'deposits'")]
-    struct DepositTerms { #[effective] notice_days: u16 }
+/// Authorised, not booked: reduces the available balance; not an entry.
+/// A declared action: a kernel primitive and its invariants.
+#[effective(key = account_id)]
+#[action(create = Hold, end = Release)]
+#[invariant("amount <= state.available", reject = "hold-exceeds-available")]
+pub struct Hold { hold_id: HoldId, address: BalanceAddress, amount: Money }
 
-    /// What a hook reads about its own account, kept with every commit.
-    #[view(key = account_id, consistency = "with-instance")]
-    struct AccountState { account_id: AccountId, status: Status, balances: Balances, accrued: Money }
+// src/lib.rs of the model crate
+tkone::model!(name = "deposits");   // 3.1.0
 
-    /// Read across accounts; may lag.
-    #[view(key = party_id, cluster = account_id, consistency = "eventual")]
-    struct AccountsByParty { party_id: PartyId, account_id: AccountId, available: Money }
-}
+// its items, in whichever of the crate's modules suit them
+/// A facet of a core account: one to one, keyed by its id.
+#[extends(core::Account, when = "product_line = 'deposits'")]
+pub struct DepositTerms { #[effective] notice_days: u16 }
+
+/// What a hook reads about its own account, kept with every commit.
+#[view(key = account_id, consistency = "with-instance")]
+pub struct AccountState { account_id: AccountId, status: Status, balances: Balances, accrued: Money }
+
+/// Read across accounts; may lag.
+#[view(key = party_id, cluster = account_id, consistency = "eventual")]
+pub struct AccountsByParty { party_id: PartyId, account_id: AccountId, available: Money }
 ```
 
 - **Party, not customer.** A customer is a role a party plays; a guarantor, a
@@ -356,7 +358,7 @@ change needs approval** (C17):
 | **Constants** | an algorithm's constants, a rounding step fixed by the product's design | the definition's or implementation's code | developers | a new version |
 | **Closed code sets** (the engine relies on them) | balance types, account statuses, booking sides | enums in the model, with their IFX and ISO 20022 codes | a model version | `model apply` |
 | **Open code sets** (banks add to them) | product lines, fee types, branch codes | reference data | operations | the API, maker and checker |
-| **Definition defaults** | a default notice period, a default rate | `#[parameter]` with `.definition(default)`, in the definition | product owners | registering a version |
+| **Definition defaults** | a default notice period, a default rate | `.definition(default)` in the definition's `#[parameters]` block | product owners | registering a version |
 | **Implementation values** | its rate card, calendar, accounting mapping | the signed manifest | implementers | publishing a version |
 | **Instance overrides** | a negotiated rate, a waived fee | the database, effective | operations | the API, maker and checker |
 | **Reference data** | indices, FX, rate cards, tariffs, the chart of accounts, calendars | the database, bitemporal | feeds, treasury, finance | the API, feeds, bulk loads; maker and checker |
@@ -396,13 +398,14 @@ Parameters refer to reference data **by a logical key**, resolved by the
 engine as of the due, never by copying its values:
 
 ```rust
-#[parameter]
-const RATES: Parameter<Ref<RateCard>> = Parameter::commercial()        // rate = RATES.tier(balance) + margin
-    .implementation(reference!("card:easy-saver"))
-    .instance(Instance::optional());
-#[parameter]
-const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()  // "interest_expense" → a ledger account
-    .implementation_required();
+#[parameters]
+impl Params {
+    pub const RATES: Parameter<Ref<RateCard>> = Parameter::commercial()        // rate = RATES.tier(balance) + margin
+        .implementation(reference!("card:easy-saver"))
+        .instance(Instance::optional());
+    pub const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()  // "interest_expense" → a ledger account
+        .implementation_required();
+}
 ```
 
 - **The snapshot says which version.** The resolved values a hook receives
@@ -426,23 +429,21 @@ else here ("condition" is a predicate, "term" is a loan's duration, an
 "attribute" is a model field, a "setting" sounds free to change).
 
 ```rust
-#[parameter]
-const MARGIN: Parameter<Rate> = Parameter::commercial()
-    .definition(rate!(0.0075))
-    .instance(Instance::within(rate!(0.005))                 // ± from the default
-        .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))
-    .range(rate!(0), rate!(0.05))
-    .invariant(cel!("BASE.current + value <= CAP"), "above-cap");
-
-#[parameter]
-const ERC: Parameter<ErcSchedule> = Parameter::commercial()
-    .definition(ErcSchedule { bands: bounded![
-        ErcBand { until_year: 1, rate: rate!(0.02) },
-        ErcBand { until_year: 2, rate: rate!(0.01) },
-    ] });
-
-#[parameter]
-const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
+#[parameters]
+impl Params {
+    pub const MARGIN: Parameter<Rate> = Parameter::commercial()
+        .definition(rate!(0.0075))
+        .instance(Instance::within(rate!(0.005))                 // ± from the default
+            .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))
+        .range(rate!(0), rate!(0.05))
+        .invariant(cel!("BASE.current + value <= CAP"), "above-cap");
+    pub const ERC: Parameter<ErcSchedule> = Parameter::commercial()
+        .definition(ErcSchedule { bands: bounded![
+            ErcBand { until_year: 1, rate: rate!(0.02) },
+            ErcBand { until_year: 2, rate: rate!(0.01) },
+        ] });
+    pub const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
+}
 ```
 
 A parameter is a typed `const` builder: each step completes in the editor,
@@ -577,10 +578,12 @@ approval_roles! {
     collections,
 }
 
-#[parameter]
-const MARGIN: Parameter<Rate> = Parameter::commercial()
-    .instance(Instance::required()
-        .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior));
+#[parameters]
+impl Params {
+    pub const MARGIN: Parameter<Rate> = Parameter::commercial()
+        .instance(Instance::required()
+            .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior));
+}
 ```
 
 ```yaml
@@ -624,46 +627,64 @@ roles:
 A definition is a product's contract: what an implementation must do and may
 return.
 
+A definition is a crate, laid out so its contract reads on one screen
+([developer experience](developer-experience.md#8-the-crate-is-the-unit-files-follow-the-product)):
+
+```text
+products/easy-saver/
+├── Cargo.toml       name = "easy-saver", version = "2.1.0"; deposits = "3.1", deposit-account = "1"
+└── src/
+    ├── lib.rs       the contract
+    ├── params.rs    #[parameters] impl Params { … }
+    ├── operations.rs
+    └── schedules.rs
+```
+
 ```rust
-#[definition(name = "easy-saver", model = deposits,    // 2.1.0, from Cargo.toml
-             implements = [deposit_account])]          // Deposit, Withdraw, QuoteWithdrawal,
-mod easy_saver {                                       //   their rejections and events
-    #[parameter]
-    const RATE: Parameter<Rate> = Parameter::commercial()
+// src/lib.rs
+#[definition(name = "easy-saver", model = deposits,
+             implements = [deposit_account],               // Deposit, Withdraw, QuoteWithdrawal,
+                                                           //   their rejections and events
+             parameters = params::Params,
+             operations = [operations::SwitchProduct],     // the product's own, beyond the interface
+             // Every operation, from the interface or the definition, is handled by one
+             // hook named after it, which acts or refuses. Lifecycle hooks are named here:
+             hooks(scheduled = end_of_day,                 // tempo runs
+                   delivered(ledger::Entry) = credited,    // a delivered credit landed (C22)
+                   activation = open,
+                   closure = close,
+                   upgrade = upgrade,                      // C9
+                   correction(permits = [Book, Reverse]) = correct),   // C14: backdated facts
+             schedules = schedules::Rules)]
+pub struct EasySaver;
+
+permits! { Book, Reverse, Hold, Release, Transition(Active -> Dormant | Closed), ScheduleChange }
+```
+
+```rust
+// src/params.rs
+#[parameters]
+impl Params {
+    pub const RATE: Parameter<Rate> = Parameter::commercial()
         .definition(rate!(0.0325))
         .instance(Instance::optional())
         .range(rate!(0), rate!(0.15));
-    #[parameter]
-    const CALENDAR: Parameter<CalendarCode> = Parameter::operational()
+    pub const CALENDAR: Parameter<CalendarCode> = Parameter::operational()
         .implementation(reference!("GBLO"));
+}
 
-    /// The product's own operation, beyond the interface.
-    #[operation] struct SwitchProduct { to: ProductCode, from: NaiveDate }
-    #[rejections(SwitchProduct)] enum SwitchRefused { NotEligible }
-    #[event] struct BonusRateLost { from: NaiveDate }
+// src/operations.rs: events and refusals belong to the definition by being in its crate
+#[operation] pub struct SwitchProduct { pub to: ProductCode, pub from: NaiveDate }
+#[rejections(SwitchProduct)] pub enum SwitchRefused { NotEligible }
+#[event] pub struct BonusRateLost { pub from: NaiveDate }
 
-    // Every operation, from the interface or the definition, is handled by one
-    // hook named after it, which acts or refuses:
-    //   deposit, withdraw, switch_product      -> Result<Outcome, Rejection>
-    //   quote_withdrawal (a query)             -> Result<WithdrawalQuote, Rejection>
-    // Lifecycle hooks are declared:
-    #[hook(scheduled)]         fn end_of_day;         // tempo runs
-    #[hook(delivered(ledger::Entry))] fn credited;    // a delivered credit landed (C22)
-    #[hook(activation)]        fn open;
-    #[hook(closure)]           fn close;
-    #[hook(upgrade)]           fn upgrade;            // C9
-    #[hook(correction, permits = [Book, Reverse])]
-                               fn correct;            // C14: backdated facts
-
-    permits! { Book, Reverse, Hold, Release, Transition(Active -> Dormant | Closed), ScheduleChange }
-
-    schedules! {                                      // tempo definitions, below
-        time_zone: "Europe/London",
-        calendar: "GBLO",
-        start: 2026-01-01,
-        accrue:     "YY-MM-DD~SBT18:00:00",
-        capitalise: "YY-MM-L~PBT18:00:00",
-    }
+// src/schedules.rs: tempo definitions, below
+schedules! {
+    time_zone: "Europe/London",
+    calendar: "GBLO",
+    start: 2026-01-01,
+    accrue:     "YY-MM-DD~SBT18:00:00",
+    capitalise: "YY-MM-L~PBT18:00:00",
 }
 ```
 
@@ -735,35 +756,38 @@ Operations shared by a family of products are an **interface**, so a channel
 can withdraw from any deposit account without knowing its product:
 
 ```rust
-#[interface(name = "deposit-account", model = deposits)]   // 1.0.0
-mod deposit_account {
-    #[operation]
-    struct Deposit {
-        amount: Money,
-        channel: Channel,
-        #[personal(subject = "payer")] reference: Option<Text>,
-    }
+// interfaces/deposit-account/src/lib.rs
+#[interface(name = "deposit-account", model = deposits,               // 1.0.0
+            operations = [Deposit, Withdraw, QuoteWithdrawal])]
+pub struct DepositAccount;
 
-    /// Returns the state after the change, from with-instance views.
-    #[operation(returns = { available: AccountState.available, holds: AccountState.holds })]
-    #[accepts_facets]                    // adopters may attach typed input (extending-the-base.md)
-    struct Withdraw { amount: Money, channel: Channel }
-
-    /// An answer computed by the product, not stored: no actions.
-    #[query(returns = WithdrawalQuote)]
-    struct QuoteWithdrawal { amount: Money, on: NaiveDate }
-
-    /// Why a withdrawal is refused: declared, so a channel can act on it.
-    #[rejections(Withdraw)]
-    enum WithdrawRefused {
-        InsufficientFunds { available: Money },
-        NoticeRequired { earliest: NaiveDate },
-        Blocked,
-    }
-
-    #[event]
-    struct InterestCapitalised { amount: Money, period: DateRange }
+// interfaces/deposit-account/src/operations.rs
+#[operation]
+pub struct Deposit {
+    amount: Money,
+    channel: Channel,
+    #[personal(subject = "payer")] reference: Option<Text>,
 }
+
+/// Returns the state after the change, from with-instance views.
+#[operation(returns = { available: AccountState.available, holds: AccountState.holds })]
+#[accepts_facets]                    // adopters may attach typed input (extending-the-base.md)
+pub struct Withdraw { amount: Money, channel: Channel }
+
+/// An answer computed by the product, not stored: no actions.
+#[query(returns = WithdrawalQuote)]
+pub struct QuoteWithdrawal { amount: Money, on: NaiveDate }
+
+/// Why a withdrawal is refused: declared, so a channel can act on it.
+#[rejections(Withdraw)]
+pub enum WithdrawRefused {
+    InsufficientFunds { available: Money },
+    NoticeRequired { earliest: NaiveDate },
+    Blocked,
+}
+
+#[event]
+pub struct InterestCapitalised { amount: Money, period: DateRange }
 
 // easy-saver@2.1.0, above, implements it.
 ```
@@ -830,18 +854,27 @@ WIT world, published to an OCI registry, signed, and registered by digest.
 It is built with `tkone-contract-sdk` for `wasm32-wasip2`, or in another
 language that targets components (componentize-py for Python).
 
-Everything the engine needs to know about it is declared on the code:
+Everything the engine needs to know about it is declared on the code. Each
+hook is a trait the definition generates (`easy_saver::hooks::Withdraw`),
+implemented in whichever file suits it; `#[requires]` on each impl block
+says what that hook reads and sets its context type, and a missing hook is a
+compiler error at the `#[implementation]` struct
+([developer experience](developer-experience.md#implementations-one-trait-per-hook)):
 
 ```rust
 #[implementation(of = easy_saver, values(CALENDAR = reference!("GBLO")))]   // its own values
-impl easy_saver::Contract for Saver {
-    #[requires(view(AccountState),
-               ledger::balances(as_of = due),
-               ledger::entries(since = last(Rule::Capitalise), until = due, max = 2000))]
-    fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome { /* … */ }
+pub struct Saver;
 
-    #[requires(view(AccountState))]
-    fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> { /* … */ }
+#[requires(view(AccountState),
+           ledger::balances(as_of = due),
+           ledger::entries(since = last(Rule::Capitalise), until = due, max = 2000))]
+impl hooks::EndOfDay for Saver {
+    fn end_of_day(ctx: &Self::Ctx, run: Run) -> Outcome { /* … */ }
+}
+
+#[requires(view(AccountState))]
+impl hooks::Withdraw for Saver {
+    fn withdraw(ctx: &Self::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> { /* … */ }
 }
 
 schedules! {                                  // its own schedules, beside the definition's
@@ -966,7 +999,7 @@ kernel without inheriting them (C40).
 | a value folded from facts, per instance | `#[quantity]` | a balance (`#[ledger::balances]`) |
 | a bound on a quantity, by direction | `#[guard(Q, decreases = .., increases = ..)]` | `#[ledger(guard = Debits \| DebitsAndCredits \| Unguarded)]` |
 | a fact written to another instance's inbox | `Deliver` | a credit, or an entry to an internal account |
-| a pending delivery, accepted or refused | `#[hook(delivered(T))]`, acceptance | `#[hook(delivered(ledger::Entry))] fn credited`; guarded credits |
+| a pending delivery, accepted or refused | `hooks(delivered(T) = name)`, acceptance | `delivered(ledger::Entry) = credited`; guarded credits |
 | the undoing of a refused delivery | compensation | a return booking |
 | a commit with guarded writes on two instances | joint commit | a booking debiting two guarded accounts |
 | the end of a period, folding inboxes | period close, fold checkpoints | the business day's close; trial balance |
@@ -1397,16 +1430,16 @@ extension runs models that do not need it, and CI proves it
 
 ### C41. A hook takes a context and a message, and returns its outcome
 
-Every hook has one shape: `fn hook(ctx: &hook::Ctx, message) -> …`. The
+Every hook has one shape: `fn hook(ctx: &Self::Ctx, message) -> …`. The
 message is only what started it (an operation, a query, a run, a delivery).
 The context is everything the engine prepared: the instance, the time, the
 caller, the resolved parameters, the trace, and exactly the reads its
-`#[requires]` declares, in a type generated per hook, so an undeclared read
-does not compile. The outcome is returned, never written to the context, so
+`#[requires]` on the hook's impl declares, as the trait's `Ctx` type, so an
+undeclared read does not compile. The outcome is returned, never written to the context, so
 a hook stays a pure function and a refusal leaves nothing behind
 ([the hook signature](contract-hooks.md#the-hook-signature)).
 
-### C42 to C46. Developer experience
+### C42 to C47. Developer experience
 
 How the declarations are written so editors, compilers and agents
 understand them is decided in [developer
@@ -1423,6 +1456,9 @@ experience](developer-experience.md#decisions), with examples:
   server.
 - **C46.** Macros tolerate half-written code; editor capability is not
   traded for build time without measurement.
+- **C47.** The crate is the unit: model items carry their own attributes
+  in any file; a definition's `lib.rs` is a table of contents; an
+  implementation implements one trait per hook, in any file.
 
 ---
 

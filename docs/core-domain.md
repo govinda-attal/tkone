@@ -49,175 +49,176 @@ actions and views, and never changes what a core type means.
 ## `core`
 
 ```rust
-#[model(name = "core", extensions = [ledger])]   // 1.5.0
-mod core {
-    // ───────────────────────────── Parties ─────────────────────────────
+// src/lib.rs of the model crate
+tkone::model!(name = "core", extensions = [ledger]);   // 1.5.0
+pub mod parties; pub mod accounts; pub mod ledger; pub mod reference; pub mod views;
 
-    /// A person or an organisation. A customer, a guarantor, an attorney are
-    /// roles a party plays, not kinds of party.
-    #[entity(key = party_id, subject = party_id, retain = "after(closed) + 7y")]
-    #[identifiers]                                   // passport, national id, LEI, CRM id …
-    struct Party {
-        party_id: PartyId,
-        kind: PartyKind,                             // Person | Organisation
-        #[personal] #[effective] legal_name: Name,
-        #[personal(special)] date_of_birth: Option<NaiveDate>,
-        #[personal] #[effective] address: Option<PostalAddress>,
-        #[personal(search = "exact")] #[effective] email: Option<Email>,
-        #[personal] #[effective] tax_residency: Option<Country>,  // required by some products' profiles
-        #[effective] merged_into: Option<PartyId>,   // a merge is a redirect
-    }
+// ───────────────────────── src/parties.rs ─────────────────────────
 
-    // ───────────────────────────── Accounts ────────────────────────────
-
-    /// One account, whatever product it is: a deposit, a loan, an internal
-    /// account. Products add facets; they do not redefine it.
-    #[entity(key = account_id)]
-    #[identifiers]                                   // sort code and number, IBAN, loan number …
-    struct Account {
-        account_id: AccountId,
-        product_line: ProductLine,                   // open code set: reference data
-        legal_entity: LegalEntity,
-        currency: Currency,
-        opened_on: NaiveDate,
-        #[effective] status: AccountStatus,
-    }
-
-    #[state_machine(Account.status, initial = Pending)]
-    transitions! {
-        Pending -> Active | Closed,                  // closed unfunded
-        Active  -> Dormant | Closed,
-        Dormant -> Active | Closed,
-    }
-
-    /// Parties and accounts, many to many, each in a role.
-    #[relation(Account <-> Party, max_per_party = 50, max_per_account = 20)]
-    struct AccountPartyRole { #[effective] role: Role }   // Holder | JointHolder | Borrower
-                                                          // | Guarantor | Attorney
-
-    /// An agreed overdraft or other limit on what may be debited.
-    #[effective(key = account_id)]
-    #[action(set = SetLimit)]
-    #[invariant("overdraft.currency == account.currency")]
-    struct Limit { account_id: AccountId, overdraft: Money }
-
-    // ────────────────────────────── Ledger ─────────────────────────────
-
-    /// The balance types every account has. Domains add their own; a balance
-    /// type is named with its model (`lending::Principal`).
-    #[ledger::balances]
-    enum CoreBalance { Available }
-
-    /// Entries that net to zero, booked together. Its meaning needs code:
-    /// the ledger extension's actions.
-    #[fact(key = booking_id)]
-    #[action(extension = ledger::book, reverse = ledger::reverse)]
-    struct Booking {
-        booking_id: BookingId,
-        code: BankTransactionCode,                   // ISO 20022 domain, family, sub-family
-        value_date: NaiveDate,                       // the booking date is the commit's
-        reverses: Option<BookingId>,
-        #[bounded(max = 1000)] entries: Vec<Entry>,
-        #[personal(subject = "counterparty")] narrative: Option<Text>,
-    }
-
-    /// One leg: an amount, debit or credit, to one balance of one account.
-    #[fact(key = account_id)]
-    struct Entry {
-        account_id: AccountId,
-        booking_id: BookingId,
-        address: BalanceAddress,                     // account, balance type, currency
-        amount: Money,                               // or a balance type's declared scale
-        side: Side,                                  // Debit | Credit
-        value_date: NaiveDate,
-    }
-
-    /// Authorised, not booked: reduces the available balance.
-    #[effective(key = account_id)]
-    #[action(create = Hold, end = Release)]
-    #[invariant("amount.currency == account.currency")]
-    #[invariant("amount <= state.available", reject = "hold-exceeds-available")]
-    struct Hold {
-        hold_id: HoldId,
-        account_id: AccountId,
-        address: BalanceAddress,
-        amount: Money,
-        until: Option<NaiveDate>,
-        reason: HoldReason,
-    }
-
-    /// An instance's override of a parameter, effective from a date (C8).
-    /// Validated against the parameter's own declaration: its type, ranges,
-    /// invariants and level rules (C31). The value is the whole value.
-    #[effective(key = (account_id, name))]
-    #[action(set = SetParameter, validate = parameter)]
-    struct ParameterOverride { account_id: AccountId, name: ParameterName, value: ParameterValue }
-
-    // ────────────────────────── Reference data ─────────────────────────
-
-    #[effective(key = code)]
-    struct CurrencyInfo { code: Currency, minor_units: u8 }          // GBP 2, JPY 0, BHD 3
-
-    #[effective(key = code)]
-    struct ProductLineInfo { code: ProductLine, name: Text }         // savings, term-deposits,
-                                                                     // personal-loans, mortgages
-    #[series(key = code)]
-    struct RateSeries { code: SeriesCode, rate: Rate }               // boe-base, SONIA
-
-    #[effective(key = code)]
-    struct RateCard { code: RateCardCode, #[bounded(max = 50)] tiers: Vec<RateTier> }
-
-    #[effective(key = code)]
-    struct LedgerAccount { code: LedgerAccountCode, name: Text, kind: LedgerKind }
-                                                                     // Asset | Liability | Income
-                                                                     // | Expense | Equity
-    /// Contracts book to logical names; finance maps them, per legal entity.
-    #[effective(key = (mapping, logical))]
-    struct AccountingMapping {
-        mapping: MappingCode,
-        legal_entity: LegalEntity,
-        logical: LogicalAccount,
-        ledger_account: LedgerAccountCode,
-    }
-
-    #[effective(key = scheme)]
-    struct IdentifierScheme {
-        scheme: SchemeCode,
-        applies_to: EntityName,
-        when: Option<Condition>,
-        format: Option<FormatCode>,
-        unique: UniqueScope,                         // global | per-issuer | per-system | per-legal-entity
-        per_object: Cardinality,                     // one | one-active | many
-        issued_by: Issuer,                           // bank | external
-        class: Classification,
-    }
-
-    // Calendars are reference data too, loaded through tkone-calendar.
-
-    // ────────────────────────────── Views ──────────────────────────────
-
-    #[view(key = account_id, consistency = "with-instance",
-           latest_of = [Account.status, Limit.overdraft])]
-    struct AccountStatus { account_id: AccountId, status: AccountStatus, overdraft: Money }
-
-    #[view(key = account_id, consistency = "with-instance", from = Entry,
-           group_by = address, fold = sum(signed(amount)))]
-    struct Balances { account_id: AccountId, address: BalanceAddress, amount: Money }
-
-    #[view(key = account_id, consistency = "with-instance", from = Hold,
-           filter = "ended is none", fold = sum(amount))]
-    struct HoldsTotal { account_id: AccountId, amount: Money }
-
-    /// What a hook reads about its own account, before a domain adds to it.
-    #[view(key = account_id, consistency = "with-instance",
-           compose = [AccountStatus, Balances, HoldsTotal],
-           derive = { available: "Balances[Available] - HoldsTotal + AccountStatus.overdraft" })]
-    struct AccountState;
-
-    #[view(key = party_id, cluster = account_id, consistency = "eventual",
-           from = AccountPartyRole)]
-    struct AccountsByParty { party_id: PartyId, account_id: AccountId, role: Role }
+/// A person or an organisation. A customer, a guarantor, an attorney are
+/// roles a party plays, not kinds of party.
+#[entity(key = party_id, subject = party_id, retain = "after(closed) + 7y")]
+#[identifiers]                                   // passport, national id, LEI, CRM id …
+pub struct Party {
+    party_id: PartyId,
+    kind: PartyKind,                             // Person | Organisation
+    #[personal] #[effective] legal_name: Name,
+    #[personal(special)] date_of_birth: Option<NaiveDate>,
+    #[personal] #[effective] address: Option<PostalAddress>,
+    #[personal(search = "exact")] #[effective] email: Option<Email>,
+    #[personal] #[effective] tax_residency: Option<Country>,  // required by some products' profiles
+    #[effective] merged_into: Option<PartyId>,   // a merge is a redirect
 }
+
+// ───────────────────────── src/accounts.rs ─────────────────────────
+
+/// One account, whatever product it is: a deposit, a loan, an internal
+/// account. Products add facets; they do not redefine it.
+#[entity(key = account_id)]
+#[identifiers]                                   // sort code and number, IBAN, loan number …
+pub struct Account {
+    account_id: AccountId,
+    product_line: ProductLine,                   // open code set: reference data
+    legal_entity: LegalEntity,
+    currency: Currency,
+    opened_on: NaiveDate,
+    #[effective] status: AccountStatus,
+}
+
+#[state_machine(Account.status, initial = Pending)]
+transitions! {
+    Pending -> Active | Closed,                  // closed unfunded
+    Active  -> Dormant | Closed,
+    Dormant -> Active | Closed,
+}
+
+/// Parties and accounts, many to many, each in a role.
+#[relation(Account <-> Party, max_per_party = 50, max_per_account = 20)]
+pub struct AccountPartyRole { #[effective] role: Role }   // Holder | JointHolder | Borrower
+                                                      // | Guarantor | Attorney
+
+/// An agreed overdraft or other limit on what may be debited.
+#[effective(key = account_id)]
+#[action(set = SetLimit)]
+#[invariant("overdraft.currency == account.currency")]
+pub struct Limit { account_id: AccountId, overdraft: Money }
+
+// ───────────────────────── src/ledger.rs ─────────────────────────
+
+/// The balance types every account has. Domains add their own; a balance
+/// type is named with its model (`lending::Principal`).
+#[ledger::balances]
+pub enum CoreBalance { Available }
+
+/// Entries that net to zero, booked together. Its meaning needs code:
+/// the ledger extension's actions.
+#[fact(key = booking_id)]
+#[action(extension = ledger::book, reverse = ledger::reverse)]
+pub struct Booking {
+    booking_id: BookingId,
+    code: BankTransactionCode,                   // ISO 20022 domain, family, sub-family
+    value_date: NaiveDate,                       // the booking date is the commit's
+    reverses: Option<BookingId>,
+    #[bounded(max = 1000)] entries: Vec<Entry>,
+    #[personal(subject = "counterparty")] narrative: Option<Text>,
+}
+
+/// One leg: an amount, debit or credit, to one balance of one account.
+#[fact(key = account_id)]
+pub struct Entry {
+    account_id: AccountId,
+    booking_id: BookingId,
+    address: BalanceAddress,                     // account, balance type, currency
+    amount: Money,                               // or a balance type's declared scale
+    side: Side,                                  // Debit | Credit
+    value_date: NaiveDate,
+}
+
+/// Authorised, not booked: reduces the available balance.
+#[effective(key = account_id)]
+#[action(create = Hold, end = Release)]
+#[invariant("amount.currency == account.currency")]
+#[invariant("amount <= state.available", reject = "hold-exceeds-available")]
+pub struct Hold {
+    hold_id: HoldId,
+    account_id: AccountId,
+    address: BalanceAddress,
+    amount: Money,
+    until: Option<NaiveDate>,
+    reason: HoldReason,
+}
+
+/// An instance's override of a parameter, effective from a date (C8).
+/// Validated against the parameter's own declaration: its type, ranges,
+/// invariants and level rules (C31). The value is the whole value.
+#[effective(key = (account_id, name))]
+#[action(set = SetParameter, validate = parameter)]
+pub struct ParameterOverride { account_id: AccountId, name: ParameterName, value: ParameterValue }
+
+// ───────────────────────── src/reference.rs ─────────────────────────
+
+#[effective(key = code)]
+pub struct CurrencyInfo { code: Currency, minor_units: u8 }          // GBP 2, JPY 0, BHD 3
+
+#[effective(key = code)]
+pub struct ProductLineInfo { code: ProductLine, name: Text }         // savings, term-deposits,
+                                                                 // personal-loans, mortgages
+#[series(key = code)]
+pub struct RateSeries { code: SeriesCode, rate: Rate }               // boe-base, SONIA
+
+#[effective(key = code)]
+pub struct RateCard { code: RateCardCode, #[bounded(max = 50)] tiers: Vec<RateTier> }
+
+#[effective(key = code)]
+pub struct LedgerAccount { code: LedgerAccountCode, name: Text, kind: LedgerKind }
+                                                                 // Asset | Liability | Income
+                                                                 // | Expense | Equity
+/// Contracts book to logical names; finance maps them, per legal entity.
+#[effective(key = (mapping, logical))]
+pub struct AccountingMapping {
+    mapping: MappingCode,
+    legal_entity: LegalEntity,
+    logical: LogicalAccount,
+    ledger_account: LedgerAccountCode,
+}
+
+#[effective(key = scheme)]
+pub struct IdentifierScheme {
+    scheme: SchemeCode,
+    applies_to: EntityName,
+    when: Option<Condition>,
+    format: Option<FormatCode>,
+    unique: UniqueScope,                         // global | per-issuer | per-system | per-legal-entity
+    per_object: Cardinality,                     // one | one-active | many
+    issued_by: Issuer,                           // bank | external
+    class: Classification,
+}
+
+// Calendars are reference data too, loaded through tkone-calendar.
+
+// ───────────────────────── src/views.rs ─────────────────────────
+
+#[view(key = account_id, consistency = "with-instance",
+       latest_of = [Account.status, Limit.overdraft])]
+pub struct AccountStatus { account_id: AccountId, status: AccountStatus, overdraft: Money }
+
+#[view(key = account_id, consistency = "with-instance", from = Entry,
+       group_by = address, fold = sum(signed(amount)))]
+pub struct Balances { account_id: AccountId, address: BalanceAddress, amount: Money }
+
+#[view(key = account_id, consistency = "with-instance", from = Hold,
+       filter = "ended is none", fold = sum(amount))]
+pub struct HoldsTotal { account_id: AccountId, amount: Money }
+
+/// What a hook reads about its own account, before a domain adds to it.
+#[view(key = account_id, consistency = "with-instance",
+       compose = [AccountStatus, Balances, HoldsTotal],
+       derive = { available: "Balances[Available] - HoldsTotal + AccountStatus.overdraft" })]
+pub struct AccountState;
+
+#[view(key = party_id, cluster = account_id, consistency = "eventual",
+       from = AccountPartyRole)]
+pub struct AccountsByParty { party_id: PartyId, account_id: AccountId, role: Role }
 ```
 
 ### The ledger's vocabulary
@@ -252,55 +253,57 @@ Closed code set, from ISO 20022's bank transaction codes:
 Instant-access savings, and the offset saver.
 
 ```rust
-#[model(name = "deposits")]   // 3.2.0
-mod deposits {
-    #[ledger::balances]
-    enum DepositBalance { #[ledger::balance(scale = 12)] Accrued }   // interest owed, until capitalised
+// src/lib.rs of the model crate
+tkone::model!(name = "deposits");   // 3.2.0
 
-    #[extends(core::Account, when = "product_line = 'savings'")]
-    struct DepositTerms {
-        #[deprecated(since = "3.2.0", note = "use `notice`")] #[replaced_by(notice)]
-        #[effective] notice_days: u16,
-        #[effective] notice: Option<NoticePeriod>,           // calendar or business days
-    }
+// its items, in whichever of the crate's modules suit them
+#[ledger::balances]
+pub enum DepositBalance { #[ledger::balance(scale = 12)] Accrued }   // interest owed, until capitalised
 
-    #[view(key = account_id, consistency = "with-instance",
-           compose = [core::AccountState],
-           derive = { accrued: "core::Balances[Accrued]" })]
-    struct SavingsState;
-
-    /// Tiered interest, shared by savings products: each tier's rate applies
-    /// to the balance within it.
-    #[parameter_type]
-    #[invariant("tiers[0].from == zero(currency)", reject = "first-tier-not-zero")]
-    #[invariant("tiers.all(i, t, i == 0 || t.from > tiers[i-1].from)", reject = "tiers-not-ascending")]
-    #[invariant("tiers.all(t, t.from.currency == currency)")]
-    struct RateTiers { currency: Currency, #[bounded(max = 20)] tiers: Vec<Tier> }
-
-    #[parameter_type]
-    struct Tier { from: Money, #[range(min = rate!(0), max = rate!(0.15))] rate: Rate }
+#[extends(core::Account, when = "product_line = 'savings'")]
+pub struct DepositTerms {
+    #[deprecated(since = "3.2.0", note = "use `notice`")] #[replaced_by(notice)]
+    #[effective] notice_days: u16,
+    #[effective] notice: Option<NoticePeriod>,           // calendar or business days
 }
+
+#[view(key = account_id, consistency = "with-instance",
+       compose = [core::AccountState],
+       derive = { accrued: "core::Balances[Accrued]" })]
+pub struct SavingsState;
+
+/// Tiered interest, shared by savings products: each tier's rate applies
+/// to the balance within it.
+#[parameter_type]
+#[invariant("tiers[0].from == zero(currency)", reject = "first-tier-not-zero")]
+#[invariant("tiers.all(i, t, i == 0 || t.from > tiers[i-1].from)", reject = "tiers-not-ascending")]
+#[invariant("tiers.all(t, t.from.currency == currency)")]
+pub struct RateTiers { currency: Currency, #[bounded(max = 20)] tiers: Vec<Tier> }
+
+#[parameter_type]
+pub struct Tier { from: Money, #[range(min = rate!(0), max = rate!(0.15))] rate: Rate }
 ```
 
 ## `term-deposits`
 
 ```rust
-#[model(name = "term-deposits")]   // 1.0.0
-mod term_deposits {
-    #[ledger::balances]
-    enum TermDepositBalance { Principal, #[ledger::balance(scale = 12)] Accrued }
+// src/lib.rs of the model crate
+tkone::model!(name = "term-deposits");   // 1.0.0
 
-    #[extends(core::Account, when = "product_line = 'term-deposits'")]
-    struct DepositTerms {
-        matures_on: NaiveDate,
-        #[effective] #[action(set = SetPayTo)]
-        pay_to: AccountId,                                   // where maturity pays out
-    }
+// its items, in whichever of the crate's modules suit them
+#[ledger::balances]
+pub enum TermDepositBalance { Principal, #[ledger::balance(scale = 12)] Accrued }
 
-    #[view(key = account_id, consistency = "with-instance", from = core::Entry,
-           group_by = address, fold = sum(signed(amount)))]
-    struct DepositBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
+#[extends(core::Account, when = "product_line = 'term-deposits'")]
+pub struct DepositTerms {
+    matures_on: NaiveDate,
+    #[effective] #[action(set = SetPayTo)]
+    pay_to: AccountId,                                   // where maturity pays out
 }
+
+#[view(key = account_id, consistency = "with-instance", from = core::Entry,
+       group_by = address, fold = sum(signed(amount)))]
+pub struct DepositBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
 ```
 
 ## `lending`
@@ -309,80 +312,81 @@ Every loan product: the personal loan uses its terms, balances and collection
 status; the mortgage also its security, offsets and payment holidays.
 
 ```rust
-#[model(name = "lending")]   // 1.1.0
-mod lending {
-    #[ledger::balances]
-    enum LoanBalance {
-        Principal,
-        #[ledger::balance(scale = 12)] Accrued,              // interest, finer than pennies
-        Due,                                         // instalments fallen due, unpaid
-        Fees,
-        Incoming,                                    // payments, until allocated
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "lending");   // 1.1.0
 
-    #[extends(core::Account, when = "product_line in ['mortgages', 'personal-loans']")]
-    struct LoanTerms {
-        #[effective] term_end: NaiveDate,
-        #[effective] repayment_day: u8,
-        #[effective] repayment: RepaymentType,       // Repayment | InterestOnly
-        #[effective] collection: Option<CollectionStatus>,      // 1.1
-    }
+// its items, in whichever of the crate's modules suit them
+#[ledger::balances]
+pub enum LoanBalance {
+    Principal,
+    #[ledger::balance(scale = 12)] Accrued,              // interest, finer than pennies
+    Due,                                         // instalments fallen due, unpaid
+    Fees,
+    Incoming,                                    // payments, until allocated
+}
 
-    #[state_machine(LoanTerms.collection, initial = Current)]  // 1.1
-    transitions! { Current -> Arrears, Arrears -> Current | Default }
+#[extends(core::Account, when = "product_line in ['mortgages', 'personal-loans']")]
+pub struct LoanTerms {
+    #[effective] term_end: NaiveDate,
+    #[effective] repayment_day: u8,
+    #[effective] repayment: RepaymentType,       // Repayment | InterestOnly
+    #[effective] collection: Option<CollectionStatus>,      // 1.1
+}
 
-    /// What secures a loan: mortgages only.
-    #[extends(core::Account, when = "product_line = 'mortgages'")]
-    struct Security { property: PropertyRef, #[effective] valuation: Money }
+#[state_machine(LoanTerms.collection, initial = Current)]  // 1.1
+transitions! { Current -> Arrears, Arrears -> Current | Default }
 
-    /// Savings accounts whose balances offset a mortgage's interest.
-    #[relation(Account as mortgage <-> Account as offset, max_per_mortgage = 5, unique = "offset")]
-    #[action(create = LinkOffset, end = UnlinkOffset)]
-    #[invariant("input.offset.status == 'Active'", reject = "offset-not-active")]
-    #[invariant("input.offset.holders.all(h, h in state.borrowers)", reject = "not-the-borrowers")]
-    struct OffsetLink { #[effective] since: NaiveDate }
+/// What secures a loan: mortgages only.
+#[extends(core::Account, when = "product_line = 'mortgages'")]
+pub struct Security { property: PropertyRef, #[effective] valuation: Money }
 
-    #[effective(key = account_id)]
-    #[action(create = StartPaymentHoliday, end = EndPaymentHoliday)]
-    #[invariant("months >= 1 && months <= 6")]
-    #[invariant("state.holiday_months_taken + months <= 6", reject = "holiday-allowance-used")]
-    struct PaymentHoliday { account_id: AccountId, from: NaiveDate, months: u8 }
+/// Savings accounts whose balances offset a mortgage's interest.
+#[relation(Account as mortgage <-> Account as offset, max_per_mortgage = 5, unique = "offset")]
+#[action(create = LinkOffset, end = UnlinkOffset)]
+#[invariant("input.offset.status == 'Active'", reject = "offset-not-active")]
+#[invariant("input.offset.holders.all(h, h in state.borrowers)", reject = "not-the-borrowers")]
+pub struct OffsetLink { #[effective] since: NaiveDate }
 
-    #[view(key = account_id, consistency = "with-instance",
-           from = core::Entry, filter = "code == 'LOAN_OVERPAYMENT' && value_date >= state.year_start",
-           fold = sum(amount))]
-    struct OverpaidThisYear { account_id: AccountId, amount: Money }
+#[effective(key = account_id)]
+#[action(create = StartPaymentHoliday, end = EndPaymentHoliday)]
+#[invariant("months >= 1 && months <= 6")]
+#[invariant("state.holiday_months_taken + months <= 6", reject = "holiday-allowance-used")]
+pub struct PaymentHoliday { account_id: AccountId, from: NaiveDate, months: u8 }
 
-    #[view(key = account_id, consistency = "with-instance",
-           from = PaymentHoliday, fold = sum(months))]
-    struct HolidayMonthsTaken { account_id: AccountId, months: u8 }
+#[view(key = account_id, consistency = "with-instance",
+       from = core::Entry, filter = "code == 'LOAN_OVERPAYMENT' && value_date >= state.year_start",
+       fold = sum(amount))]
+pub struct OverpaidThisYear { account_id: AccountId, amount: Money }
 
-    #[view(key = account_id, consistency = "with-instance",
-           compose = [core::AccountState, OverpaidThisYear, HolidayMonthsTaken],
-           derive = {
-               principal:   "core::Balances[Principal]",
-               accrued:     "core::Balances[Accrued]",
-               due:         "core::Balances[Due]",
-               fees:        "core::Balances[Fees]",
-               outstanding: "principal + due + fees",
-           })]
-    struct LoanState;
+#[view(key = account_id, consistency = "with-instance",
+       from = PaymentHoliday, fold = sum(months))]
+pub struct HolidayMonthsTaken { account_id: AccountId, months: u8 }
 
-    #[view(key = offset_id, consistency = "eventual", from = OffsetLink)]
-    struct OffsetOf { offset_id: AccountId, mortgage_id: AccountId }
+#[view(key = account_id, consistency = "with-instance",
+       compose = [core::AccountState, OverpaidThisYear, HolidayMonthsTaken],
+       derive = {
+           principal:   "core::Balances[Principal]",
+           accrued:     "core::Balances[Accrued]",
+           due:         "core::Balances[Due]",
+           fees:        "core::Balances[Fees]",
+           outstanding: "principal + due + fees",
+       })]
+pub struct LoanState;
 
-    /// Early repayment charge by year of the loan, shared by loan products.
-    #[parameter_type]
-    #[invariant("size(bands) > 0")]
-    #[invariant("bands.all(i, b, i == 0 || b.until_year > bands[i-1].until_year)",
-                reject = "bands-not-ascending")]
-    struct ErcSchedule { #[bounded(max = 10)] bands: Vec<ErcBand> }
+#[view(key = offset_id, consistency = "eventual", from = OffsetLink)]
+pub struct OffsetOf { offset_id: AccountId, mortgage_id: AccountId }
 
-    #[parameter_type]
-    struct ErcBand {
-        #[range(min = 1, max = 40)] until_year: u8,
-        #[range(min = rate!(0), max = rate!(0.10))] rate: Rate,
-    }
+/// Early repayment charge by year of the loan, shared by loan products.
+#[parameter_type]
+#[invariant("size(bands) > 0")]
+#[invariant("bands.all(i, b, i == 0 || b.until_year > bands[i-1].until_year)",
+            reject = "bands-not-ascending")]
+pub struct ErcSchedule { #[bounded(max = 10)] bands: Vec<ErcBand> }
+
+#[parameter_type]
+pub struct ErcBand {
+    #[range(min = 1, max = 40)] until_year: u8,
+    #[range(min = rate!(0), max = rate!(0.10))] rate: Rate,
 }
 ```
 

@@ -269,7 +269,9 @@ struct Booking { booking_id: BookingId, #[bounded(max = 1000)] entries: Vec<Entr
 
 ```rust
 #[requires(ledger::entries(since = last(Rule::Capitalise), until = due, max = 2000))]
-fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome { /* … */ }
+impl hooks::EndOfDay for Saver {
+    fn end_of_day(ctx: &Self::Ctx, run: Run) -> Outcome { /* … */ }
+}
 ```
 
 - **A `#[requires]` without a bound is refused at build and registration.** Bounds come
@@ -304,12 +306,12 @@ what a banking author writes is usually nothing:
 // Expands to #[guard(ledger::Balance, decreases = "...")].
 #[definition(name = "easy-saver", model = deposits)]   // 2.0.0
 #[ledger(guard = Debits)]               // the default; may be omitted
-mod easy_saver { /* ... */ }
+pub struct EasySaver;
 
 // Internal accounts: no check, so nothing is serialised.
 #[definition(name = "fee-income", model = core)]   // 1.0.0
 #[ledger(guard = Unguarded)]
-mod fee_income { /* ... */ }
+pub struct FeeIncome;
 ```
 
 The model refuses what would break the rule: a hook may read an unguarded
@@ -425,11 +427,11 @@ before opening:
 ```rust
 #[definition(name = "current-account-uk", model = deposits)]   // 1.0.0
 #[identifiers(issue = ["sort-code-account", "iban"])]     // iban follows, derived
-mod current_account_uk { /* ... */ }
+pub struct CurrentAccountUk;
 
 #[definition(name = "business-account", model = deposits)]   // 1.0.0
 #[identifiers(issue = ["sort-code-account", "iban"], require_party = ["lei"])]
-mod business_account { /* ... */ }
+pub struct BusinessAccount;
 ```
 
 And callers can use any identifier where a key is accepted:
@@ -549,25 +551,26 @@ missing.
 The core's party, with every rule that applies to it:
 
 ```rust
-#[model(name = "core")]   // 1.5.0
-mod core {
-    #[entity(key = party_id, subject = party_id, retain = "after(closed) + 7y")]
-    #[identifiers]                                       // 9: passport, LEI, … by scheme
-    struct Party {
-        party_id: PartyId,                               // 9: typed, opaque
-        kind: PartyKind,                                 // closed code set
-        #[renamed(from = "name")]                        // 1: id kept
-        #[personal] #[effective] legal_name: Name,       // 4: encrypted per subject
-        #[personal(special)] date_of_birth: NaiveDate,
-        #[effective] merged_into: Option<PartyId>,       // 9: merge by redirect
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "core");   // 1.5.0
 
-    #[relation(Account <-> Party, max_per_party = 50, max_per_account = 20)]   // 6
-    struct AccountPartyRole { #[effective] role: Role }
-
-    #[effective(key = account_id)]
-    struct Limit { account_id: AccountId, overdraft: Money }                   // 5
+// its items, in whichever of the crate's modules suit them
+#[entity(key = party_id, subject = party_id, retain = "after(closed) + 7y")]
+#[identifiers]                                       // 9: passport, LEI, … by scheme
+pub struct Party {
+    party_id: PartyId,                               // 9: typed, opaque
+    kind: PartyKind,                                 // closed code set
+    #[renamed(from = "name")]                        // 1: id kept
+    #[personal] #[effective] legal_name: Name,       // 4: encrypted per subject
+    #[personal(special)] date_of_birth: NaiveDate,
+    #[effective] merged_into: Option<PartyId>,       // 9: merge by redirect
 }
+
+#[relation(Account <-> Party, max_per_party = 50, max_per_account = 20)]   // 6
+pub struct AccountPartyRole { #[effective] role: Role }
+
+#[effective(key = account_id)]
+pub struct Limit { account_id: AccountId, overdraft: Money }                   // 5
 ```
 
 Rules 2, 3 and 8 need nothing in the source: they are checks `model plan`

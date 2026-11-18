@@ -66,17 +66,18 @@ A model declares a quantity over one of its fact types, with kernel
 attributes:
 
 ```rust
-#[model(name = "loyalty")]   // 1.0.0
-mod loyalty {
-    /// Points moved to or from a member. Delivered; refused moves are revoked.
-    #[fact(key = move_id)]
-    #[action(deliver = Award, compensate = Revoke)]
-    struct PointsMove { move_id: MoveId, member: MemberId, points: Quantity<Point> }
+// src/lib.rs of the model crate
+tkone::model!(name = "loyalty");   // 1.0.0
 
-    /// A member's points: the kernel folds moves per member.
-    #[quantity(of = PointsMove, instance = member, amount = points)]
-    struct Points;
-}
+// its items, in whichever of the crate's modules suit them
+/// Points moved to or from a member. Delivered; refused moves are revoked.
+#[fact(key = move_id)]
+#[action(deliver = Award, compensate = Revoke)]
+pub struct PointsMove { move_id: MoveId, member: MemberId, points: Quantity<Point> }
+
+/// A member's points: the kernel folds moves per member.
+#[quantity(of = PointsMove, instance = member, amount = points)]
+pub struct Points;
 ```
 
 A definition chooses the guard, per product:
@@ -84,17 +85,17 @@ A definition chooses the guard, per product:
 ```rust
 #[definition(name = "standard-member", model = loyalty)]   // 1.0.0
 #[guard(Points, decreases = "points >= 0")]                // spending is checked, in order
-mod standard_member { /* ... */ }
+pub struct StandardMember;
 
 #[definition(name = "capped-member", model = loyalty)]   // 1.0.0
 #[guard(Points, decreases = "points >= 0",
                 increases = accept("points <= params.CAP"))]   // awards over the cap may be refused
-mod capped_member { /* ... */ }
+pub struct CappedMember;
 
 #[definition(name = "points-pool", model = loyalty)]   // 1.0.0
 #[guard(Points, none)]                                     // the scheme's pool: never checked
 #[inbox(shards = 64)]                                      // a known giant may fix its width
-mod points_pool { /* ... */ }
+pub struct PointsPool;
 ```
 
 - **The bound is CEL** over the folded quantity, the instance's snapshot
@@ -164,7 +165,7 @@ fold_checkpoint   (instance, quantity, key, period) → folded value, inbox wate
   the commit; if it has since closed, the delivery is refused and
   compensated, as a refusal by acceptance is (below).
 - **Reactions run after delivery.** A hook that reacts to a delivery on the
-  receiving instance (`#[hook(delivered(T))]`) is a separate operation on it,
+  receiving instance (`hooks(delivered(T) = …)`) is a separate operation on it,
   with its own commit, not part of the sender's.
 - **Period close waits for deliveries.** A scheduled run at its due waits
   until the instance's inbox watermark has passed the due, so the run sees
@@ -248,11 +249,10 @@ The ledger adds no mechanism of its own. It names the kernel's:
 | period close | the business day's close; the ledger adds its trial balance and booking reconciliation |
 
 ```rust
-#[definition(name = "cash-isa", model = deposits)]   // 1.0.0
+#[definition(name = "cash-isa", model = deposits,   // 1.0.0
+             hooks(delivered(ledger::Entry) = credited))]   // accept or refuse each subscription
 #[ledger(guard = DebitsAndCredits)]          // = #[guard(ledger::Balance, decreases = .., increases = accept(..))]
-mod cash_isa {
-    #[hook(delivered(ledger::Entry))] fn credited;   // accept or refuse each subscription
-}
+pub struct CashIsa;
 ```
 
 What the ledger itself still decides, as an extension, is what the kernel

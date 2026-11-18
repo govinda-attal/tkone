@@ -43,70 +43,71 @@ The mortgage is a `core::Account` with a facet; the model adds its balance
 types, its own actions, the offset link and its views.
 
 ```rust
-#[model(name = "lending")]   // 1.0.0
-mod lending {
-    /// Balance types a loan uses, beside core's.
-    #[ledger::balances]
-    enum LoanBalance {
-        Principal,
-        #[ledger::balance(scale = 12)] Accrued,     // interest, kept finer than pennies (models 5)
-        Due,                                // instalments fallen due, unpaid
-        Fees,
-        Incoming,                           // delivered credits land here; `credited` allocates them
-    }
+// src/lib.rs of the model crate
+tkone::model!(name = "lending");   // 1.0.0
 
-    /// The loan's terms: a facet of the core account (C15).
-    #[extends(core::Account, when = "product_line = 'mortgages'")]
-    struct LoanTerms {
-        #[effective] term_end: NaiveDate,
-        #[effective] repayment_day: u8,
-        #[effective] repayment: RepaymentType,          // Repayment | InterestOnly
-    }
-
-    /// What secures it: a facet of its own, so other loans need not have one.
-    #[extends(core::Account, when = "product_line = 'mortgages'")]
-    struct Security { property: PropertyRef, #[effective] valuation: Money }
-
-    /// Savings accounts whose balances offset this mortgage's interest.
-    /// A savings account offsets at most one mortgage: a claim, like a unique
-    /// identifier, made before the commit.
-    #[relation(Account as mortgage <-> Account as offset,
-               max_per_mortgage = 5, unique = "offset")]          // models 6
-    #[action(create = LinkOffset, end = UnlinkOffset)]
-    #[invariant("input.offset.status == 'Active'", reject = "offset-not-active")]
-    #[invariant("input.offset.holders.all(h, h in state.borrowers)", reject = "not-the-borrowers")]
-    struct OffsetLink { #[effective] since: NaiveDate }
-
-    /// A payment holiday: starts and ends; six months in a mortgage's life.
-    #[effective(key = account_id)]
-    #[action(create = StartPaymentHoliday, end = EndPaymentHoliday)]
-    #[invariant("months >= 1 && months <= 6")]
-    #[invariant("state.holiday_months_taken + months <= 6", reject = "holiday-allowance-used")]
-    struct PaymentHoliday { account_id: AccountId, from: NaiveDate, months: u8 }
-
-    // Views: declared forms, no code (C26).
-    #[view(key = account_id, consistency = "with-instance", from = core::Entry,
-           group_by = address, fold = sum(signed(amount)))]
-    struct LoanBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
-
-    #[view(key = account_id, consistency = "with-instance",
-           from = core::Entry, filter = "code == 'LOAN_OVERPAYMENT' && value_date >= state.year_start",
-           fold = sum(amount))]
-    struct OverpaidThisYear { account_id: AccountId, amount: Money }
-
-    #[view(key = account_id, consistency = "with-instance",
-           from = PaymentHoliday, fold = sum(months))]
-    struct HolidayMonthsTaken { account_id: AccountId, months: u8 }
-
-    #[view(key = account_id, consistency = "with-instance",
-           compose = [core::AccountStatus, LoanBalances, OverpaidThisYear, HolidayMonthsTaken],
-           derive = { outstanding: "LoanBalances[Principal] + LoanBalances[Due] + LoanBalances[Fees]" })]
-    struct LoanState;
-
-    /// Re-key: from a savings account to the mortgage it offsets.
-    #[view(key = offset_id, consistency = "eventual", from = OffsetLink)]
-    struct OffsetOf { offset_id: AccountId, mortgage_id: AccountId }
+// its items, in whichever of the crate's modules suit them
+/// Balance types a loan uses, beside core's.
+#[ledger::balances]
+pub enum LoanBalance {
+    Principal,
+    #[ledger::balance(scale = 12)] Accrued,     // interest, kept finer than pennies (models 5)
+    Due,                                // instalments fallen due, unpaid
+    Fees,
+    Incoming,                           // delivered credits land here; `credited` allocates them
 }
+
+/// The loan's terms: a facet of the core account (C15).
+#[extends(core::Account, when = "product_line = 'mortgages'")]
+pub struct LoanTerms {
+    #[effective] term_end: NaiveDate,
+    #[effective] repayment_day: u8,
+    #[effective] repayment: RepaymentType,          // Repayment | InterestOnly
+}
+
+/// What secures it: a facet of its own, so other loans need not have one.
+#[extends(core::Account, when = "product_line = 'mortgages'")]
+pub struct Security { property: PropertyRef, #[effective] valuation: Money }
+
+/// Savings accounts whose balances offset this mortgage's interest.
+/// A savings account offsets at most one mortgage: a claim, like a unique
+/// identifier, made before the commit.
+#[relation(Account as mortgage <-> Account as offset,
+           max_per_mortgage = 5, unique = "offset")]          // models 6
+#[action(create = LinkOffset, end = UnlinkOffset)]
+#[invariant("input.offset.status == 'Active'", reject = "offset-not-active")]
+#[invariant("input.offset.holders.all(h, h in state.borrowers)", reject = "not-the-borrowers")]
+pub struct OffsetLink { #[effective] since: NaiveDate }
+
+/// A payment holiday: starts and ends; six months in a mortgage's life.
+#[effective(key = account_id)]
+#[action(create = StartPaymentHoliday, end = EndPaymentHoliday)]
+#[invariant("months >= 1 && months <= 6")]
+#[invariant("state.holiday_months_taken + months <= 6", reject = "holiday-allowance-used")]
+pub struct PaymentHoliday { account_id: AccountId, from: NaiveDate, months: u8 }
+
+// Views: declared forms, no code (C26).
+#[view(key = account_id, consistency = "with-instance", from = core::Entry,
+       group_by = address, fold = sum(signed(amount)))]
+pub struct LoanBalances { account_id: AccountId, address: BalanceAddress, amount: Money }
+
+#[view(key = account_id, consistency = "with-instance",
+       from = core::Entry, filter = "code == 'LOAN_OVERPAYMENT' && value_date >= state.year_start",
+       fold = sum(amount))]
+pub struct OverpaidThisYear { account_id: AccountId, amount: Money }
+
+#[view(key = account_id, consistency = "with-instance",
+       from = PaymentHoliday, fold = sum(months))]
+pub struct HolidayMonthsTaken { account_id: AccountId, months: u8 }
+
+#[view(key = account_id, consistency = "with-instance",
+       compose = [core::AccountStatus, LoanBalances, OverpaidThisYear, HolidayMonthsTaken],
+       derive = { outstanding: "LoanBalances[Principal] + LoanBalances[Due] + LoanBalances[Fees]" })]
+pub struct LoanState;
+
+/// Re-key: from a savings account to the mortgage it offsets.
+#[view(key = offset_id, consistency = "eventual", from = OffsetLink)]
+pub struct OffsetOf { offset_id: AccountId, mortgage_id: AccountId }
 ```
 
 ```text
@@ -170,103 +171,130 @@ product version changes; every tracker's next accrual reads it.
 What channels can do with any loan, whatever its product
 ([operation schemas](contract-engine.md#operation-schemas)):
 
+An interface is a crate too: `lib.rs` lists its operations, and the rest is
+declared beside it:
+
 ```rust
-#[interface(name = "loan-account", model = lending)]   // 1.0.0
-mod loan_account {
-    #[operation]
-    struct LinkOffset { offset: AccountLocator }       // "iban:GB…", "acc_…": resolved by the engine
-    #[operation]
-    struct UnlinkOffset { offset: AccountLocator }
-    #[operation(returns = { months_taken: LoanState.holiday_months_taken })]
-    struct TakePaymentHoliday { from: NaiveDate, months: u8 }
-    #[operation]
-    struct Redeem { on: NaiveDate }
+// interfaces/loan-account/src/lib.rs
+mod operations; pub use operations::*;
 
-    #[query(returns = RedemptionQuote)]
-    struct QuoteRedemption { on: NaiveDate }
-    struct RedemptionQuote { principal: Money, interest: Money, erc: Money, total: Money }
+#[interface(name = "loan-account", model = lending,                  // 1.0.0
+            operations = [LinkOffset, UnlinkOffset, TakePaymentHoliday, Redeem, QuoteRedemption])]
+pub struct LoanAccount;
+```
 
-    #[rejections(LinkOffset)]
-    enum LinkRefused { OffsetNotActive, NotTheBorrowers, AlreadyOffsetting, TooManyOffsets }
-    #[rejections(TakePaymentHoliday)]
-    enum HolidayRefused { HolidayAllowanceUsed, InArrears }
+```rust
+// interfaces/loan-account/src/operations.rs
+#[operation]
+pub struct LinkOffset { pub offset: AccountLocator }   // "iban:GB…", "acc_…": resolved by the engine
+#[operation]
+pub struct UnlinkOffset { pub offset: AccountLocator }
+#[operation(returns = { months_taken: LoanState.holiday_months_taken })]
+pub struct TakePaymentHoliday { pub from: NaiveDate, pub months: u8 }
+#[operation]
+pub struct Redeem { pub on: NaiveDate }
 
-    #[event] struct InstalmentDue { amount: Money, due_on: NaiveDate }
-    #[event] struct PaymentAllocated { to_due: Money, overpaid: Money, charge: Money }
-    #[event] struct TrackerPeriodEnded { reverts_to: Rate }
-}
+#[query(returns = RedemptionQuote)]
+pub struct QuoteRedemption { pub on: NaiveDate }
+pub struct RedemptionQuote { pub principal: Money, pub interest: Money, pub erc: Money, pub total: Money }
+
+#[rejections(LinkOffset)]
+pub enum LinkRefused { OffsetNotActive, NotTheBorrowers, AlreadyOffsetting, TooManyOffsets }
+#[rejections(TakePaymentHoliday)]
+pub enum HolidayRefused { HolidayAllowanceUsed, InArrears }
+
+#[event] pub struct InstalmentDue { pub amount: Money, pub due_on: NaiveDate }
+#[event] pub struct PaymentAllocated { pub to_due: Money, pub overpaid: Money, pub charge: Money }
+#[event] pub struct TrackerPeriodEnded { pub reverts_to: Rate }
 ```
 
 ## 4. Definitions
 
 ### The mortgage
 
+```text
+products/offset-tracker/src/
+├── lib.rs           the contract: the interface it implements, its hooks, its approval role
+├── params.rs        margin, tracker end, base rate, allowance, ERC schedule
+└── schedules.rs     accrual, instalments, anniversaries, the tracker's end
+```
+
 ```rust
-#[definition(name = "offset-tracker", model = lending, implements = [loan_account])]   // 1.0.0
+// src/lib.rs
+use tkone_contract::prelude::*;
+use lending::LoanBalance;
+mod params; mod schedules;
+
+#[definition(name = "offset-tracker", model = lending, implements = [loan_account],   // 1.0.0
+             parameters = params::Params,
+             hooks(activation = open,                                // drawdown
+                   scheduled = scheduled,                            // accrue, instalment, anniversary, milestone
+                   delivered(ledger::Entry) = credited,              // a credit landed: repayments, overpayments
+                   correction(permits = [Book, Reverse]) = correct,
+                   upgrade = upgrade,                                // product switch
+                   closure = close),                                 // redemption
+             schedules = schedules::Rules)]
 #[identifiers(issue = ["mortgage-number"])]
 #[ledger(guard = Debits,                          // credits (repayments) arrive delivered; never refused
          credits_to = LoanBalance::Incoming)]     //   and land in Incoming, for `credited` to allocate
-mod offset_tracker {
-    approval_roles! {
-        /// Approves a margin renegotiated by more than 0.25%.
-        pricing_senior,
-    }
+pub struct OffsetTracker;
 
-    #[parameter]
-    const MARGIN: Parameter<Rate> = Parameter::commercial()
+approval_roles! {
+    /// Approves a margin renegotiated by more than 0.25%.
+    pricing_senior,
+}
+
+permits! {
+    Book, Reverse,
+    LinkOffset, UnlinkOffset, StartPaymentHoliday, EndPaymentHoliday,
+    Transition(Pending -> Active, Active -> Closed),
+    ScheduleChange,
+}
+```
+
+```rust
+// src/params.rs
+use crate::pricing_senior;
+
+#[parameters]
+impl Params {
+    pub const MARGIN: Parameter<Rate> = Parameter::commercial()
         .instance(Instance::required()                    // set at offer; renegotiated
             .approve_when(cel!("abs(new - old) > 0.0025"), pricing_senior))   // with a senior's approval
         .range(rate!(0), rate!(0.05));
-    #[parameter]
-    const TRACKER_END: Parameter<NaiveDate> = Parameter::commercial()
+    pub const TRACKER_END: Parameter<NaiveDate> = Parameter::commercial()
         .instance(Instance::required())
         .invariant(cel!("value > account.opened_on"), "tracker-end-before-opening");
-    #[parameter]
-    const BASE: Parameter<Ref<RateSeries>> = Parameter::commercial()   // the rate it tracks
+    pub const BASE: Parameter<Ref<RateSeries>> = Parameter::commercial()   // the rate it tracks
         .implementation(reference!("series:boe-base"));
-    #[parameter]
-    const OVERPAYMENT_ALLOWANCE: Parameter<Rate> = Parameter::commercial()   // of the balance at the year's start
+    pub const OVERPAYMENT_ALLOWANCE: Parameter<Rate> = Parameter::commercial()   // of the balance at the year's start
         .definition(rate!(0.10))
         .range(rate!(0), rate!(0.25));
-    #[parameter]
-    const ERC: Parameter<ErcSchedule> = Parameter::commercial()       // early repayment charge, by year
+    pub const ERC: Parameter<ErcSchedule> = Parameter::commercial()       // early repayment charge, by year
         .definition(ErcSchedule { bands: bounded![
             ErcBand { until_year: 1, rate: rate!(0.02) },
             ErcBand { until_year: 2, rate: rate!(0.01) },
         ] });
-    #[parameter]
-    const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()
+    pub const ACCOUNTS: Parameter<AccountingMapping> = Parameter::operational()
         .implementation(reference!("mortgages-uk"));
-    #[parameter]
-    const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
+    pub const ROUNDING: Parameter<Rounding> = Parameter::operational().implementation(Rounding::HalfUp);
+}
+```
 
-    #[hook(activation)]               fn open;          // drawdown
-    #[hook(scheduled)]                fn scheduled;     // accrue, instalment, anniversary, milestone
-    #[hook(delivered(ledger::Entry))] fn credited;      // a credit landed: repayments, overpayments
-    #[hook(correction, permits = [Book, Reverse])] fn correct;
-    #[hook(upgrade)]                  fn upgrade;       // product switch
-    #[hook(closure)]                  fn close;         // redemption
-
-    permits! {
-        Book, Reverse,
-        LinkOffset, UnlinkOffset, StartPaymentHoliday, EndPaymentHoliday,
-        Transition(Pending -> Active, Active -> Closed),
-        ScheduleChange,
-    }
-
-    schedules! {
-        time_zone: "Europe/London",
-        calendar: "GBLO",
-        start: 2026-01-01,
-        /// Interest, each business evening.
-        accrue:      "YY-MM-DD~SBT18:00:00",
-        /// Instalments fall due in the morning; each mortgage selects its day.
-        instalment:  "YY-MM-DD~SBT09:00:00",
-        /// The overpayment allowance resets on the opening date each year.
-        anniversary: "YY-MM-DD~SBT09:00:00",
-        /// One-off dates: the tracker period's end.
-        milestone:   "YY-MM-DD~SBT09:00:00",
-    }
+```rust
+// src/schedules.rs
+schedules! {
+    time_zone: "Europe/London",
+    calendar: "GBLO",
+    start: 2026-01-01,
+    /// Interest, each business evening.
+    accrue:      "YY-MM-DD~SBT18:00:00",
+    /// Instalments fall due in the morning; each mortgage selects its day.
+    instalment:  "YY-MM-DD~SBT09:00:00",
+    /// The overpayment allowance resets on the opening date each year.
+    anniversary: "YY-MM-DD~SBT09:00:00",
+    /// One-off dates: the tracker period's end.
+    milestone:   "YY-MM-DD~SBT09:00:00",
 }
 ```
 
@@ -277,14 +305,13 @@ it.
 ### The offset savings account
 
 ```rust
-#[definition(name = "offset-saver", model = deposits, implements = [deposit_account])]   // 1.0.0
+// products/offset-saver/src/lib.rs: small enough for one file
+#[definition(name = "offset-saver", model = deposits, implements = [deposit_account],   // 1.0.0
+             hooks(activation = open, closure = close))]
 #[ledger(guard = Debits)]
-mod offset_saver {
-    // Pays no interest: its balance reduces the linked mortgage's.
-    #[hook(activation)] fn open;
-    #[hook(closure)]    fn close;
-    permits! { Book, Reverse, Hold, Release, Transition(Active -> Closed) }
-}
+pub struct OffsetSaver;            // pays no interest: its balance reduces the linked mortgage's
+
+permits! { Book, Reverse, Hold, Release, Transition(Active -> Closed) }
 ```
 
 The savings product knows nothing about mortgages. The mortgage reads it.
@@ -313,21 +340,40 @@ The `linked` input on `scheduled` is the only place this product reads
 another account, and it declares exactly how: which relation, which field,
 as of when, how settled, how many.
 
+```text
+products/offset-tracker-impl/src/
+├── lib.rs           what it implements, and its own values
+├── interest.rs      accrual against the offset, instalments, the tracker's end (scheduled)
+├── payments.rs      allocation, overpayments and the ERC (credited)
+├── offsets.rs       linking and unlinking savings (link_offset, unlink_offset)
+├── corrections.rs   late facts (correct)
+└── lifecycle.rs     open, payment holidays, redemption, upgrade, close
+```
+
 ```rust
+// src/lib.rs
 use tkone_contract_sdk::prelude::*;
-use offset_tracker::{Action, Event, *};                     // generated
+mod interest; mod payments; mod offsets; mod corrections; mod lifecycle;
 
 #[implementation(of = offset_tracker, values(ROUNDING = Rounding::HalfUp))]
-impl offset_tracker::Contract for OffsetTracker {
-    #[requires(
-        view(LoanState),
-        ledger::balances(as_of = due),
-        linked(via = OffsetLink, read = ledger::balances.available, as_of = due,
-               settled, max = 5, as = offsets),   // other accounts: read-only, complete to the due (C5)
-        series(BASE, as_of = due),
-        effective(PaymentHoliday, active_at = due, as = holidays),
-    )]
-    fn scheduled(ctx: &scheduled::Ctx, run: Run) -> Outcome {
+pub struct OffsetTrackerImpl;
+```
+
+```rust
+// src/interest.rs
+use offset_tracker::{hooks, Action, *};                     // generated
+
+#[requires(
+    view(LoanState),
+    ledger::balances(as_of = due),
+    linked(via = OffsetLink, read = ledger::balances.available, as_of = due,
+           settled, max = 5, as = offsets),   // other accounts: read-only, complete to the due (C5)
+    series(BASE, as_of = due),
+    effective(PaymentHoliday, active_at = due, as = holidays),
+)]
+#[requires]                                           // no inputs: sets this hook's Ctx all the same
+impl hooks::Scheduled for OffsetTrackerImpl {
+    fn scheduled(ctx: &Self::Ctx, run: Run) -> Outcome {
         let p = &ctx.params;
         let mut out = Outcome::new();
 
@@ -358,20 +404,28 @@ impl offset_tracker::Contract for OffsetTracker {
                     credit: (This, Accrued, interest),
                     credit: (This, Principal, capital),
                 })
-                .emit(Event::InstalmentDue { amount: interest + capital, due_on: run.due().date() });
+                .emit(InstalmentDue { amount: interest + capital, due_on: run.due().date() });
         }
 
         if run.is_for(Rule::Milestone) {             // the tracker period ends
-            out = out.emit(Event::TrackerPeriodEnded { reverts_to: standard_variable(ctx) });
+            out = out.emit(TrackerPeriodEnded { reverts_to: standard_variable(ctx) });
         }
         out
     }
+}
 
-    /// Money arrived: a direct debit, a transfer, a lump sum. Never refused:
-    /// allocated to what is due first, then overpayment, with a charge beyond
-    /// the allowance in the tracker period.
-    #[requires(view(LoanState))]
-    fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Outcome {
+```
+
+```rust
+// src/payments.rs
+use offset_tracker::{hooks, Action, *};
+
+/// Money arrived: a direct debit, a transfer, a lump sum. Never refused:
+/// allocated to what is due first, then overpayment, with a charge beyond
+/// the allowance in the tracker period.
+#[requires(view(LoanState))]
+impl hooks::Credited for OffsetTrackerImpl {
+    fn credited(ctx: &Self::Ctx, c: Delivery<ledger::Entry>) -> Outcome {
         let (p, s) = (&ctx.params, &ctx.views.loan_state);
         let to_due = c.amount.min(s.due);
         let over = c.amount - to_due;
@@ -390,29 +444,49 @@ impl offset_tracker::Contract for OffsetTracker {
                 credit: ("erc_income", erc),
             });
         }
-        out.emit(Event::PaymentAllocated { to_due, overpaid: over, charge: erc })
+        out.emit(PaymentAllocated { to_due, overpaid: over, charge: erc })
     }
+}
 
-    #[requires(view(LoanState),
-               instance(from = op.offset, read = [status, holders]))]   // resolved locator; eventual
-    fn link_offset(ctx: &link_offset::Ctx, op: LinkOffset) -> Result<Outcome, LinkRefused> {
+```
+
+```rust
+// src/offsets.rs
+use offset_tracker::{hooks, Action, *};
+
+#[requires(view(LoanState),
+           instance(from = op.offset, read = [status, holders]))]   // resolved locator; eventual
+impl hooks::LinkOffset for OffsetTrackerImpl {
+    fn link_offset(ctx: &Self::Ctx, op: LinkOffset) -> Result<Outcome, LinkRefused> {
         // The model's invariants check status and holders, and the claim makes
         // the offset unique; the hook decides only whether the product allows it.
         Ok(Outcome::new().act(Action::LinkOffset { offset: ctx.instances.offset.id,
                                                    since: ctx.time.due.date() }))
     }
+}
 
-    #[requires(view(LoanState), series(BASE, as_of = facts.earliest),
-               ledger::entries(since = facts.earliest, until = due, max = 5000))]
-    fn correct(ctx: &correct::Ctx, facts: MovedFacts) -> Outcome {
+```
+
+```rust
+// src/corrections.rs
+use offset_tracker::{hooks, Action, *};
+
+#[requires(view(LoanState), series(BASE, as_of = facts.earliest),
+           ledger::entries(since = facts.earliest, until = due, max = 5000))]
+impl hooks::Correct for OffsetTrackerImpl {
+    fn correct(ctx: &Self::Ctx, facts: MovedFacts) -> Outcome {
         // Recompute the accruals the moved facts touch; book the difference.
         let recomputed = reaccrue(&facts, ctx);
         Outcome::new().book(adjustment(recomputed - ctx.ledger.entries.accrued_on(&facts.days)))
     }
-
-    // take_payment_holiday, redeem, open, upgrade, close …
-    // quote_redemption: #[requires(view(LoanState), series(BASE, as_of = q.on))]
 }
+
+```
+
+```rust
+// src/lifecycle.rs, src/offsets.rs (unlink_offset): the remaining hooks, in the same shape
+// impl hooks::Open, TakePaymentHoliday, Redeem, Upgrade, Close for OffsetTrackerImpl { … }
+// quote_redemption: #[requires(view(LoanState), series(BASE, as_of = q.on))]
 ```
 
 ```text
@@ -426,7 +500,7 @@ $ cargo component build --release        # wasm32-wasip2, a component of the off
 fn offset_halves_the_interest() {
     let mut sim = Simulation::new()
         .model("lending@1.0.0").definition("offset-tracker@1.0.0")
-        .component("target/wasm32-wasip2/release/offset_tracker.wasm")
+        .component("target/wasm32-wasip2/release/offset_tracker_impl.wasm")
         .reference("reference/*.yaml");
 
     let saver = sim.open("offset-saver@1", opening! { deposit: gbp(100_000) });

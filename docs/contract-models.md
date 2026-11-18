@@ -19,7 +19,7 @@ from its first version:
 | 4 | [Personal data is classified, and can be erased](#4-personal-data-is-classified-and-can-be-erased) | `#[personal]`, `subject`, `retain` | C19 |
 | 5 | [Numbers are exact](#5-numbers-are-exact) | `Money`, `Rate`, `Decimal<S>`; explicit rounding | C20 |
 | 6 | [Every collection is bounded](#6-every-collection-is-bounded) | `max` on relations, collections and `requires` | C21 |
-| 7 | [Hot accounts are not serialised](#7-hot-accounts-are-not-serialised) | usually nothing; `#[ledger(guard)]` per definition | C22 |
+| 7 | [Hot instances are not serialised](#7-hot-instances-are-not-serialised) | usually nothing; `#[guard]` per definition (`#[ledger(guard)]` for accounts) | C22 |
 | 8 | [Every record names its schema](#8-every-record-names-its-schema) | nothing | C23 |
 | 9 | [Identities are typed, and survive merges](#9-identities-are-typed-and-survive-merges) | `#[identifiers]`; schemes as reference data; idempotency keys | C24 |
 
@@ -223,12 +223,17 @@ float gives two components, or a component and its replay, different cents.
 | `Decimal<S>` | a fixed-point decimal of scale `S` | for anything else exact |
 | `Quantity<U>` | a decimal amount of a unit | other domains: `kWh`, `GB`, `minutes` |
 
+`Decimal<S>` and `Quantity<U>` are the kernel's. `Money` and `Rate`, with
+their CEL functions (`zero(currency)`), come with the ledger extension
+(C40): a model that requires `ledger@^1` may use them; a metering model
+never sees them.
+
 **Rounding is never implicit.** An operation that can produce a value finer
 than its type returns `Unrounded<T>`. Only `T` can be booked, except to a
 balance type the model declares with extra precision:
 
 ```rust
-#[balance(scale = 12)]            // in the model: accruals are kept finer than pennies
+#[ledger::balance(scale = 12)]            // in the model: accruals are kept finer than pennies
 Accrued,
 
 // each day, in the end-of-day hook:
@@ -263,8 +268,8 @@ struct Booking { booking_id: BookingId, #[bounded(max = 1000)] entries: Vec<Entr
 ```
 
 ```rust
-#[requires(entries(since = last(Rule::Capitalise), until = due, max = 2000))]
-fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome { /* … */ }
+#[requires(ledger::entries(since = last(Rule::Capitalise), until = due, max = 2000))]
+fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome { /* … */ }
 ```
 
 - **A `#[requires]` without a bound is refused at build and registration.** Bounds come
@@ -278,20 +283,25 @@ fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome { /* … *
   (`(instance, month)` by default) so no partition grows for thirty years.
   This is storage; authors do not see it.
 
-## 7. Hot accounts are not serialised
+## 7. Hot instances are not serialised
 
-Commits are one writer per instance (C6). An account that is part of almost
-every booking (fee income, suspense, a merchant receiving card settlements)
-would make every commit in the bank wait for it.
+Commits are one writer per instance (C6). An instance touched by almost
+every commit (in banking, fee income, suspense, a merchant receiving card
+settlements; in loyalty, the scheme's points pool) would make every commit
+wait for it.
 
 The rule: **a write is serialised only if a decision reads the value it
-changes.** A debit checked against a balance must be. A credit never makes a
-passed check fail, and entries to accounts with no limit have no check, so
-neither needs to wait: they are **delivered**. What the author writes is
-usually nothing:
+changes.** A model declares **quantities** (facts folded per instance), and a
+definition declares **guards** on them, by direction. A write in a guarded
+direction is checked in order; a write in an unguarded direction never makes
+a passed check fail, and a quantity with no guard has no check, so neither
+needs to wait: they are **delivered**. These are kernel mechanisms
+([hot instances](hot-accounts.md)); the ledger names them for accounts, so
+what a banking author writes is usually nothing:
 
 ```rust
 // Customer accounts: debits are checked against the balance, in order.
+// Expands to #[guard(ledger::Balance, decreases = "...")].
 #[definition(name = "easy-saver", version = "2.0.0", model = "deposits@^3.1")]
 #[ledger(guard = "debits")]               // the default; may be omitted
 mod easy_saver { /* ... */ }
@@ -303,9 +313,9 @@ mod fee_income { /* ... */ }
 ```
 
 The model refuses what would break the rule: a hook may read an unguarded
-account's balance only from an `eventual` view, with a stated lag, never as
-a check. How delivery is stored and read, why it is safe, and what it costs:
-[hot accounts](hot-accounts.md).
+quantity (an internal account's balance) only from an `eventual` view, with
+a stated lag, never as a check. How delivery is stored and read, why it is safe, and what it costs:
+[hot instances](hot-accounts.md).
 
 ## 8. Every record names its schema
 
@@ -426,7 +436,7 @@ And callers can use any identifier where a key is accepted:
 
 ```text
 GET  /accounts/iban:GB33BUKB20201555555555             → acc_01JD3K…
-POST /accounts/sort-code-account:202015-55555555/operations/withdraw
+POST /instances/sort-code-account:202015-55555555/operations/withdraw
 $ tkone party show passport:GB:123456789                 # entitled roles only
 ```
 
@@ -511,7 +521,7 @@ struct AccountState;
 | **Compose** | views of the same key | one row with all their fields, plus formulas over them | `AccountState`: what a hook reads about its account |
 
 - **Folds are mergeable on purpose.** Every aggregation can be computed in
-  parts and combined, which is what lets [hot accounts](hot-accounts.md) sum
+  parts and combined, which is what lets [hot instances](hot-accounts.md) sum
   sharded inboxes and the day's close write checkpoints instead of folding
   from the first entry.
 - **Most "computed" state is a fold once balance types are chosen well.**
@@ -578,7 +588,7 @@ Worth having; none is expensive to add once data exists:
 | **Provenance as a guarantee** | every view value traceable to the hook, implementation, inputs and reference data that produced it; mostly present already (C3, C17) |
 | **Docs and owners in the schema** | the schema doubles as the catalogue: who owns a field, why it is deprecated |
 | **Generated test data** | generators from the schema, respecting bounds and code sets, for [simulation](contract-engine.md#simulation) |
-| **Escrowed counters** | bounded resources (stock, credit lines shared across accounts) split into allowances per shard, rebalanced; the bounded cousin of [hot accounts](hot-accounts.md) |
+| **Escrowed counters** | bounded resources (stock, credit lines shared across accounts) split into allowances per shard, rebalanced; the bounded cousin of [hot instances](hot-accounts.md) |
 
 ## Decided, so they are not reopened by accident
 

@@ -105,7 +105,7 @@ mod core {
 
     /// The balance types every account has. Domains add their own; a balance
     /// type is named with its model (`lending::Principal`).
-    #[balances]
+    #[ledger::balances]
     enum CoreBalance { Available }
 
     /// Entries that net to zero, booked together. Its meaning needs code:
@@ -230,7 +230,7 @@ mod core {
 | **Hold** | authorised, not booked; reduces the available balance |
 | **Balance address** | account, balance type, currency |
 | **Home** | the instance whose operation produced a booking, where guarded debits are checked |
-| **Delivery** | another account's entries, inserted into its inbox ([hot accounts](hot-accounts.md)) |
+| **Delivery** | another account's entries, inserted into its inbox ([hot instances](hot-accounts.md)) |
 | **Logical account** | a name a contract books to (`loan_interest_income`), mapped to a ledger account |
 
 ### Transaction codes the examples use
@@ -254,8 +254,8 @@ Instant-access savings, and the offset saver.
 ```rust
 #[model(name = "deposits", version = "3.2.0", requires = "core@^1.5")]
 mod deposits {
-    #[balances]
-    enum DepositBalance { #[balance(scale = 12)] Accrued }   // interest owed, until capitalised
+    #[ledger::balances]
+    enum DepositBalance { #[ledger::balance(scale = 12)] Accrued }   // interest owed, until capitalised
 
     #[extends(core::Account, when = "product_line = 'savings'")]
     struct DepositTerms {
@@ -287,8 +287,8 @@ mod deposits {
 ```rust
 #[model(name = "term-deposits", version = "1.0.0", requires = "core@^1.5")]
 mod term_deposits {
-    #[balances]
-    enum TermDepositBalance { Principal, #[balance(scale = 12)] Accrued }
+    #[ledger::balances]
+    enum TermDepositBalance { Principal, #[ledger::balance(scale = 12)] Accrued }
 
     #[extends(core::Account, when = "product_line = 'term-deposits'")]
     struct DepositTerms {
@@ -311,10 +311,10 @@ status; the mortgage also its security, offsets and payment holidays.
 ```rust
 #[model(name = "lending", version = "1.1.0", requires = "core@^1.5")]
 mod lending {
-    #[balances]
+    #[ledger::balances]
     enum LoanBalance {
         Principal,
-        #[balance(scale = 12)] Accrued,              // interest, finer than pennies
+        #[ledger::balance(scale = 12)] Accrued,              // interest, finer than pennies
         Due,                                         // instalments fallen due, unpaid
         Fees,
         Incoming,                                    // payments, until allocated

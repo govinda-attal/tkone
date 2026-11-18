@@ -4,46 +4,57 @@ Status: **architecture only**. Part of the [contract engine](contract-engine.md)
 The sketches show what an implementer writes and what callers receive; they
 are illustrative, not APIs.
 
-A hook is a pure function. It gets a payload, a snapshot and the resolved
-parameters, and returns an **outcome**: the actions it wants taken and the
+A hook is a pure function of two arguments: a **context** the engine
+prepared (the instance, the time, the caller, the resolved parameters, and
+exactly the reads its `#[requires]` declares) and the **message** that
+started it (an operation, a run, a delivery). It returns an **outcome**: the actions it wants taken and the
 events it wants told. The engine validates the outcome against the
 definition and the model, and commits it. Everything a hook can say is a
 declared type; nothing is a string or a blob the engine has to trust.
 
 ## Hooks and what each may return
 
-| Hook | Runs when | Gets | Returns |
+| Hook | Runs when | Message | Returns |
 |---|---|---|---|
-| **operation** (one per `#[operation]`) | a caller invokes it | the payload, its snapshot | `Result<Outcome, Rejection>` |
-| **query** (one per `#[query]`) | a caller asks | the payload, its snapshot | `Result<T, Rejection>`: a value, never actions |
-| `scheduled` | tempo's run is due | the run (due, sources, lateness), its snapshot | `Outcome`: it cannot refuse a due |
-| `credited` | a delivered credit lands ([hot accounts](hot-accounts.md)) | the entries, its snapshot | `Outcome`; or, where credits are guarded, `Result<Outcome, CreditRefused>`: a refusal is returned to the sender |
-| `activation`, `closure` | the account opens, closes | the payload, its snapshot | `Result<Outcome, Rejection>` |
-| `upgrade` | the instance is rebound (C9) | the old state | `Result<Outcome, Rejection>` |
-| `correction` | facts land before results already computed (C14) | the facts that moved the past | `Outcome` |
+| **operation** (one per `#[operation]`) | a caller invokes it | the operation (`Withdraw`) | `Result<Outcome, Rejection>` |
+| **query** (one per `#[query]`) | a caller asks | the query (`QuoteWithdrawal`) | `Result<T, Rejection>`: a value, never actions |
+| `scheduled` | tempo's run is due | `Run`: due, sources, lateness | `Outcome`: it cannot refuse a due |
+| `delivered(T)` | a fact of type `T` delivered from another instance's commit lands ([hot instances](hot-accounts.md)) | `Delivery<T>` | `Outcome`; or, where that direction is guarded with acceptance, `Result<Outcome, Refusal>`: a refusal is compensated to the sender |
+| `activation`, `closure` | the instance opens, closes | `Opening`, `Closing` | `Result<Outcome, Rejection>` |
+| `upgrade` | the instance is rebound (C9) | `Upgrade`: from and to versions, the old state | `Result<Outcome, Rejection>` |
+| `correction` | facts land before results already computed (C14) | `MovedFacts` | `Outcome` |
+
+Every hook has the same shape, `fn hook(ctx: &hook::Ctx, message) -> …`:
+[the hook signature](#the-hook-signature).
 
 An operation is handled by **one hook**, named after it: `Withdraw` is
 handled by `withdraw`. It checks and acts, or refuses. There is no separate
 pre-hook to validate and post-hook to act; the check and the action belong
 together, against the same snapshot.
 
-Money reaches an account two ways, and each has its hook:
+A write reaches an instance two ways, and each has its hook:
 
-- **An operation on the account** (a cash deposit at a branch) is handled by
+- **An operation on the instance** (a cash deposit at a branch) is handled by
   that operation's hook, which may refuse it.
-- **A credit delivered** from another account's booking (a transfer in) is
-  handled by `credited`. On most accounts it reacts to money already counted.
-  On an account whose definition **guards credits** (an ISA's annual
-  allowance, a fixed-term deposit after its funding window, an account under
-  a court order), the credit is pending until `credited` accepts it; if it
-  refuses, the engine books a return to the sender
-  ([guarded credits](hot-accounts.md#guarded-credits)).
+- **A fact delivered** from another instance's commit (a transfer in) is
+  handled by the hook the definition declares for that fact type,
+  `#[hook(delivered(T))]`. On most instances it reacts to what already
+  counts. Where the definition **guards that direction with acceptance**,
+  the fact is pending until the hook accepts it; if it refuses, the kernel
+  commits the fact's compensation back to the sender
+  ([delivery with acceptance](hot-accounts.md#delivery-with-acceptance)).
+
+The kernel names the hook kind; the definition names the hook. With the
+ledger, delivered entries are credits, and the hook is conventionally
+`credited`: an ISA that refuses subscriptions over its allowance
+(`#[ledger(guard = "debits-and-credits")]`, `#[hook(delivered(ledger::Entry))] fn credited;`):
 
 ```rust
-fn credited(c: Credit, input: input::Credited, p: Params) -> Result<Outcome, CreditRefused> {
-    let subscribed = input.state.subscribed_this_tax_year;
-    if subscribed + c.amount > p.ANNUAL_ALLOWANCE {
-        return Err(CreditRefused::AllowanceExceeded { remaining: p.ANNUAL_ALLOWANCE - subscribed });
+#[requires(view(IsaState))]
+fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused> {
+    let (allowance, subscribed) = (ctx.params.ANNUAL_ALLOWANCE, ctx.views.isa_state.subscribed_this_tax_year);
+    if subscribed + c.amount > allowance {
+        return Err(CreditRefused::AllowanceExceeded { remaining: allowance - subscribed });
     }
     Ok(Outcome::new())          // accepted: the credit counts from now
 }
@@ -52,6 +63,49 @@ fn credited(c: Credit, input: input::Credited, p: Params) -> Result<Outcome, Cre
 A `scheduled` or `correction` hook that cannot do its work does not reject:
 it returns an empty outcome, or fails, and a failure is an incident for an
 operator (D15's `stale_after` covers a due that keeps failing).
+
+## The hook signature
+
+A hook takes two arguments and returns one value:
+
+```rust
+fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused>
+fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome
+fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused>
+fn quote_withdrawal(ctx: &quote_withdrawal::Ctx, q: QuoteWithdrawal) -> Result<WithdrawalQuote, QuoteRefused>
+```
+
+- **The message is only what started the hook:** what the caller sent, the
+  run tempo fired, the fact that was delivered. Nothing the engine fetched
+  is in it.
+- **The context is everything the engine prepared,** and nothing the caller
+  sent. Its type is generated per hook from `#[requires]`, so a hook cannot
+  read what it did not declare: that does not compile.
+
+| `ctx.` | Holds | From |
+|---|---|---|
+| `instance` | the instance's id, its definition and model versions, and its entity as the model declares it, with facets (`ctx.instance.status`, `ctx.instance.terms`) | always |
+| `time` | the due, the recorded time, the business date in the definition's calendar | always |
+| `caller` | the principal, its roles and channel; tempo for a run; the sender for a delivery | always |
+| `params` | the parameters, resolved as of the due and typed (C8, C31) | always |
+| `trace` | the operation's id, idempotency key and correlation | always |
+| `views.<view>` | `view(V)`: `ctx.views.account_state` | `#[requires]` |
+| `instances.<field>` | `instance(from = terms.pay_to, ..)`: `ctx.instances.pay_to`, named after the field it comes from | `#[requires]` |
+| `linked.<as>` | `linked(via, .., as = offsets)`: `ctx.linked.offsets` | `#[requires]` |
+| `series.<param>`, `effective.<as>` | reference data and effective records | `#[requires]` |
+| `facets.<facet>` | operation facets the definition accepts ([extending the base](extending-the-base.md#5-input-on-a-base-operation-operation-facets)) | `#[requires]` |
+| `ledger.balances`, `ledger.entries` | inputs contributed by an extension, under its name | `#[requires]` |
+
+**The outcome is returned, not written to the context.** The hook stays a
+pure function: a test asserts on a value; a refusal cannot leave half-built
+actions behind; and the signature itself says what C1 says, that contracts
+return actions and the engine writes. The outcome's builder
+(`Outcome::new().book(..).act(..).emit(..)`) gives the convenience a mutable
+context would.
+
+For tests, the SDK generates a builder per context:
+`withdraw::Ctx::builder().views(..).params(..).build()`, so a hook can be
+unit-tested without a simulation.
 
 ## The outcome
 
@@ -68,24 +122,22 @@ In WIT, generated per definition:
 ```wit
 record outcome { actions: list<action>, events: list<event> }
 
-withdraw:    func(op: withdraw, input: withdraw-input, params: params) -> result<outcome, withdraw-refused>;
-end-of-day:  func(run: run, input: end-of-day-input, params: params) -> outcome;
-quote-withdrawal: func(q: quote-withdrawal, input: quote-input, params: params) -> result<withdrawal-quote, quote-refused>;
+withdraw:         func(ctx: withdraw-ctx, op: withdraw) -> result<outcome, withdraw-refused>;
+end-of-day:       func(ctx: end-of-day-ctx, run: run) -> outcome;
+quote-withdrawal: func(ctx: quote-withdrawal-ctx, q: quote-withdrawal) -> result<withdrawal-quote, quote-refused>;
 ```
 
 An implementation, with the SDK:
 
 ```rust
 use tkone_contract_sdk::prelude::*;
-use easy_saver::{Action, Event, Params, Rule, Withdraw, WithdrawRefused, input}; // generated
+use easy_saver::{Action, Event, Rule, Withdraw, WithdrawRefused, end_of_day, withdraw}; // generated
 
 #[implementation(of = "easy-saver@2.1.0")]
 impl easy_saver::Contract for Saver {
     #[requires(view(AccountState))]
-    fn withdraw(op: Withdraw, input: input::Withdraw, p: Params)
-        -> Result<Outcome, WithdrawRefused>
-    {
-        let available = input.state.available;
+    fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> {
+        let available = ctx.views.account_state.available;
         if op.amount > available {
             return Err(WithdrawRefused::InsufficientFunds { available });
         }
@@ -96,14 +148,15 @@ impl easy_saver::Contract for Saver {
         }))
     }
 
-    #[requires(view(AccountState), balances(as_of = due))]
-    fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome {
+    #[requires(view(AccountState), ledger::balances(as_of = due))]
+    fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome {
+        let (p, balances) = (&ctx.params, &ctx.ledger.balances);
         let mut out = Outcome::new();
         if run.is_for(Rule::Accrue) {
-            out = out.book(accrual(&input.balances, p.RATE, run.due()));
+            out = out.book(accrual(balances, p.RATE, run.due()));
         }
         if run.is_for(Rule::Capitalise) {
-            let interest = input.balances.accrued.round(p.ROUNDING);
+            let interest = balances.accrued.round(p.ROUNDING);
             out = out
                 .book(capitalisation(interest))
                 .emit(Event::InterestCapitalised { amount: interest, period: run.period() });
@@ -127,11 +180,13 @@ banking's. It comes in three tiers:
 |---|---|---|---|---|
 | **1. Kernel primitives** | the changes storage can make to any model's kinds | the engine | the engine | closed, and small |
 | **2. Declared actions** | a domain's named actions: a primitive, its payload, its invariants | model crates | the model | open: any domain |
-| **3. Extensions** | actions whose meaning needs code: the ledger | Rust crates compiled into the engine build | the extension | open, but rare and trusted |
+| **3. Extensions** | actions whose meaning needs code: the ledger's net-to-zero bookings | Rust crates compiled into the engine build | the extension | open, but rare and trusted |
 
 The engine knows nothing about money. Banking is the core model's declared
-actions plus the ledger extension; a metering or insurance product is its own
-models, with or without an extension of its own.
+actions plus the ledger extension; a metering, loyalty or insurance product
+is its own models, with or without an extension of its own. Quantities,
+guards and delivery, which make busy instances cheap, are the kernel's, not
+the ledger's ([hot instances](hot-accounts.md)).
 
 ### 1. Kernel primitives
 
@@ -141,11 +196,16 @@ models, with or without an extension of its own.
 | `Set` | an `#[effective]` attribute | a new version, effective from a date |
 | `Create`, `End` | an `#[effective]` entity: something that starts and stops | the entity, and its end |
 | `Transition` | a state machine declared in a model | the state, effective from the due |
-| `Deliver` | a fact for another instance | an insert into its inbox, unguarded ([hot accounts](hot-accounts.md)) |
+| `Deliver` | a fact for another instance | an insert into its inbox; pending if it writes a quantity in a direction guarded with acceptance ([hot instances](hot-accounts.md)) |
 | `ScheduleChange` | the instance's tempo set | its next version (D12) |
 
 These mirror what the store can do (C12, C13), which is why they rarely
-change. `Emit`, for events, sits beside them in the outcome.
+change. `Emit`, for events, sits beside them in the outcome. Beside the
+primitives, the kernel owns the mechanisms they rely on: **quantities**
+folded from facts, **guards** on them, inboxes sharded and folded at each
+period's close, **compensation** of refused deliveries, and the rare
+**joint** commit across two instances
+([hot instances](hot-accounts.md)). None of them knows a domain.
 
 ### 2. Declared actions
 
@@ -216,10 +276,14 @@ mod metering {
 
 ### 3. Extensions
 
-Some meanings cannot be a primitive plus invariants. A booking is spread
-across accounts; its credits are delivered; a guarded debit is re-checked
-against sharded balances; the day's close folds inboxes and reconciles. That
-is an **extension**, compiled into the engine build:
+Some meanings cannot be a primitive plus invariants: a booking's entries
+must net to zero per currency, its amounts must fit each currency's minor
+units, and its logical accounts must resolve through the accounting mapping
+as of the due. That is an **extension**, compiled into the engine build.
+
+An extension brings **vocabulary**; the kernel keeps every **mechanism**.
+So the trait lets an extension contribute everything a model author or a
+hook would otherwise find hard-coded in the engine:
 
 ```rust
 pub trait Extension {
@@ -227,19 +291,35 @@ pub trait Extension {
     const VERSION: Version;
 
     /// The actions it gives models, with their payload types.
-    fn actions(&self) -> &[ActionSpec];
+    fn actions(&self) -> &[ActionSpec];          // ledger.book, ledger.reverse
+    /// The inputs hooks may require, resolved by the kernel's fetchers.
+    fn inputs(&self) -> &[InputSpec];            // ledger::balances(as_of), ledger::entries(since, until, max)
+    /// Model and definition attributes, expanded to kernel declarations.
+    fn attributes(&self) -> &[AttrSpec];         // #[ledger::balances] -> #[quantity]; #[ledger(guard)] -> #[guard]
+    /// Types and functions for CEL invariants and guards.
+    fn cel(&self) -> CelLibrary;                 // Money, Rate, zero(currency), currency arithmetic
+    /// State of its own, beside the kernel's, if it needs any.
+    fn state(&self) -> &[StateSpec];             // the ledger: none; checkpoints are the kernel's
+
     /// Checks against the snapshot; a violation is a typed rejection.
     fn validate(&self, action: &ExtAction, snapshot: &Snapshot) -> Result<(), Violation>;
-    /// The writes, in kernel primitives: appends at home, deliveries elsewhere.
+    /// The writes, in kernel primitives: facts per instance; the kernel picks home and deliveries.
     fn plan(&self, action: &ExtAction, snapshot: &Snapshot) -> Vec<Primitive>;
-    /// Work at a business day's close: checkpoints, reconciliation.
-    fn close(&self, day: BusinessDate, store: &dyn ReadStore) -> CloseReport;
+    /// The compensation for a delivered fact that was refused.
+    fn compensate(&self, fact: &Fact, refusal: &Refusal) -> Vec<Primitive>;   // a return booking
+    /// Its own checks at a period's close, after the kernel's.
+    fn close(&self, period: Period, store: &dyn ReadStore) -> CloseReport;   // trial balance
 }
 ```
 
 - **Extensions plan; the engine writes.** An extension turns its action into
   kernel primitives, so storage, journals, views and events stay the
-  engine's, on every store.
+  engine's, on every store. Guards are checked by the kernel on what the
+  plan writes, not by the extension.
+- **Vocabulary is namespaced.** Everything an extension contributes is
+  named with it (`ledger::balances`, `#[ledger::balances]`,
+  `ledger::Entry`), so a model or hook shows which extension it depends on,
+  and a kernel name never means money.
 - **Required by models, checked at registration.** A model declares the
   extensions it needs (`extensions = ["ledger@^1"]`); applying it to an
   engine without them is refused, as an unapplied model version is (C10).
@@ -271,11 +351,13 @@ pub enum AccountRef {
 
 | Action | The ledger checks | It plans |
 |---|---|---|
-| `ledger.book` | entries net to zero per currency; amounts in the currency's minor units (or a balance type's declared scale); logical accounts resolve as of the due; `Input` accounts were inputs; a guarded debit leaves the balance within its limit, whatever the hook thought | `Append` the booking at home; `Deliver` each other account's entries (C22) |
+| `ledger.book` | entries net to zero per currency; amounts in the currency's minor units (or a balance type's declared scale); logical accounts resolve as of the due; `Input` accounts were inputs | the booking, and each account's entries as facts for that instance; the kernel homes it and delivers the rest by their guards (C22) |
 | `ledger.reverse` | the booking is this instance's and not already reversed | the same, with opposite entries, naming the first |
 
-The ledger re-checks the limit the hook already checked: the hook's check is
-product logic; the ledger's is an invariant, in reviewed code.
+That is the whole of the ledger. A guarded debit leaving a balance beyond
+its limit is refused by the **kernel's** guard, whatever the hook thought:
+the hook's check is product logic; the guard is an invariant, in reviewed
+code, and the same for points, stock or any other quantity.
 
 ### What a hook sees
 
@@ -413,7 +495,7 @@ struct Withdraw { amount: Money, channel: Channel }
 200 OK
 {
   "instance_version": 1843,
-  "bookings": ["bkg_01JD…"],
+  "created": { "ledger::Booking": ["bkg_01JD…"] },
   "result": { "available": { "minor": "120000", "currency": "GBP" }, "holds": [] }
 }
 ```
@@ -424,8 +506,9 @@ struct Withdraw { amount: Money, channel: Channel }
   view.
 - **Typed per operation, with no code.** It comes from views, so it cannot
   disagree with what a read returns a moment later.
-- **The receipt is always there:** the instance's new version and the
-  bookings made, whether or not `returns` is declared.
+- **The receipt is always there:** the instance's new version and the ids
+  of the facts it created, by type (here, the ledger's bookings), whether or
+  not `returns` is declared.
 
 ## Queries
 
@@ -443,7 +526,7 @@ enum QuoteRefused { Closed }
 ```
 
 ```text
-POST /accounts/acc_01JD3K…/queries/quote-withdrawal
+POST /instances/acc_01JD3K…/queries/quote-withdrawal
 { "amount": { "minor": "500000", "currency": "GBP" }, "on": "2026-12-01" }
 
 200 OK

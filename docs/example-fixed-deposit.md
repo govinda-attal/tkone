@@ -42,10 +42,10 @@ facet holding its terms, and one view.
 ```rust
 #[model(name = "term-deposits", version = "1.0.0", requires = "core@^1.5")]
 mod term_deposits {
-    #[balances]
+    #[ledger::balances]
     enum DepositBalance {
         Principal,
-        #[balance(scale = 12)] Accrued,     // interest, finer than pennies until paid
+        #[ledger::balance(scale = 12)] Accrued,     // interest, finer than pennies until paid
     }
 
     /// The deposit's terms: a facet of the core account.
@@ -127,15 +127,15 @@ mod fixed_12m {
     struct QuoteMaturity;
     struct MaturityQuote { principal: Money, interest: Money, total: Money, on: NaiveDate }
 
-    #[rejections(Credit)]
+    #[rejections(credited)]                       // the delivered hook's refusals
     enum CreditRefused { FundingClosed, AboveMaximum { room: Money } }
 
     #[event] struct Funded { amount: Money }
     #[event] struct Matured { principal: Money, interest: Money, paid_to: AccountId }
 
-    #[hook(activation)] fn open;
-    #[hook(credited)]   fn credited;         // funding: accept or refuse
-    #[hook(scheduled)]  fn scheduled;        // accrue, funding-close, maturity
+    #[hook(activation)]               fn open;
+    #[hook(delivered(ledger::Entry))] fn credited;    // a credit landed: accept or refuse (funding)
+    #[hook(scheduled)]                fn scheduled;   // accrue, funding-close, maturity
 
     permits! {
         Book,
@@ -166,7 +166,7 @@ mod fixed_12m {
   ([hooks](contract-hooks.md)).
 - **Guarded credits.** Money arriving is pending until `credited` accepts it,
   so a transfer after the funding window, or above the maximum, is returned
-  to the sender ([guarded credits](hot-accounts.md#guarded-credits)).
+  to the sender ([delivery with acceptance](hot-accounts.md#delivery-with-acceptance)).
 - **`permits!`** lists the only actions the code may return; anything else
   does not compile ([actions](contract-hooks.md#actions)).
 
@@ -189,39 +189,43 @@ pub struct Schedules { /* … */ }          // an account's own selection: .accr
 ### The code
 
 Each hook says what it needs with `#[requires]`: the engine fetches exactly
-that before the call, so the code does no I/O, and the input type each hook
-receives is generated from it. `cargo component build` writes the manifest
+that before the call, so the code does no I/O. Every hook takes two
+arguments: a context the engine prepared (`ctx`: the instance, the time, the
+caller, the parameters, and exactly what `#[requires]` named, in fields
+generated from it) and the message that started it (an operation, a run, a
+delivery). `cargo component build` writes the manifest
 the engine reads from these attributes
 ([implementations](contract-engine.md#implementations)).
 
 ```rust
 use tkone_contract_sdk::prelude::*;
-use fixed_12m::{Action, Event, Params, input, *};         // generated from the definition
+use fixed_12m::{Action, Event, *};                         // generated from the definition
 
 #[implementation(of = "fixed-12m@1.0.0")]
 impl fixed_12m::Contract for Fixed12m {
     /// Money arrived. Accept it inside the window and under the maximum.
     #[requires(view(DepositBalances))]
-    fn credited(c: Credit, input: input::Credited, p: Params) -> Result<Outcome, CreditRefused> {
-        if c.value_date > input.opened_on + Days(p.FUNDING_DAYS) {
+    fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Result<Outcome, CreditRefused> {
+        let (p, b) = (&ctx.params, &ctx.views.deposit_balances);
+        if c.value_date > ctx.instance.opened_on + Days(p.FUNDING_DAYS) {
             return Err(CreditRefused::FundingClosed);
         }
-        let room = p.MAXIMUM - input.balances.principal;
+        let room = p.MAXIMUM - b.principal;
         if c.amount > room {
             return Err(CreditRefused::AboveMaximum { room });
         }
         // Accepting is enough: the credit now counts, in Principal (credits_to).
         let mut out = Outcome::new().emit(Event::Funded { amount: c.amount });
-        if input.status == Status::Pending {
+        if ctx.instance.status == Status::Pending {
             out = out.act(Action::Transition(Active));        // first money: the deposit starts
         }
         Ok(out)
     }
 
     #[requires(view(DepositBalances),
-               account(from = terms.pay_to, read = [status]))]     // to pay out at maturity
-    fn scheduled(run: Run, input: input::Scheduled, p: Params) -> Outcome {
-        let b = &input.balances;
+               instance(from = terms.pay_to, read = [status]))]     // to pay out at maturity
+    fn scheduled(ctx: &scheduled::Ctx, run: Run) -> Outcome {
+        let (p, b) = (&ctx.params, &ctx.views.deposit_balances);
         let mut out = Outcome::new();
 
         if run.is_for(Rule::Accrue) {
@@ -236,14 +240,14 @@ impl fixed_12m::Contract for Fixed12m {
             }
         }
 
-        if run.is_for(Rule::Milestone) && input.status == Status::Pending {
+        if run.is_for(Rule::Milestone) && ctx.instance.status == Status::Pending {
             // the funding window closed with nothing in it
             out = out.act(Action::Transition(Closed));
         }
 
-        if run.is_for(Rule::Milestone) && run.due().date() == input.terms.matures_on {
+        if run.is_for(Rule::Milestone) && run.due().date() == ctx.instance.terms.matures_on {
             let interest = b.accrued.round(p.ROUNDING);
-            let pay_to = input.account.id;                    // the nominated account
+            let pay_to = ctx.instances.pay_to.id;             // the nominated account
             out = out
                 .book(booking! {                              // pay principal and interest out
                     code:   BankTransactionCode::MATURITY,
@@ -257,31 +261,28 @@ impl fixed_12m::Contract for Fixed12m {
         out
     }
 
-    #[requires(account(from = op.pay_to, read = [status, holders]))]
-    fn change_pay_to(op: ChangePayTo, input: input::ChangePayTo, p: Params)
-        -> Result<Outcome, ChangeRefused>
-    {
-        if !input.account.holders.contains_all(&input.holders) {
+    #[requires(instance(from = op.pay_to, read = [status, holders]))]
+    fn change_pay_to(ctx: &change_pay_to::Ctx, op: ChangePayTo) -> Result<Outcome, ChangeRefused> {
+        let to = &ctx.instances.pay_to;
+        if !to.holders.contains_all(&ctx.instance.holders) {
             return Err(ChangeRefused::NotTheHolder);
         }
-        Ok(Outcome::new().act(Action::SetPayTo(input.account.id)))
+        Ok(Outcome::new().act(Action::SetPayTo(to.id)))
     }
 
     #[requires(view(DepositBalances))]
-    fn quote_maturity(_: QuoteMaturity, input: input::QuoteMaturity, p: Params)
-        -> Result<MaturityQuote, Never>
-    {
-        let b = &input.balances;
-        let days = input.terms.matures_on - input.today;
+    fn quote_maturity(ctx: &quote_maturity::Ctx, _: QuoteMaturity) -> Result<MaturityQuote, Never> {
+        let (p, b) = (&ctx.params, &ctx.views.deposit_balances);
+        let matures_on = ctx.instance.terms.matures_on;
+        let days = matures_on - ctx.time.today;
         let interest = (b.accrued + b.principal * p.RATE.daily(DayCount::Act365Fixed) * days)
             .round(p.ROUNDING);
-        Ok(MaturityQuote { principal: b.principal, interest, total: b.principal + interest,
-                           on: input.terms.matures_on })
+        Ok(MaturityQuote { principal: b.principal, interest, total: b.principal + interest, on: matures_on })
     }
 
     /// Nothing to book until funded; start the deposit's own schedules.
-    fn open(o: Opening, input: input::Open, p: Params) -> Result<Outcome, OpenRefused> {
-        let deadline = o.opened_on + Days(p.FUNDING_DAYS);
+    fn open(ctx: &open::Ctx, o: Opening) -> Result<Outcome, OpenRefused> {
+        let deadline = o.opened_on + Days(ctx.params.FUNDING_DAYS);
         let schedules = Schedules::new()
             .accrue(Select::between(o.opened_on, o.matures_on))
             .milestone(Select::once_on(deadline))             // or the next business day
@@ -396,7 +397,7 @@ Each is in the [advanced example](example-advanced-offset-mortgage.md):
 | logical accounts, accounting mapping | [values](contract-engine.md#values-constants-code-sets-parameters-and-reference-data) |
 | definition, parameters, `permits!` | [definitions](contract-engine.md#definitions) |
 | operations, queries, rejections, events | [hooks, outcomes and events](contract-hooks.md) |
-| guarded credits, returns, deliveries | [hot accounts](hot-accounts.md) |
+| guarded credits, returns, deliveries | [hot instances](hot-accounts.md) |
 | `#[implementation]`, `#[requires]`, the generated manifest | [implementations](contract-engine.md#implementations) |
 | schedules | [schedule documents](schedule-document.md) |
 | publish, promote, the default | [C7](contract-engine.md#c7-implementation-versions-four-states-and-a-default) |

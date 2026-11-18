@@ -104,8 +104,8 @@ mod savings_goals {
         #[effective] by: NaiveDate,
     }
 
-    #[balances]
-    enum GoalBalance { #[balance(scale = 12)] BonusAccrued }
+    #[ledger::balances]
+    enum GoalBalance { #[ledger::balance(scale = 12)] BonusAccrued }
 }
 ```
 
@@ -250,7 +250,7 @@ On the engine's API it is named, and checked against its schema like the
 operation itself. It is never a bag of free attributes:
 
 ```text
-POST /accounts/acc_01J…/operations/withdraw
+POST /instances/acc_01J…/operations/withdraw
 Tkone-Interface: deposit-account@^1
 { "amount": { "minor": "40000", "currency": "GBP" }, "channel": "branch-kiosk",
   "facets": { "bank:withdrawal-note@1": { "purpose": "emergency", "session_ref": "k-88412" } } }
@@ -259,7 +259,8 @@ Tkone-Interface: deposit-account@^1
 - **It is stored with the operation** in the journal, so it can be audited,
   indexed by a view, and erased by key like any personal field.
 - **Only code that declares it reads it.** The adopter's implementation asks
-  for it in `#[requires(facet(WithdrawalNote))]` and gets a typed value. The
+  for it in `#[requires(facet(WithdrawalNote))]` and gets a typed value in
+  `ctx.facets.withdrawal_note`. The
   base's `easy-saver` cannot name it, so it is never given it.
 - **It cannot change what the base's code does.** That is the point of it,
   and the reason it is safe: an adopter's input riding on a base product's
@@ -289,7 +290,7 @@ layer over the crate:
 // tkone-products-deposits, published by the platform
 pub mod interest {
     /// Daily accrual on a balance, as easy-saver books it. Plain values in,
-    /// plain values out: no generated input types, no I/O.
+    /// plain values out: no generated context types, no I/O.
     pub fn daily_accrual(balance: Money, rate: Rate, day: NaiveDate,
                          basis: DayCount) -> Unrounded<Money>;
 
@@ -306,16 +307,16 @@ use tkone_products_deposits::interest;          // = 2.1, pinned in Cargo.lock
 
 #[implementation(of = "bank:goal-saver@1.0.0")]
 impl goal_saver::Contract for GoalSaver {
-    #[requires(view(SavingsState), facet_view(GoalTerms),
-               balances(as_of = due))]
-    fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome {
+    #[requires(view(SavingsState), ledger::balances(as_of = due))]
+    fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome {
+        let (p, available) = (&ctx.params, ctx.ledger.balances.available);
         let mut out = Outcome::new();
         if run.is_for(Rule::Accrue) {
-            let base  = interest::daily_accrual(input.available(), p.RATE, run.due, DayCount::Act365);
-            out.book(accrue(Accrued, base));                       // the base's interest, unchanged
-            if on_track(&input, run.due) {
-                let bonus = interest::daily_accrual(input.available(), p.BONUS, run.due, DayCount::Act365);
-                out.book(accrue(BonusAccrued, bonus));             // the adopter's bonus
+            let base = interest::daily_accrual(available, p.RATE, run.due().date(), DayCount::Act365);
+            out = out.book(accrue(Accrued, base));                 // the base's interest, unchanged
+            if on_track(&ctx.instance.goal_terms, available, run.due()) {   // the adopter's facet
+                let bonus = interest::daily_accrual(available, p.BONUS, run.due().date(), DayCount::Act365);
+                out = out.book(accrue(BonusAccrued, bonus));       // the adopter's bonus
             }
         }
         // capitalise, bonus_check, GoalReached …
@@ -323,11 +324,11 @@ impl goal_saver::Contract for GoalSaver {
     }
 
     #[requires(view(SavingsState), facet(WithdrawalNote))]
-    fn withdraw(op: Withdraw, input: input::Withdraw, p: Params)
-        -> Result<Outcome, WithdrawRefused> {
-        let mut out = tkone_products_deposits::withdraw::plan(op.amount, input.available())?;
-        if input.note().purpose != WithdrawalPurpose::Emergency {
-            out.emit(BonusForfeited { month: input.month() });
+    fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> {
+        let available = ctx.views.savings_state.available;
+        let mut out = tkone_products_deposits::withdraw::plan(op.amount, available)?;
+        if ctx.facets.withdrawal_note.purpose != WithdrawalPurpose::Emergency {
+            out = out.emit(BonusForfeited { month: ctx.time.business_date.month() });
         }
         Ok(out)
     }
@@ -335,7 +336,7 @@ impl goal_saver::Contract for GoalSaver {
 ```
 
 The crate's functions take plain domain values (`Money`, `Rate`, dates),
-never a product's generated input types, so they can be called from any
+never a product's generated context types, so they can be called from any
 implementation whatever its `#[requires]`.
 
 ### 7. Reads and APIs

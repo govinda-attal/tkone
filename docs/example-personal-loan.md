@@ -135,9 +135,9 @@ mod personal_loan {
     #[event] struct DefaultRaised { missed_instalments: u8, outstanding: Money }
     #[event] struct Settled { on: NaiveDate }
 
-    #[hook(activation)] fn open;            // pay out; compute the instalment; schedules
-    #[hook(scheduled)]  fn scheduled;       // accrue, instalment
-    #[hook(credited)]   fn credited;        // allocate; clear arrears; settle
+    #[hook(activation)]               fn open;        // pay out; compute the instalment; schedules
+    #[hook(scheduled)]                fn scheduled;   // accrue, instalment
+    #[hook(delivered(ledger::Entry))] fn credited;    // a credit landed: allocate; clear arrears; settle
 
     permits! {
         Book,
@@ -177,21 +177,23 @@ mod personal_loan {
 ### The code
 
 Each hook says what it needs with `#[requires]`: the engine fetches exactly
-that before the call, so the code does no I/O, and the input type each hook
-receives is generated from it. `cargo component build` writes the manifest
+that before the call, so the code does no I/O. Every hook takes the
+context the engine prepared (`ctx`, with fields generated from
+`#[requires]`) and the message that started it. `cargo component build` writes the manifest
 the engine reads from these attributes
 ([implementations](contract-engine.md#implementations)).
 
 ```rust
 use tkone_contract_sdk::prelude::*;
-use personal_loan::{Action, Event, Params, input, *};      // generated
+use personal_loan::{Action, Event, *};                      // generated
 
 #[implementation(of = "personal-loan@1.0.0")]
 impl personal_loan::Contract for PersonalLoan {
     /// Pay out, fix the instalment, start the schedules.
-    #[requires(account(from = opening.disburse_to, read = [status, holders]))]
-    fn open(o: Opening, input: input::Open, p: Params) -> Result<Outcome, OpenRefused> {
-        if !input.account.holders.contains_all(&input.borrowers) {
+    #[requires(instance(from = opening.disburse_to, read = [status, holders]))]
+    fn open(ctx: &open::Ctx, o: Opening) -> Result<Outcome, OpenRefused> {
+        let (p, payout) = (&ctx.params, &ctx.instances.disburse_to);
+        if !payout.holders.contains_all(&o.borrowers) {
             return Err(OpenRefused::PayoutNotTheBorrowers);
         }
         let instalment = annuity(o.amount, p.RATE, o.months).round(p.ROUNDING);
@@ -199,7 +201,7 @@ impl personal_loan::Contract for PersonalLoan {
             .book(booking! {
                 code:   BankTransactionCode::LOAN_DRAWDOWN,
                 debit:  (This, Principal, o.amount),
-                credit: (Input(input.account.id), o.amount),      // delivered to the customer
+                credit: (Input(payout.id), o.amount),            // delivered to the customer
             })
             .act(Action::SetParameter(INSTALMENT, instalment, o.opened_on))
             .act(Action::Transition(Active))
@@ -207,8 +209,8 @@ impl personal_loan::Contract for PersonalLoan {
     }
 
     #[requires(view(LoanState))]
-    fn scheduled(run: Run, input: input::Scheduled, p: Params) -> Outcome {
-        let s = &input.state;
+    fn scheduled(ctx: &scheduled::Ctx, run: Run) -> Outcome {
+        let (p, s) = (&ctx.params, &ctx.views.loan_state);
         let mut out = Outcome::new();
 
         if run.is_for(Rule::Accrue) {
@@ -257,9 +259,9 @@ impl personal_loan::Contract for PersonalLoan {
 
     /// A payment arrived in Incoming: fees, then what is due, then principal.
     #[requires(view(LoanState))]
-    fn credited(c: Credit, input: input::Credited, p: Params) -> Outcome {
-        let s = &input.state;
-        let settles = c.amount >= settlement(s, &p, c.value_date).total;
+    fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Outcome {
+        let (p, s) = (&ctx.params, &ctx.views.loan_state);
+        let q = settlement(s, p, c.value_date);
         let (fees, due, principal) = allocate(c.amount, s.fees, s.due);
 
         let mut out = Outcome::new()
@@ -269,8 +271,7 @@ impl personal_loan::Contract for PersonalLoan {
         if s.collection == Arrears && due == s.due && fees == s.fees {
             out = out.act(Action::Transition(collection: Current));
         }
-        if settles {
-            let q = settlement(s, &p, c.value_date);
+        if c.amount >= q.total {                                 // it settles the loan
             out = out
                 .book(final_interest(q.interest - s.accrued.round(p.ROUNDING)))
                 .act(Action::Transition(Closed))
@@ -281,10 +282,8 @@ impl personal_loan::Contract for PersonalLoan {
     }
 
     #[requires(view(LoanState))]
-    fn quote_settlement(q: QuoteSettlement, input: input::QuoteSettlement, p: Params)
-        -> Result<SettlementQuote, Never>
-    {
-        Ok(settlement(&input.state, &p, q.on))                  // the same function `credited` uses
+    fn quote_settlement(ctx: &quote_settlement::Ctx, q: QuoteSettlement) -> Result<SettlementQuote, Never> {
+        Ok(settlement(&ctx.views.loan_state, &ctx.params, q.on))   // the same function `credited` uses
     }
 }
 

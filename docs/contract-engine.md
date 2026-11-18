@@ -9,7 +9,8 @@ Companion documents: [models](contract-models.md) (the rules every model
 follows, with what an author writes for each, and the forms of views),
 [hooks, outcomes and events](contract-hooks.md) (what a hook receives and
 returns, every action's shape, events, results and queries), [hot
-accounts](hot-accounts.md) (how the ledger avoids serialising busy accounts)
+instances](hot-accounts.md) (quantities, guards and delivery: how the kernel
+avoids serialising busy instances, and how the ledger uses it)
 and [extending the base](extending-the-base.md) (how a bank adds fields,
 operations, events and behaviour to the models and products the platform
 ships, without forking them).
@@ -183,7 +184,7 @@ mod deposits {
 - **Rules every model follows,** from its first version, because they cannot
   be added once data exists: stable field ids, growth instead of breaking,
   compatibility per kind, personal data classified and erasable, exact
-  numbers, bounded collections, unserialised hot accounts, a schema named on
+  numbers, bounded collections, unserialised hot instances, a schema named on
   every record, typed identities that survive merges. Each, with what its
   author writes: [models](contract-models.md).
 
@@ -281,9 +282,11 @@ they tell it how actions map to tables and how to resolve a hook's
 `requires`. Contracts are loaded at run time and models are applied without
 redeploying it, so it cannot be compiled against them (C16). The generated
 Rust types are for contract SDKs and applications. Extensions are the
-exception: the ledger's meaning (a booking's entries net to zero, deliveries,
-guarded balances) is compiled code in `tkone-ledger`, built into the engine
-and required by the models that use it (C28).
+exception: the ledger's meaning (a booking's entries net to zero per
+currency, logical accounts resolved through the accounting mapping) is
+compiled code in `tkone-ledger`, built into the engine and required by the
+models that use it (C28). Deliveries and guarded balances are not the
+ledger's: they are kernel mechanisms it names (C40).
 
 ---
 
@@ -627,7 +630,7 @@ mod easy_saver {                                     //   their rejections and e
     //   quote_withdrawal (a query)             -> Result<WithdrawalQuote, Rejection>
     // Lifecycle hooks are declared:
     #[hook(scheduled)]         fn end_of_day;         // tempo runs
-    #[hook(credited)]          fn credited;           // a delivered credit landed (C22)
+    #[hook(delivered(ledger::Entry))] fn credited;    // a delivered credit landed (C22)
     #[hook(activation)]        fn open;
     #[hook(closure)]           fn close;
     #[hook(upgrade)]           fn upgrade;            // C9
@@ -752,12 +755,12 @@ One declaration, four outputs:
 | Output | For | Example |
 |---|---|---|
 | The schema (canonical JSON, by digest) | the registry, `plan` checks, audit | `deposit-account@sha256:…` |
-| WIT | implementations | `withdraw: func(op: withdraw, input: withdraw-input, params: params) -> result<outcome, withdraw-refused>` |
-| OpenAPI | the engine server's API | `POST /accounts/{account}/operations/withdraw` |
+| WIT | implementations | `withdraw: func(ctx: withdraw-ctx, op: withdraw) -> result<outcome, withdraw-refused>` |
+| OpenAPI | the engine server's API | `POST /instances/{account}/operations/withdraw` |
 | Client types | channels, in Rust, TypeScript, Python | `client.withdraw(account, { amount, channel })` |
 
 ```text
-POST /accounts/iban:GB33BUKB20201555555555/operations/withdraw
+POST /instances/iban:GB33BUKB20201555555555/operations/withdraw
 Tkone-Interface: deposit-account@^1
 Idempotency-Key: 7f9c2e…
 { "amount": { "minor": "50000", "currency": "GBP" }, "channel": "online" }
@@ -766,7 +769,7 @@ Idempotency-Key: 7f9c2e…
 { "rejected": "notice-required", "earliest": "2026-12-16" }
 
 200 OK
-{ "instance_version": 1843, "bookings": ["bkg_01JD…"],
+{ "instance_version": 1843, "created": { "ledger::Booking": ["bkg_01JD…"] },
   "result": { "available": { "minor": "120000", "currency": "GBP" }, "holds": [] } }
 ```
 
@@ -795,7 +798,7 @@ deposit-account 1.0.0                       model deposits@^3.1
   definition declares; the engine adds an event for every committed action
   ([events](contract-hooks.md#events)).
 - **Results are declared, not computed by hooks:** a receipt (the instance's
-  new version and the bookings made) and the operation's `returns`, a
+  new version and the ids of the facts it created) and the operation's `returns`, a
   selection of `with-instance` views. Answers that are computed and not
   stored are queries ([results](contract-hooks.md#operation-results),
   [queries](contract-hooks.md#queries)).
@@ -815,13 +818,12 @@ Everything the engine needs to know about it is declared on the code:
 #[implementation(of = "easy-saver@2.1.0", values(CALENDAR = "GBLO"))]   // its own values
 impl easy_saver::Contract for Saver {
     #[requires(view(AccountState),
-               balances(as_of = due),
-               entries(since = last(Rule::Capitalise), until = due, max = 2000))]
-    fn end_of_day(run: Run, input: input::EndOfDay, p: Params) -> Outcome { /* … */ }
+               ledger::balances(as_of = due),
+               ledger::entries(since = last(Rule::Capitalise), until = due, max = 2000))]
+    fn end_of_day(ctx: &end_of_day::Ctx, run: Run) -> Outcome { /* … */ }
 
     #[requires(view(AccountState))]
-    fn withdraw(op: Withdraw, input: input::Withdraw, p: Params)
-        -> Result<Outcome, WithdrawRefused> { /* … */ }
+    fn withdraw(ctx: &withdraw::Ctx, op: Withdraw) -> Result<Outcome, WithdrawRefused> { /* … */ }
 }
 
 schedules! {                                  // its own schedules, beside the definition's
@@ -830,20 +832,24 @@ schedules! {                                  // its own schedules, beside the d
 }
 ```
 
-| Input | Fetches |
-|---|---|
-| `view(V)` | a view of this instance, as of its last commit |
-| `balances(as_of = due)` | its balances at a time |
-| `entries(since, until, max)` | its entries in a window, bounded (C21) |
-| `series(PARAM, as_of)`, `effective(T, active_at)` | reference data, effective records |
-| `account(from, read)` | a few fields of one other account, named by the payload or the terms; eventual |
-| `linked(via, read, as_of, settled, max)` | other accounts through a relation; `settled` waits until they have passed the time (C5, C29) |
-| `personal(Field)` | a personal field, withheld unless named (C19) |
+| Input | From | Fetches |
+|---|---|---|
+| `view(V)` | kernel | a view of this instance, as of its last commit |
+| `series(PARAM, as_of)`, `effective(T, active_at)` | kernel | reference data, effective records |
+| `instance(from, read)` | kernel | a few fields of one other instance, named by the payload or the terms; eventual |
+| `linked(via, read, as_of, settled, max)` | kernel | other instances through a relation; `settled` waits until they have passed the time (C5, C29) |
+| `personal(Field)` | kernel | a personal field, withheld unless named (C19) |
+| `ledger::balances(as_of = due)` | ledger | its balances at a time: the kernel's quantity, read as of a time |
+| `ledger::entries(since, until, max)` | ledger | its entries in a window, bounded (C21) |
+
+Inputs named with an extension (`ledger::`) are contributed by it and
+fetched by the kernel's fetchers (C40).
 
 `#[requires]` is what makes hooks fast: the engine fetches exactly that, in
-bulk, before the call, and the hook does no I/O at all (C3). Each hook's
-input type is generated from it, so the code cannot read what it did not
-declare. It is also the only way a hook reads another instance
+bulk, before the call, and the hook does no I/O at all (C3). Each hook
+takes a context (`ctx`) whose fields are generated from it, and the message
+that started it, so the code cannot read what it did not declare
+([the hook signature](contract-hooks.md#the-hook-signature)). It is also the only way a hook reads another instance
 ([offset mortgage example](example-advanced-offset-mortgage.md#5-implementation)).
 
 `cargo component build` writes the **manifest** from these attributes and
@@ -877,9 +883,11 @@ One operation on one instance:
 6. **Commit** per instance: one conditional append to the instance's
    journal, the actions with "only if the instance is still at version n"
    (C12). The `with-instance` views they change, the outbox (for `eventual`
-   views and events) and tempo's schedule changes go with it. Entries for
-   other accounts (credits, and entries to unguarded accounts) are delivered
-   to their inboxes, not committed in their journals (C22).
+   views and events) and tempo's schedule changes go with it. Facts for
+   other instances (writes in an unguarded direction, and writes to
+   unguarded quantities: with the ledger, credits and entries to internal
+   accounts) are delivered to their inboxes, not committed in their journals
+   (C22).
 7. **Project** `eventual` views from the outbox, asynchronously
    ([outbox and inbox](outbox-inbox-design.md)).
 
@@ -923,6 +931,50 @@ Events are declared types, emitted with the actions; the engine adds an
 event for every committed action. There are no free-form attributes and no
 opaque result bytes. The types, the checks per action, and the event
 envelope: [hooks, outcomes and events](contract-hooks.md).
+
+---
+
+## The kernel and its vocabulary
+
+The engine is a **kernel** plus extensions. The kernel knows instances,
+facts, effective attributes, state machines, quantities, guards, deliveries
+and schedules. It does not know accounts, money, balances, debits or
+credits: those are the core model's and the ledger extension's words, and a
+second domain (insurance, loyalty, metering) must be able to run on the same
+kernel without inheriting them (C40).
+
+| Kernel mechanism | Kernel name | The ledger's name for it |
+|---|---|---|
+| a value folded from facts, per instance | `#[quantity]` | a balance (`#[ledger::balances]`) |
+| a bound on a quantity, by direction | `#[guard(Q, decreases = .., increases = ..)]` | `#[ledger(guard = "debits" \| "debits-and-credits" \| "none")]` |
+| a fact written to another instance's inbox | `Deliver` | a credit, or an entry to an internal account |
+| a pending delivery, accepted or refused | `#[hook(delivered(T))]`, acceptance | `#[hook(delivered(ledger::Entry))] fn credited`; guarded credits |
+| the undoing of a refused delivery | compensation | a return booking |
+| a commit with guarded writes on two instances | joint commit | a booking debiting two guarded accounts |
+| the end of a period, folding inboxes | period close, fold checkpoints | the business day's close; trial balance |
+| another instance's fields, as an input | `instance(from, read)`, `linked(..)` | another account |
+| the ids an operation created | the receipt's `created`, by type | `ledger::Booking` ids |
+| where the engine's API addresses things | `/instances/{instance}` | `/accounts/...`, in a domain's API, mapped |
+
+What an extension contributes is **namespaced** with it (`ledger::balances`,
+`#[ledger::balances]`, `ledger::Entry`, `Money` from the ledger's CEL
+library), so every model and hook shows which extension it depends on
+([extensions](contract-hooks.md#3-extensions)). The ledger, once delivery,
+quantities and guards are the kernel's, is small: entries net to zero per
+currency, amounts fit their minor units or declared scale, and logical
+accounts resolve through the accounting mapping.
+
+Two checks keep it so:
+
+- **An engine built without the ledger runs a model without it,** in CI: the
+  [metering model](contract-hooks.md#2-declared-actions) and a loyalty model
+  ([hot instances](hot-accounts.md#what-models-and-definitions-declare)),
+  end to end, with guards and deliveries. Anything that fails to compile
+  there is a leak.
+- **The kernel crates** (`tkone-engine`, `tkone-model`, `tkone-contract`,
+  `tkone-store`) are searched in CI for banking words (`account`, `balance`,
+  `money`, `booking`, `credit`, `debit`, `ledger`) in public names, and the
+  build fails on one.
 
 ---
 
@@ -973,20 +1025,22 @@ costs availability (a write fails when view replicas cannot be reached), and
 it cannot aggregate or join. Balances, accruals and arrears are folds, so the
 engine computes them on any store.
 
-The ledger mostly fits that shape too. A booking commits in its **home**, the
-journal of the instance whose operation produced it, where its guarded
-debits are checked; its credits and entries to unguarded accounts are
-**delivered** to inboxes, insert only, because nothing they would be checked
-against can be wrong. So a transfer is one partition's commit, and a busy
-account (fee income, a merchant) serialises nothing ([hot
-accounts](hot-accounts.md), C22). On Postgres delivery is in the same
-transaction; on ScyllaDB it is projected from the outbox.
+Writes to several instances fit that shape too. A commit lands in its
+**home**, the journal of the instance whose operation produced it, where its
+guarded writes are checked; writes to other instances in an unguarded
+direction are **delivered** to inboxes, insert only, because nothing they
+would be checked against can be wrong. So a transfer is one partition's
+commit, and a busy instance (fee income, a merchant, a points pool)
+serialises nothing ([hot instances](hot-accounts.md), C22). On Postgres
+delivery is in the same transaction; on ScyllaDB it is projected from the
+outbox.
 
-What is left is a booking that **debits two guarded accounts** at once. Postgres
-does it in one transaction; ScyllaDB has no transaction across partitions, so
-there it would be a saga (steps to each journal through the outbox,
-compensation). It is rare, and its cost is part of why Postgres comes first
-(C12).
+What is left is a **joint** commit, with guarded writes on two instances (a
+booking that debits two guarded accounts). Postgres does it in one
+transaction; ScyllaDB has no transaction across partitions, so there the
+kernel runs it as a saga (steps to each journal through the outbox,
+compensation). It is rare, counted, and its cost is part of why Postgres
+comes first (C12).
 
 Partitions are bounded: an instance's journal is bucketed by period, so no
 partition grows for the life of a mortgage. Every record names the schemas
@@ -1077,13 +1131,15 @@ fit (a model version not applied, a parameter missing), never at call time.
 
 ### C11. The ledger is the core's, as an extension
 
-Money moves only as bookings: entries that net to zero. Balances are views of
-entries. An operation across accounts (a transfer) is one booking, committed
-in its home instance with the other accounts' entries delivered (C22); it
-goes through the ledger, not through hooks writing to each other. A booking
-that debits two guarded accounts is the one exception to C6's one instance
-per commit. The ledger is not in the engine: it is the first extension
-(C28), required by the core model, so the engine stays free of any domain.
+Money moves only as bookings: entries that net to zero. Balances are the
+kernel's quantities over entries. An operation across accounts (a transfer)
+is one booking, committed in its home instance with the other accounts'
+entries delivered (C22); it goes through the ledger, not through hooks
+writing to each other. The ledger is not in the engine: it is the first
+extension (C28), required by the core model, and it decides only what needs
+banking's meaning: that entries net to zero per currency, fit their minor
+units, and resolve logical accounts. Delivery, guards and joint commits are
+the kernel's, which the ledger names (C40).
 
 ### C12. A commit is a journal append; Postgres first
 
@@ -1171,15 +1227,18 @@ operator. Folding many rows is a view's job
 
 ### C22. Only guarded writes are serialised
 
-A booking commits in its home instance, where guarded debits are checked;
-credits, and entries to unguarded accounts, are delivered to insert-only,
-sharded inboxes. A check can miss only in-flight credits, so it never passes
-wrongly. Busy accounts serialise nothing, and transfers are single-partition
-commits. A product that must be able to refuse money guards credits too:
-they land pending, its `credited` hook accepts or refuses them, and a
-refusal is a return to the sender, still without a commit across partitions
-([hot accounts](hot-accounts.md), [guarded
-credits](hot-accounts.md#guarded-credits)).
+A commit lands in its home instance, where writes in a guarded direction
+are checked; writes in an unguarded direction, and to unguarded quantities,
+are delivered to insert-only, sharded inboxes. A check can miss only
+in-flight deliveries in its unguarded direction, so it never passes wrongly.
+Busy instances serialise nothing, and transfers are single-partition
+commits. An instance that must be able to refuse an increase guards it with
+acceptance: deliveries land pending, its `delivered` hook accepts or refuses
+them, and a refusal is compensated to the sender (with the ledger, a return),
+still without a commit across partitions. Guards with two instances' writes
+are joint commits, the one exception to C6, run by the kernel
+([hot instances](hot-accounts.md), [delivery with
+acceptance](hot-accounts.md#delivery-with-acceptance)).
 
 ### C23. Every record names its schema
 
@@ -1234,7 +1293,7 @@ rule grammar, parsed at compile time; registration generates the tempo
 definitions. Accounts select from them with a generated `Schedules` builder,
 returned as a `ScheduleChange`; runs are tested against a generated `Rule`
 enum. An implementation declares its values with `#[implementation]` and
-each hook's inputs with `#[requires]`, from which its input types are
+each hook's inputs with `#[requires]`, from which each hook's context type (`ctx`) is
 generated; the build writes the manifest the engine reads. Nobody writes
 tempo's documents or a manifest for a product ([schedules](#schedules),
 [implementations](#implementations)).
@@ -1304,6 +1363,31 @@ example for each:
   closed.
 - **C39.** What runs is a distribution, upgraded and checked as one.
 
+### C40. The kernel knows mechanisms; extensions bring vocabulary
+
+The kernel's primitives, mechanisms and names are domain-free: instances,
+facts, quantities, guards by direction, delivery with acceptance,
+compensation, joint commits, period close. Busy-instance handling is the
+kernel's, so any quantity (money, points, stock, capacity) gets it without
+an extension. An extension contributes actions, inputs, attributes, CEL
+types and functions, compensation and close checks, all namespaced with
+it; the ledger's own meaning shrinks to bookings that net to zero per
+currency, minor units, and logical accounts. An engine built without an
+extension runs models that do not need it, and CI proves it
+([the kernel and its vocabulary](#the-kernel-and-its-vocabulary),
+[hot instances](hot-accounts.md)).
+
+### C41. A hook takes a context and a message, and returns its outcome
+
+Every hook has one shape: `fn hook(ctx: &hook::Ctx, message) -> …`. The
+message is only what started it (an operation, a query, a run, a delivery).
+The context is everything the engine prepared: the instance, the time, the
+caller, the resolved parameters, the trace, and exactly the reads its
+`#[requires]` declares, in a type generated per hook, so an undeclared read
+does not compile. The outcome is returned, never written to the context, so
+a hook stays a pure function and a refusal leaves nothing behind
+([the hook signature](contract-hooks.md#the-hook-signature)).
+
 ---
 
 ## Crates and apps
@@ -1314,9 +1398,9 @@ example for each:
 | `tkone-core` | The core model: party, account, ledger, reference data; the vocabulary |
 | `tkone-store` | The storage trait, journals and projections; Postgres first |
 | `tkone-contract` | Interfaces and definitions: operations, queries, rejections, events, hooks, parameters, `schedules!`; `Outcome`, `Action`, `permits!`; their schemas, WIT worlds and OpenAPI; tempo definitions generated from `schedules!` |
-| `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`: `#[implementation]`, `#[requires]`, generated input types; the manifest, generated at build |
-| `tkone-ledger` | The first extension (C28): `ledger.book`, `ledger.reverse`; homes, inboxes, guarded credits and returns, checkpoints, reconciliation (C22); `Money`, `Rate`, rounding |
-| `tkone-engine` | Kernel primitives and the `Extension` trait; registries, OCI loading and verification, the pipeline, CEL invariants, commits, projections |
+| `tkone-contract-sdk` | Writing an implementation in Rust for `wasm32-wasip2`: `#[implementation]`, `#[requires]`, a generated context type per hook (`ctx`); the manifest, generated at build |
+| `tkone-ledger` | The first extension (C28): `ledger.book`, `ledger.reverse`, net to zero, logical accounts; `#[ledger::balances]`, `#[ledger(guard, credits_to)]`, `ledger::balances`, `ledger::entries`; returns as compensation; trial balance at close; `Money`, `Rate`, rounding; the SDK's `book!` |
+| `tkone-engine` | Kernel primitives and the `Extension` trait; quantities, guards, inboxes, fold checkpoints, compensation, joint commits (C22, C40); registries, OCI loading and verification, the pipeline, CEL invariants, commits, projections |
 | `tkone-products-*` | The base's products as crates of pure functions, beside their components, for adopters to reuse (C37) |
 | `tkone-tempo` | Scheduling ([schedule documents](schedule-document.md)) |
 | engine server (app) | APIs: registries, lifecycle (C7), bindings, operations, bulk |

@@ -3,7 +3,7 @@
 Status: **architecture only**. This walks one product from nothing to a
 customer's account, end to end, in the order the work is done. The concepts
 are explained in the [engine](contract-engine.md), [models](contract-models.md),
-[hooks](contract-hooks.md) and [hot accounts](hot-accounts.md) documents; here
+[hooks](contract-hooks.md) and [hot instances](hot-accounts.md) documents; here
 they are only used, with a link where each first appears. The sketches are
 illustrative, not APIs.
 
@@ -46,10 +46,10 @@ types, its own actions, the offset link and its views.
 #[model(name = "lending", version = "1.0.0", requires = "core@^1.5")]
 mod lending {
     /// Balance types a loan uses, beside core's.
-    #[balances]
+    #[ledger::balances]
     enum LoanBalance {
         Principal,
-        #[balance(scale = 12)] Accrued,     // interest, kept finer than pennies (models 5)
+        #[ledger::balance(scale = 12)] Accrued,     // interest, kept finer than pennies (models 5)
         Due,                                // instalments fallen due, unpaid
         Fees,
         Incoming,                           // delivered credits land here; `credited` allocates them
@@ -234,12 +234,12 @@ mod offset_tracker {
     #[parameter(kind = "operational", levels(implementation(default = "HalfUp")))]
     const ROUNDING: Rounding;
 
-    #[hook(activation)] fn open;                            // drawdown
-    #[hook(scheduled)]  fn scheduled;                       // accrue, instalment, anniversary, milestone
-    #[hook(credited)]   fn credited;                        // repayments, overpayments
+    #[hook(activation)]               fn open;          // drawdown
+    #[hook(scheduled)]                fn scheduled;     // accrue, instalment, anniversary, milestone
+    #[hook(delivered(ledger::Entry))] fn credited;      // a credit landed: repayments, overpayments
     #[hook(correction, permits = [Book, Reverse])] fn correct;
-    #[hook(upgrade)]    fn upgrade;                         // product switch
-    #[hook(closure)]    fn close;                           // redemption
+    #[hook(upgrade)]                  fn upgrade;       // product switch
+    #[hook(closure)]                  fn close;         // redemption
 
     permits! {
         Book, Reverse,
@@ -298,8 +298,9 @@ dates when it opens (step 7).
 ### The code
 
 Each hook says what it needs with `#[requires]`: the engine fetches exactly
-that before the call, so the code does no I/O, and the input type each hook
-receives is generated from it. `cargo component build` writes the manifest
+that before the call, so the code does no I/O. Every hook takes the
+context the engine prepared (`ctx`, with fields generated from
+`#[requires]`) and the message that started it. `cargo component build` writes the manifest
 the engine reads from these attributes
 ([implementations](contract-engine.md#implementations)).
 
@@ -309,26 +310,27 @@ as of when, how settled, how many.
 
 ```rust
 use tkone_contract_sdk::prelude::*;
-use offset_tracker::{Action, Event, Params, input, *};      // generated
+use offset_tracker::{Action, Event, *};                     // generated
 
 #[implementation(of = "offset-tracker@1.0.0", values(ROUNDING = "HalfUp"))]
 impl offset_tracker::Contract for OffsetTracker {
     #[requires(
         view(LoanState),
-        balances(as_of = due),
-        linked(via = OffsetLink, read = balances.available, as_of = due,
-               settled, max = 5),          // other accounts: read-only, complete to the due (C5)
+        ledger::balances(as_of = due),
+        linked(via = OffsetLink, read = ledger::balances.available, as_of = due,
+               settled, max = 5, as = offsets),   // other accounts: read-only, complete to the due (C5)
         series(BASE, as_of = due),
         effective(PaymentHoliday, active_at = due, as = holidays),
     )]
-    fn scheduled(run: Run, input: input::Scheduled, p: Params) -> Outcome {
+    fn scheduled(ctx: &scheduled::Ctx, run: Run) -> Outcome {
+        let p = &ctx.params;
         let mut out = Outcome::new();
 
         if run.is_for(Rule::Accrue) {
-            let offset: Money = input.linked.iter().map(|a| a.available).sum();
-            let principal = input.balances.principal;
+            let offset: Money = ctx.linked.offsets.iter().map(|a| a.available).sum();
+            let principal = ctx.ledger.balances.principal;
             let charged_on = (principal - offset).max(Money::zero(principal.currency()));
-            let rate = input.series.base + p.MARGIN;
+            let rate = ctx.series.base + p.MARGIN;
             // every calendar day since the last accrual: a Friday run covers the weekend
             for day in run.days_since_last() {
                 let daily = charged_on * rate.daily(DayCount::Act365Fixed);
@@ -341,9 +343,9 @@ impl offset_tracker::Contract for OffsetTracker {
             }
         }
 
-        if run.is_for(Rule::Instalment) && input.holidays.is_empty() {
-            let interest = input.balances.accrued.round(p.ROUNDING);
-            let capital = instalment_capital(&input.state, &p, interest);   // annuity, product code
+        if run.is_for(Rule::Instalment) && ctx.effective.holidays.is_empty() {
+            let interest = ctx.ledger.balances.accrued.round(p.ROUNDING);
+            let capital = instalment_capital(&ctx.views.loan_state, p, interest);   // annuity, product code
             out = out
                 .book(booking! {                     // interest and capital fall due
                     code: BankTransactionCode::LOAN_INSTALMENT,
@@ -355,7 +357,7 @@ impl offset_tracker::Contract for OffsetTracker {
         }
 
         if run.is_for(Rule::Milestone) {             // the tracker period ends
-            out = out.emit(Event::TrackerPeriodEnded { reverts_to: standard_variable(&input) });
+            out = out.emit(Event::TrackerPeriodEnded { reverts_to: standard_variable(ctx) });
         }
         out
     }
@@ -364,8 +366,8 @@ impl offset_tracker::Contract for OffsetTracker {
     /// allocated to what is due first, then overpayment, with a charge beyond
     /// the allowance in the tracker period.
     #[requires(view(LoanState))]
-    fn credited(c: Credit, input: input::Credited, p: Params) -> Outcome {
-        let s = &input.state;
+    fn credited(ctx: &credited::Ctx, c: Delivery<ledger::Entry>) -> Outcome {
+        let (p, s) = (&ctx.params, &ctx.views.loan_state);
         let to_due = c.amount.min(s.due);
         let over = c.amount - to_due;
         let allowance = (s.balance_at_year_start * p.OVERPAYMENT_ALLOWANCE).round(p.ROUNDING);
@@ -387,19 +389,20 @@ impl offset_tracker::Contract for OffsetTracker {
     }
 
     #[requires(view(LoanState),
-               account(from = op.offset, read = [status, holders]))]   // resolved locator; eventual
-    fn link_offset(op: LinkOffset, input: input::LinkOffset, p: Params)
-        -> Result<Outcome, LinkRefused>
-    {
+               instance(from = op.offset, read = [status, holders]))]   // resolved locator; eventual
+    fn link_offset(ctx: &link_offset::Ctx, op: LinkOffset) -> Result<Outcome, LinkRefused> {
         // The model's invariants check status and holders, and the claim makes
         // the offset unique; the hook decides only whether the product allows it.
-        Ok(Outcome::new().act(Action::LinkOffset { offset: input.account.id, since: input.due.date() }))
+        Ok(Outcome::new().act(Action::LinkOffset { offset: ctx.instances.offset.id,
+                                                   since: ctx.time.due.date() }))
     }
 
-    fn correct(facts: MovedFacts, input: input::Correction, p: Params) -> Outcome {
+    #[requires(view(LoanState), series(BASE, as_of = facts.earliest),
+               ledger::entries(since = facts.earliest, until = due, max = 5000))]
+    fn correct(ctx: &correct::Ctx, facts: MovedFacts) -> Outcome {
         // Recompute the accruals the moved facts touch; book the difference.
-        let recomputed = reaccrue(&facts, &input, &p);
-        Outcome::new().book(adjustment(recomputed - input.accrued_for(&facts.days)))
+        let recomputed = reaccrue(&facts, ctx);
+        Outcome::new().book(adjustment(recomputed - ctx.ledger.entries.accrued_on(&facts.days)))
     }
 
     // take_payment_holiday, redeem, open, upgrade, close …
@@ -497,7 +500,7 @@ Then `link_offset` with the customer's savings account, by its IBAN.
 
 No commit in that month touches two instances' journals. The transfer is
 homed on the current account, the accrual on the mortgage; the mortgage
-*reads* the saver ([hot accounts](hot-accounts.md)).
+*reads* the saver ([hot instances](hot-accounts.md)).
 
 If a collection fails because the current account has insufficient funds,
 `Due` stays unpaid; the mortgage's next `scheduled` run sees it in
